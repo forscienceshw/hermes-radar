@@ -132,7 +132,8 @@ def snapshot() -> dict[str, Any]:
         {"id": "accounts", "label": "公众号名单", "state": "ok" if accounts["enabled"] else "warn",
          "detail": f"{accounts['enabled']} 个号在追更" if accounts["enabled"] else "还没有启用任何公众号"},
         {"id": "autostart", "label": "开机自启", "state": "ok" if auto["enabled"] else "off",
-         "detail": "已开启" if auto["enabled"] else "关闭（可随时打开）"},
+         "detail": ("旧版启动文件夹方式，建议换成注册表" if auto["mode"] == "legacy_shortcut"
+                    else ("已开启" if auto["enabled"] else "关闭（可随时打开）"))},
     ]
 
     steps = [

@@ -163,10 +163,26 @@ function renderAutostart(auto) {
   const mode = auto.enabled
     ? (auto.mode === 'registry' ? '注册表启动项' : '启动文件夹快捷方式')
     : '当前不开机启动';
+  const legacy = auto.legacy_shortcuts && auto.legacy_shortcuts.length;
   $('#autostartStatus').innerHTML = `<span>${esc(mode)}</span>` +
-    (auto.legacy_shortcuts && auto.legacy_shortcuts.length
-      ? `<p class="muted">还留着旧版快捷方式：${auto.legacy_shortcuts.map(esc).join('、')}，打开开关会自动清掉。</p>` : '') +
+    (legacy
+      ? `<p class="muted">现在是旧版快捷方式：${auto.legacy_shortcuts.map(esc).join('、')}。换注册表项更稳，也不怕快捷方式被误删。</p>
+         <p><button type="button" id="autostartMigrate">换成注册表方式</button></p>` : '') +
     `<p class="muted path">${esc(auto.command || '')}</p>`;
+  const migrate = $('#autostartMigrate');
+  if (migrate) {
+    migrate.onclick = async () => {
+      busy(migrate, true, '正在换…');
+      try {
+        await api('/api/setup/autostart', { method: 'POST', body: { enabled: true } });
+        toast('已换成注册表启动项，旧快捷方式已清掉');
+        await loadSetupPanel();
+      } catch (err) {
+        toast(err.message);
+        busy(migrate, false);
+      }
+    };
+  }
 }
 
 function currentLlmPayload() {

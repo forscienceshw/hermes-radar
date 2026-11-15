@@ -71,8 +71,11 @@ def status() -> dict[str, Any]:
     value = _read_value()
     shortcuts = _shortcuts()
     command = launcher_command()
+    # 启动文件夹里的旧快捷方式也算"开着"，否则升级上来的机器明明会自启，
+    # 面板却显示"已关闭"，用户会以为没生效。
+    enabled = bool(value) or bool(shortcuts)
     return {
-        "enabled": bool(value),
+        "enabled": enabled,
         "mode": "registry" if value else ("legacy_shortcut" if shortcuts else "off"),
         "command": value or " ".join(f'"{part}"' if " " in part else part for part in command),
         "target": command[0],
