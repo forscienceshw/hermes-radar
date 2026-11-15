@@ -53,3 +53,37 @@ python radar.py pack
 ```
 
 它会检查工作区是否干净；有未保存改动时会警告 —— 那种包里的代码和任何历史版本都对不上。
+
+## 两个入口，两种打包
+
+程序有两层入口，别搞混：
+
+| 东西 | 源码 | 作用 | 什么时候要重打 |
+|---|---|---|---|
+| `Radar.exe` | `installer/launcher.py` | 拉起 supervisor、开浏览器、停服务、卸载 | 只改了启动逻辑 |
+| `RadarSetup.exe` | `installer/setup_gui.py` | 安装向导：选目录、建 venv、装依赖、建快捷方式 | 改了安装流程或 `payload.zip` |
+
+```bash
+python tools/build_exe.py --launcher   # 只重打 Radar.exe
+python tools/build_exe.py              # payload.zip + Radar.exe + RadarSetup.exe
+```
+
+依赖住在安装目录的 `.venv` 里，**改业务代码不需要重打 exe**，重启服务即可。
+打 exe 需要 PyInstaller，用一个单独的构建环境，不要往运行环境里装：
+
+```bash
+python -m venv E:\HermesRadarBuild\.venv
+E:\HermesRadarBuild\.venv\Scripts\python -m pip install pyinstaller
+```
+
+改完安装流程要真的装一遍验证（装到 `E:\RadarInstallTest` 这类临时目录，别往现有实例上装）：
+
+```bash
+RadarSetup.exe /S --dir=E:\RadarInstallTest --port=8899 --no-autostart --no-desktop --no-launch
+```
+
+## 单实例锁按安装目录区分
+
+`supervisor.pyw` 的互斥量和 `app/worker.py` 的 `single_instance()` 都把安装/数据目录
+算进名字里了。这样机器上同时存在两个实例（升级期间、开发实例 + 正式实例）时不会互相
+挤掉。**新加单实例锁时照这个写**，别再退回全局名字。

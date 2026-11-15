@@ -11,6 +11,10 @@ inbox/
 .cache/
 *.log
 
+# 开发实例（v2 起用环境变量把数据/配置挪到这里，和正式实例隔开）
+.devdata/
+.devconfig/
+
 # 密钥与本机路径：绝不入库。
 # 注意 config/settings.json 是**入库**的 —— 里面只有阈值、词表、推送时段这类偏好，
 # 没有密钥；让它进版本历史，改坏了才能一键回滚。
@@ -29,6 +33,8 @@ cloud/dist/
 # 打包产物与系统杂项
 dist/
 *.zip
+Radar.exe
+RadarSetup.exe
 .DS_Store
 Thumbs.db
 desktop.ini

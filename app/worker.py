@@ -21,10 +21,19 @@ _MUTEX_HANDLE = None
 
 
 def single_instance() -> bool:
+    """同一个数据目录只允许一个 Worker。
+
+    互斥量名带上数据目录的指纹：机器上同时存在两个实例（升级期间新旧并存、
+    或者开发实例和正式实例一起开着）时，各自跑各自的，不会互相把对方挤掉。
+    """
     global _MUTEX_HANDLE
     if os.name != "nt":
         return True
-    _MUTEX_HANDLE = ctypes.windll.kernel32.CreateMutexW(None, False, "Local\\HermesResearchRadarWorker")
+    import hashlib
+    from .paths import DATA_DIR
+    tag = hashlib.sha1(str(DATA_DIR).casefold().encode("utf-8")).hexdigest()[:12]
+    _MUTEX_HANDLE = ctypes.windll.kernel32.CreateMutexW(
+        None, False, f"Local\\HermesResearchRadarWorker-{tag}")
     return ctypes.windll.kernel32.GetLastError() != 183
 
 

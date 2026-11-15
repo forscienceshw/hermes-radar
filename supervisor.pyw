@@ -29,10 +29,22 @@ def trace(message: str) -> None:
         pass
 
 
+def _instance_id() -> str:
+    """按安装目录区分实例。
+
+    早先的互斥量名是全局的，副作用是：机器上装了两个版本（比如升级期间新旧并存、
+    或者开发实例和正式实例同时开着）时，后启动的那个会以为自己"已经在跑"直接退出，
+    用户只看到"双击没反应"。把安装路径算进来，各实例互不干扰。
+    """
+    import hashlib
+    return hashlib.sha1(str(BASE).casefold().encode("utf-8")).hexdigest()[:12]
+
+
 def mutex_available():
     """A cross-session file lock complements the per-session Windows mutex."""
     global _LOCK_FILE
-    handle = ctypes.windll.kernel32.CreateMutexW(None, False, "Local\\HermesResearchRadarSupervisor")
+    handle = ctypes.windll.kernel32.CreateMutexW(
+        None, False, f"Local\\HermesResearchRadarSupervisor-{_instance_id()}")
     if ctypes.windll.kernel32.GetLastError() == 183:
         return False, handle
     try:

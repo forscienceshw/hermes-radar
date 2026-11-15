@@ -15,7 +15,11 @@ from pathlib import Path
 from .vcs import ROOT, Repo, project_version
 
 # 整个目录收进来
-INCLUDE_DIRS = ("app", "web", "tools", "scripts", "tests", "docs")
+INCLUDE_DIRS = (
+    "app", "web", "tools", "scripts", "tests", "docs", "installer",
+    # 微信只读解密只用到这四个文件；MemoTrace 的 GUI 资源有 38 MB，不要。
+    "analysis/wechatmsg_full/app/decrypt",
+)
 # 单个文件收进来
 INCLUDE_FILES = (
     "requirements.txt",
@@ -32,6 +36,9 @@ INCLUDE_FILES = (
     "Install.vbs",
     "package.json",
     "package-lock.json",
+    # WorkBuddy 点数模式靠这个打包好的 Node 单文件，缺了就只能用 API Key。
+    "cloud/dist/llm-worker.mjs",
+    "analysis/wechatmsg_full/LICENSE",
 )
 # cloud/ 只收源码，dist 是构建产物
 INCLUDE_GLOBS = ("cloud/*.mjs", "cloud/*.json")

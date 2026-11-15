@@ -110,16 +110,214 @@ B站 UP 主：也可使用你自建的 RSSHub 地址，kind 设为 video。</pre
   <div id="notificationsList" class="card-list"></div>
 </section>
 <section id="settings" class="view">
-  <div class="section-title"><div><h1>设置</h1><p>保存后新任务采用新配置；端口和并发数等标注项需重启。</p></div></div>
+  <div class="section-title">
+    <div><h1>设置</h1><p>第一次装好，从上往下走一遍「配置向导」，大约三分钟；以后要微调再去「参数设置」。</p></div>
+    <div class="setup-score"><b id="setupDone">–</b><span>/ <i id="setupTotal">5</i> 步就绪</span></div>
+  </div>
+  <div class="subnav" role="tablist">
+    <button type="button" class="subnav-btn active" data-subtab="wizard">配置向导</button>
+    <button type="button" class="subnav-btn" data-subtab="params">参数设置</button>
+  </div>
+
+  <div class="subview" id="subtab-wizard">
+    <div class="wizard-intro">
+      <p>这几步是按依赖顺序排的：先让雷达能读到微信，再给它接上会读论文的模型，然后是汇报方式和追更名单，最后确认一切就绪。每一步右上角有状态，绿色的可以直接跳过。带「为什么 / 注意」的折叠块是解释，不看也不影响配置。</p>
+    </div>
+    <div id="setupWarnings" class="wizard-warn" hidden></div>
+
+    <div class="wz-list">
+
+      <article class="wz-step" id="step-wechat">
+        <div class="wz-rail"><span class="wz-no">1</span></div>
+        <div class="wz-body">
+          <header class="wz-head">
+            <h2>连接微信</h2>
+            <span class="wz-state" data-state="wechat">检测中…</span>
+          </header>
+          <p class="wz-lead">雷达不登录你的微信，只在<strong>本机只读</strong>地打开微信自己存的数据库，用来找到你关注的公众号新文章。不发送消息，不改任何微信文件，也不上传聊天记录。</p>
+          <div class="wz-status" id="wechatStatus">正在读取本机微信信息…</div>
+          <div class="wz-actions">
+            <button type="button" class="primary" id="wechatProbe">检测并授权读取</button>
+            <button type="button" id="wechatProbe4" hidden>尝试读取 4.x</button>
+            <button type="button" id="wechatEnable">开启公众号追更</button>
+            <button type="button" class="ghost" id="wechatRefresh">重新体检</button>
+          </div>
+          <div class="inline-result" id="wechatResult" hidden></div>
+          <details class="why">
+            <summary>为什么需要这一步？会不会动到我的聊天记录？</summary>
+            <ol>
+              <li>微信把聊天和公众号记录存在账号目录的 <code>Msg\*.db</code> 里，这些库是 SQLCipher 加密的，密钥只在微信运行时的内存里，磁盘上找不到明文。</li>
+              <li>雷达用只读方式从微信进程内存里取一次密钥，然后用 Windows DPAPI 加密存在本机。之后即使微信没开，也能读上次的目录。</li>
+              <li>全程只读：不写微信数据库、不发消息、不联网上传。想彻底断开，删掉 <code>config\secrets.dpapi.json</code> 里那条记录即可。</li>
+              <li>第一次点「检测并授权」时 Windows 可能弹一次管理员授权——读别的进程内存需要这个权限，允许即可。</li>
+            </ol>
+            <p class="muted"><b>关于手机扫码：</b>微信没有对第三方开放「扫码授权读本机数据库」这种接口。扫一扫只能完成登录，授权不了磁盘上的文件；而且登录态在手机端，电脑端读库也不需要它。所以这里不需要扫码，用的是本机只读密钥这一条路。</p>
+          </details>
+        </div>
+      </article>
+
+      <article class="wz-step" id="step-llm">
+        <div class="wz-rail"><span class="wz-no">2</span></div>
+        <div class="wz-body">
+          <header class="wz-head">
+            <h2>接入大模型</h2>
+            <span class="wz-state" data-state="llm">检测中…</span>
+          </header>
+          <p class="wz-lead">精读、图片分诊、右侧问答都走这里。三种方式选一种就行，以后随时能换，不影响已有资料。</p>
+          <div class="choice-grid" id="llmChoices">
+            <button type="button" class="choice" data-provider="workbuddy_cloud">
+              <b>WorkBuddy 点数</b>
+              <span>直接用这台电脑上 WorkBuddy 的额度，不填 Key</span>
+              <em>本机推荐</em>
+            </button>
+            <button type="button" class="choice" data-provider="openai_compatible">
+              <b>OpenAI 兼容 API</b>
+              <span>DeepSeek / Kimi / 通义 / OpenAI，按量付费</span>
+            </button>
+            <button type="button" class="choice" data-provider="ollama">
+              <b>Ollama 本地模型</b>
+              <span>完全离线、不花钱，慢一些、效果弱一些</span>
+            </button>
+          </div>
+          <div class="wz-fields">
+            <div class="field-group" data-for="workbuddy_cloud" hidden>
+              <p class="muted">不用填任何东西。点下面的「测试连接」会去 WorkBuddy 列一次可用模型——只要能列出来，就说明这台电脑的 WorkBuddy 账号可以给雷达供点数。换电脑后需要在新电脑上重新打开 WorkBuddy 登录一次。</p>
+            </div>
+            <div class="field-group" data-for="openai_compatible" hidden>
+              <div class="form-grid two">
+                <label>Base URL<input id="wizBase" placeholder="https://api.deepseek.com/v1"></label>
+                <label>模型<input id="wizModel" placeholder="deepseek-chat"></label>
+              </div>
+              <label>API Key<input id="wizKey" type="password" autocomplete="off" placeholder="sk-…（留空则保留已保存的 Key）"><small id="wizKeyHint"></small></label>
+            </div>
+            <div class="field-group" data-for="ollama" hidden>
+              <div class="form-grid two">
+                <label>服务地址<input id="wizOllamaBase" placeholder="http://127.0.0.1:11434/v1"></label>
+                <label>模型<input id="wizOllamaModel" placeholder="qwen2.5:14b"></label>
+              </div>
+              <p class="muted">先在命令行跑一次 <code>ollama serve</code>，再 <code>ollama pull qwen2.5:14b</code>。图片理解在本地模型上通常不可用。</p>
+            </div>
+          </div>
+          <div class="wz-actions">
+            <button type="button" id="llmTest">测试连接</button>
+            <button type="button" class="primary" id="llmSave">保存并启用</button>
+          </div>
+          <div class="inline-result" id="llmResult" hidden></div>
+          <details class="why">
+            <summary>WorkBuddy 点数和 API Key 有什么差别？要扫码登录吗？</summary>
+            <p><b>WorkBuddy 点数</b>是这台电脑上已经登录的 WorkBuddy 账号的额度，雷达直接调用同一个账号体系，所以不需要扫码、不需要填 Key，点一次「测试连接」就等于完成绑定校验。实测一次精读约 0.15 点，图片分诊更少。</p>
+            <p><b>API Key</b>适合把安装包给别人用：对方填自己的 Key，花自己的钱，不占你的额度。任何 OpenAI 兼容端点都行，只要支持 <code>/chat/completions</code>。</p>
+            <p class="muted">为什么不做成「扫码登录 WorkBuddy」：那需要在网页里跑 WorkBuddy 的 OAuth 回调，本机后台进程拿不到那个会话，稳定性还不如现在这种「复用本机登录态 + 一次列模型验证」。真要跨机器共享额度，正确做法是给对方一个他自己的账号，而不是扫码把账号借出去。</p>
+          </details>
+        </div>
+      </article>
+
+      <article class="wz-step" id="step-notify">
+        <div class="wz-rail"><span class="wz-no">3</span></div>
+        <div class="wz-body">
+          <header class="wz-head">
+            <h2>汇报发到哪里</h2>
+            <span class="wz-state" data-state="notify">检测中…</span>
+          </header>
+          <p class="wz-lead">雷达会把新文章攒成一批再发，避免一条一条刷屏。默认发到站内的「汇报记录」，不用配置任何东西。</p>
+          <div class="form-grid two">
+            <label>发送渠道
+              <select id="wizChannel">
+                <option value="inbox">站内收件箱（默认，零配置）</option>
+                <option value="wecom_webhook">企业微信群机器人</option>
+                <option value="serverchan">Server酱（推到个人微信）</option>
+                <option value="generic_webhook">通用 JSON Webhook</option>
+              </select>
+            </label>
+            <label>发送地址<input id="wizWebhook" type="password" autocomplete="off" placeholder="留空保持不变"><small id="wizWebhookHint"></small></label>
+          </div>
+          <div class="wz-actions">
+            <button type="button" id="notifyTest">发一条测试消息</button>
+            <button type="button" class="primary" id="notifySave">保存汇报设置</button>
+          </div>
+          <div class="inline-result" id="notifyResult" hidden></div>
+          <details class="why">
+            <summary>各渠道怎么拿到地址</summary>
+            <ul>
+              <li><b>企业微信群机器人</b>：群设置 → 群机器人 → 添加 → 复制 Webhook，形如 <code>https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=…</code></li>
+              <li><b>Server酱</b>：在 sct.ftqq.com 绑定微信后拿到 SendKey，填完整地址 <code>https://sctapi.ftqq.com/&lt;SendKey&gt;.send</code>。免费版每天 5 条，靠合并汇报压条数。</li>
+              <li><b>通用 Webhook</b>：任何接受 JSON POST 的地址，字段见「参数设置 → 自动汇报」。</li>
+            </ul>
+          </details>
+        </div>
+      </article>
+
+      <article class="wz-step" id="step-accounts">
+        <div class="wz-rail"><span class="wz-no">4</span></div>
+        <div class="wz-body">
+          <header class="wz-head">
+            <h2>挑选要追的公众号</h2>
+            <span class="wz-state" data-state="accounts">检测中…</span>
+          </header>
+          <p class="wz-lead">名单决定雷达去读谁的更新。默认只追你在「采集来源」里勾选的号，没勾的不读、不存、不精读。</p>
+          <div class="wz-status" id="accountsStatus">正在统计…</div>
+          <div class="wz-actions">
+            <button type="button" class="primary" id="accountsGo">去挑公众号</button>
+          </div>
+          <details class="why">
+            <summary>名单是从哪来的？没在名单里的号会怎样？</summary>
+            <p>本机微信里你关注过的公众号会在「公众号」页面列出来，勾上就追。雷达按你勾选的名单去读本机的公众号消息库，没勾的号即使更新了也不会入库。想临时加一篇，直接把链接粘到「资料库 → 添加链接」就行，不依赖名单。</p>
+          </details>
+        </div>
+      </article>
+
+      <article class="wz-step" id="step-autostart">
+        <div class="wz-rail"><span class="wz-no">5</span></div>
+        <div class="wz-body">
+          <header class="wz-head">
+            <h2>开机自动运行</h2>
+            <span class="wz-state" data-state="autostart">检测中…</span>
+          </header>
+          <p class="wz-lead">打开之后，登录 Windows 就在后台启动，微信来了新文章自动抓，不用记得手动开。</p>
+          <div class="wz-status" id="autostartStatus">正在读取…</div>
+          <div class="wz-actions">
+            <label class="switch"><input type="checkbox" id="wizAutostart"><span class="track"></span><span id="wizAutostartText">关闭</span></label>
+          </div>
+          <details class="why">
+            <summary>它改了什么？怎么撤掉？</summary>
+            <p>只写一个当前用户的注册表启动项（<code>HKCU\Software\Microsoft\Windows\CurrentVersion\Run</code>），不需要管理员权限，也不建计划任务。关掉这个开关就删掉它；卸载时也会自动清。老版本用的是「启动」文件夹里的快捷方式，第一次打开这个开关时会顺手把旧的清掉，避免开机启动两份。</p>
+          </details>
+        </div>
+      </article>
+
+      <article class="wz-step" id="step-finish">
+        <div class="wz-rail"><span class="wz-no">✓</span></div>
+        <div class="wz-body">
+          <header class="wz-head">
+            <h2>完成情况</h2>
+            <span class="wz-state" data-state="summary">体检</span>
+          </header>
+          <p class="wz-lead">这几项都变绿就可以不管了。黄的可以现在处理，也可以先跑起来、以后再说。</p>
+          <div id="setupChecks" class="check-list">正在体检…</div>
+          <div class="wz-actions">
+            <button type="button" id="setupRefresh">重新体检</button>
+            <button type="button" class="primary" id="setupDoneBtn">开始使用</button>
+          </div>
+          <p class="muted" id="setupEnvInfo"></p>
+        </div>
+      </article>
+
+    </div>
+  </div>
+
+  <div class="subview" id="subtab-params" hidden>
   <form id="settingsForm">
+    <h2 class="group-title">常用参数</h2>
     <div class="panel"><h2>大模型精读</h2><div class="form-grid four"><label>启用语义精读<select id="llmEnabled"><option value="false">关闭，仅规则初筛</option><option value="true">启用</option></select></label><label>调用方式<select id="llmProvider"><option value="workbuddy_cloud">WorkBuddy 点数（官方云 SDK）</option><option value="openai_compatible">OpenAI 兼容 API</option><option value="ollama">Ollama 本地模型（免 Key）</option></select></label><label>Base URL<input id="llmBase" placeholder="https://api.deepseek.com/v1"></label><label>模型<input id="llmModel"></label></div><p class="muted">WorkBuddy 点数模式已实测可由后台调用，默认 hy4free，也可填 deepseek-v4-pro 等目录内模型 ID。Ollama 默认地址为 http://127.0.0.1:11434/v1。</p><div class="actions"><button id="loadWorkbuddyModels" type="button">查看 WorkBuddy 可用模型</button><span id="workbuddyModelInfo" class="muted"></span></div><div class="accounts-head"><h3>对话模型账户</h3><button id="addAccount" type="button">添加账户</button></div><p class="muted">用于右侧「问 Hermes」对话。默认账户沿用上面的精读模型；也可以在这里加 DeepSeek、Kimi、通义等 OpenAI 兼容端点。</p><div id="accountList" class="account-list"></div><div class="form-grid three"><label>API Key（留空保持不变）<input id="llmKey" type="password" autocomplete="off"><small id="llmKeyStatus"></small></label><label>启用图片理解<select id="visionEnabled"><option value="false">关闭</option><option value="true">启用（需模型支持）</option></select></label><label>每日调用上限<input id="llmDaily" type="number" min="1"></label><label>云精读本地初筛门槛<input id="llmPrefilter" type="number" min="0" max="100"><small>默认40；手动强制精读不受限制</small></label><label>长材料策略<select id="llmLongMaterial"><option value="head_tail">首尾证据压缩（单次，省点）</option><option value="chunked">分段笔记后综合（更慢更费点）</option></select></label></div><label>你的既往精读标准 / 额外要求<textarea id="readingPrompt" rows="5" placeholder="可粘贴你认可的精读范例或特别强调的检查项"></textarea></label></div>
     <div class="panel"><h2>自动汇报</h2><div class="form-grid three"><label>渠道<select id="notifyChannel"><option value="inbox">站内收件箱</option><option value="wecom_webhook">企业微信群机器人 Webhook</option><option value="serverchan">Server酱（个人微信）</option><option value="generic_webhook">通用 JSON Webhook</option></select></label><label>Webhook（留空保持不变）<input id="notifyWebhook" type="password" autocomplete="off"><small id="webhookStatus"></small></label><label>即时汇报阈值（0-100）<input id="instantThreshold" type="number" min="0" max="100"></label></div><div class="form-grid four"><label>每次至少积攒<input id="batchSize" type="number" min="1"></label><label>最长等待（分钟）<input id="maxWait" type="number" min="1"></label><label>最低科研相关度<input id="minRelevance" type="number" min="0" max="100"></label><label>每日最多汇报次数<input id="maxPerDay" type="number" min="1" max="12"></label></div><div class="form-grid three"><label>发送时段（逗号分隔）<input id="sendWindows" placeholder="08:30,13:00,20:30"><small>只在时段前后发送；其余时间自动攒着</small></label><label>重点方向细讲阈值<input id="highlightThreshold" type="number" min="0" max="100"><small>达到阈值的重点方向文章用三段讲清，其余只列一行</small></label><label>速览最多列几条<input id="digestLimit" type="number" min="3" max="30"></label></div><div class="form-grid three"><label>免打扰开始<input id="quietStart" type="time"></label><label>免打扰结束<input id="quietEnd" type="time"></label><label>重要内容可突破免打扰<select id="quietCritical"><option value="true">允许</option><option value="false">不允许</option></select></label></div><p class="muted">Server酱填写完整发送地址：https://sctapi.ftqq.com/你的SendKey.send。免费版每天 5 条，请用合并汇报控制条数。企业微信机器人 Webhook 通常为 https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...</p></div>
     <div class="panel"><h2>公众号与论文</h2><div class="form-grid two"><label>DataXAPI Key（可选，留空保持不变）<input id="dataxKey" type="password" autocomplete="off"><small id="dataxKeyStatus"></small></label><label>学术 API 联系邮箱<input id="paperEmail" type="email" placeholder="用于 Crossref / Unpaywall 礼貌调用"></label></div></div>
+    <h2 class="group-title">高级与诊断</h2>
     <div class="panel"><h2>原文删除识别自检</h2><p class="muted">拿资料库里已经确认被删除的文章、一篇正常文章、一个必然 404 的地址各探测一次，直接告诉你这套判断到底管不管用。也可以在任意条目详情页点「检查原文」单独验证。</p><div class="actions"><button id="goneSelfCheck" type="button">运行自检</button><span id="goneSelfCheckInfo" class="muted"></span></div><div id="goneSelfCheckResult"></div></div>
     <div class="panel"><h2>企业微信「微信客服」收件口</h2><p class="muted">用于接收你从微信转发到客服会话的文章链接。企业 ID 和客服账号 ID 在「采集来源」的 wecom_kf 配置中填写；这里只保存专用 Secret。</p><label>微信客服 Secret（留空保持不变）<input id="wecomKfSecret" type="password" autocomplete="off"><small id="wecomKfSecretStatus"></small></label><p class="muted">电脑关机期间的消息可在最近 3 天内于下次启动时补拉；开机后每 30 秒检查一次。</p></div>
     <div class="panel"><h2>B站无字幕视频</h2><div class="form-grid three"><label>本地语音识别<select id="asrEnabled"><option value="false">关闭，仅归档简介</option><option value="true">启用 faster-whisper</option></select></label><label>模型<input id="asrModel" placeholder="small / medium / large-v3"></label><label>最长视频（分钟）<input id="asrDuration" type="number" min="1"></label></div><p class="muted">启用前需在当前 E 盘 Python 环境安装 faster-whisper；模型与音频也只写入 E 盘。</p></div>
     <div class="sticky-save"><span id="settingsResult"></span><button type="submit" class="primary">保存全部设置</button></div>
   </form>
+  </div>
 </section>
 </main>
 </div>
@@ -196,5 +394,6 @@ B站 UP 主：也可使用你自建的 RSSHub 地址，kind 设为 video。</pre
 <div id="toast" class="toast"></div>
 <script src="/static/app.js"></script>
 <script src="/static/assistant.js"></script>
+<script src="/static/setup.js"></script>
 </body>
 </html>

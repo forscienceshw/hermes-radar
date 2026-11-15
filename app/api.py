@@ -22,7 +22,7 @@ from .logging_config import configure_logging
 from .paths import BLOB_DIR, DATA_DIR, LOG_DIR, WEB_DIR
 from .services.notify import flush_open_batches, send_test_notification
 from .services.relevance import assess_candidate
-from .settings import get_settings, save_settings, secret_status, set_secret
+from .settings import get_secret, get_settings, save_settings, secret_status, set_secret
 from .utils import (extract_bvid, extract_urls, job_error_is_retryable, json_loads, local_date, now_iso,
                     parse_time, redact_secrets, stable_json, utcnow)
 
@@ -35,7 +35,7 @@ app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
 # sends no Cache-Control at all, so the browser applied heuristic caching and kept
 # running a days-old app.js: the double-click zoom and the detail-dialog guard were
 # both shipped but never reached the page.
-_ASSET_FILES = ("styles.css", "app.js", "assistant.js")
+_ASSET_FILES = ("styles.css", "app.js", "assistant.js", "setup.js")
 
 
 def _asset_version(name: str) -> str:
@@ -1242,7 +1242,12 @@ def retry_notification(batch_id: str) -> dict[str, Any]:
 
 @app.post("/api/notifications/test")
 async def test_notification() -> dict[str, Any]:
-    await send_test_notification()
+    # 没配 webhook、webhook 写错、企业微信拒收，都是用户能自己处理的，
+    # 直接把原因说清楚；500 只会让人对着 "Internal Server Error" 发呆。
+    try:
+        await send_test_notification()
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from None
     return {"ok": True}
 
 
@@ -1404,6 +1409,79 @@ def retry_job(job_id: str) -> dict[str, Any]:
 async def workbuddy_models() -> dict[str, Any]:
     from .services.workbuddy_llm import list_workbuddy_models
     return {"models": await list_workbuddy_models()}
+
+
+class LlmTestInput(BaseModel):
+    provider: str = ""
+    base_url: str = ""
+    model: str = ""
+    api_key: str = ""
+
+
+@app.get("/api/setup/status")
+def setup_status() -> dict[str, Any]:
+    from .services import setup_status as status
+    return status.snapshot()
+
+
+@app.post("/api/setup/test/llm")
+async def setup_test_llm(data: LlmTestInput) -> dict[str, Any]:
+    from .services.setup_test import test_llm
+    settings = get_settings()["llm"]
+    provider = data.provider or settings.get("provider", "openai_compatible")
+    base_url = data.base_url or (settings.get("base_url") if provider == "openai_compatible" else "")
+    model = data.model or settings.get("model", "")
+    key = data.api_key or get_secret("llm_api_key")
+    return await test_llm(provider, base_url, model, key)
+
+
+@app.post("/api/setup/test/wechat")
+def setup_test_wechat() -> dict[str, Any]:
+    from .services.setup_test import test_wechat
+    return test_wechat()
+
+
+@app.post("/api/setup/wechat4/probe")
+def setup_wechat4_probe() -> dict[str, Any]:
+    """微信 4.x 的只读解锁验证：扫内存取密钥、逐个库试开，不读正文。"""
+    from .services import wechat4
+    return wechat4.probe()
+
+
+@app.post("/api/setup/wechat/enable")
+def setup_enable_wechat() -> dict[str, Any]:
+    """把「只读本机公众号」这个来源建好并打开，向导里一键完成。"""
+    from .utils import now_iso, stable_json
+    existing = (db.query("SELECT * FROM sources WHERE type='wechat_public_local' ORDER BY created_at") or [None])[0]
+    if existing:
+        db.execute("UPDATE sources SET enabled=1,next_poll_at=COALESCE(next_poll_at,?),updated_at=? WHERE id=?",
+                   (now_iso(), now_iso(), existing["id"]))
+        db.add_event("source_enabled", "配置向导：重新启用本机公众号读取", source_id=existing["id"])
+        return {"created": False, **_source_view(db.one("SELECT * FROM sources WHERE id=?", (existing["id"],)))}
+    source_id = str(uuid.uuid4())
+    timestamp = now_iso()
+    db.execute("""INSERT INTO sources(id,type,name,config_json,enabled,poll_seconds,next_poll_at,created_at,updated_at)
+        VALUES(?,?,?,?,?,?,?,?,?)""",
+               (source_id, "wechat_public_local", "本机微信公众号", stable_json({"use_catalog": True, "start_at_now": True}),
+                1, 300, timestamp, timestamp, timestamp))
+    db.add_event("source_created", "配置向导：创建本机公众号读取", source_id=source_id)
+    return {"created": True, **_source_view(db.one("SELECT * FROM sources WHERE id=?", (source_id,)))}
+
+
+@app.get("/api/setup/autostart")
+def setup_autostart() -> dict[str, Any]:
+    from .services import autostart
+    return autostart.status()
+
+
+@app.post("/api/setup/autostart")
+def setup_autostart_toggle(data: dict[str, Any]) -> dict[str, Any]:
+    from .services import autostart
+    wanted = bool(data.get("enabled"))
+    try:
+        return autostart.enable() if wanted else autostart.disable()
+    except OSError as exc:
+        raise HTTPException(500, f"改开机自启失败：{exc}") from exc
 
 
 @app.get("/api/settings")
