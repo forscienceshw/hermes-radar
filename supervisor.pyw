@@ -9,9 +9,24 @@ from pathlib import Path
 BASE = Path(__file__).resolve().parent
 DATA = BASE / "data"
 STOP = DATA / "STOP_RADAR"
+TRACE = DATA / "logs" / "supervisor.log"
 CREATE_NO_WINDOW = 0x08000000
 CREATE_NEW_PROCESS_GROUP = 0x00000200
 _LOCK_FILE = None
+
+
+def trace(message: str) -> None:
+    """守护进程自己也要留痕。
+
+    它平时没有控制台，一旦启动子进程时抛异常，进程会悄无声息地消失，
+    用户只看到"双击了没反应"。这份日志是唯一的现场。
+    """
+    try:
+        TRACE.parent.mkdir(parents=True, exist_ok=True)
+        with TRACE.open("a", encoding="utf-8") as handle:
+            handle.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} [{os.getpid()}] {message}\n")
+    except OSError:
+        pass
 
 
 def mutex_available():
@@ -91,7 +106,9 @@ def ensure_wechat():
 def main():
     available, handle = mutex_available()
     if not available:
+        trace("已有一个 supervisor 在跑，这个直接退出")
         return
+    trace("supervisor 启动")
     STOP.unlink(missing_ok=True)
     ensure_wechat()
     children = {"app.api": None, "app.worker": None}
@@ -103,10 +120,23 @@ def main():
                 if process is None or process.poll() is not None:
                     if process is not None:
                         failures[name] += 1
-                    children[name] = launch(name, DATA / "logs" / (name.replace(".", "-") + "-console.log"))
+                        trace(f"{name} 退出（code={process.returncode}），第 {failures[name]} 次重启")
+                    try:
+                        children[name] = launch(name, DATA / "logs" / (name.replace(".", "-") + "-console.log"))
+                        trace(f"已启动 {name} pid={children[name].pid}")
+                    except Exception as exc:
+                        # 起不来就记下来继续守，别让守护进程跟着一起死
+                        children[name] = None
+                        trace(f"启动 {name} 失败：{type(exc).__name__}: {exc}")
+                        time.sleep(5)
+                        continue
                     time.sleep(min(30, 2 ** min(failures[name], 4)))
             time.sleep(2)
+    except Exception as exc:
+        trace(f"主循环异常退出：{type(exc).__name__}: {exc}")
+        raise
     finally:
+        trace("supervisor 收工")
         for process in children.values():
             if process and process.poll() is None:
                 process.terminate()

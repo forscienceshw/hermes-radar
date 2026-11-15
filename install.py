@@ -366,14 +366,30 @@ def main(argv: list[str]) -> int:
     assume_yes = "--yes" in argv or "-y" in argv
     reconfigure = "--reconfigure" in argv
     reinstall = "--reinstall" in argv
+    dry_run = "--dry-run" in argv
     say("=" * 62)
     say("  Hermes 科研雷达 · 安装向导")
     say("=" * 62)
     say("  这个脚本会检查环境、装依赖、问几个配置问题。")
     say("  已经装过的话运行它是安全的，不会覆盖现有设置。")
+    if dry_run:
+        say("  (--dry-run：只检查，不装依赖、不写配置、不改注册表)")
 
     if not check_python():
         return 1
+    if dry_run:
+        step(2, "虚拟环境与依赖")
+        python = venv_python()
+        say(f"{OK} 虚拟环境已存在：{VENV}" if python.is_file()
+            else "  (演练) 会创建虚拟环境并安装 requirements.txt")
+        step(3, "配置")
+        say(f"  (演练) 会生成 {SETTINGS}" if not SETTINGS.is_file()
+            else f"{OK} 已有配置，会保留：{SETTINGS}")
+        step(4, "数据库")
+        say(f"  (演练) 会初始化 {ROOT / 'data' / 'radar.db'}")
+        say()
+        say("  演练结束。检查都通过，去掉 --dry-run 就会真的装。")
+        return 0
     if not ensure_venv(reinstall):
         return 1
     if not configure(assume_yes, reconfigure):

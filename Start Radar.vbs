@@ -1,8 +1,12 @@
 Option Explicit
-' Launcher shim only. All paths are derived from this file's own folder,
-' so the whole directory can be moved or copied to another machine as-is.
+' Launcher shim. All paths derive from this file's own folder, so the whole
+' directory can be moved or copied to another machine as-is.
 ' Keep this file ASCII-only: VBScript reads .vbs as ANSI, UTF-8 Chinese would garble.
-Dim shell, fso, base, pythonw, launcher
+'
+' Deliberately thin: it starts supervisor.pyw directly and nothing else. Every
+' extra layer here is a place the chain can break on someone else's machine, and
+' supervisor.pyw already clears a stale stop-flag itself.
+Dim shell, fso, base, pythonw, supervisor
 Set shell = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
 
@@ -10,7 +14,7 @@ base = fso.GetParentFolderName(WScript.ScriptFullName)
 shell.CurrentDirectory = base
 
 pythonw = base & "\.venv\Scripts\pythonw.exe"
-launcher = base & "\start_radar.pyw"
+supervisor = base & "\supervisor.pyw"
 
 If Not fso.FileExists(pythonw) Then
     MsgBox "Runtime not installed yet." & vbCrLf & vbCrLf & _
@@ -19,4 +23,9 @@ If Not fso.FileExists(pythonw) Then
     WScript.Quit 1
 End If
 
-shell.Run """" & pythonw & """ """ & launcher & """", 0, False
+If Not fso.FileExists(supervisor) Then
+    MsgBox "supervisor.pyw is missing - this folder looks incomplete.", 16, "Hermes Research Radar"
+    WScript.Quit 1
+End If
+
+shell.Run """" & pythonw & """ """ & supervisor & """", 0, False

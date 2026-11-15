@@ -23,6 +23,10 @@ STATE = ROOT / "data" / "supervisor.json"
 
 
 def message(text: str, error: bool = False) -> None:
+    # 无人值守排查时设 RADAR_NO_POPUP=1，消息走 stderr 而不是弹窗。
+    if os.environ.get("RADAR_NO_POPUP") == "1":
+        print(text, file=sys.stderr, flush=True)
+        return
     flags = 0x10 if error else 0x40
     ctypes.windll.user32.MessageBoxW(None, text, "Hermes 科研雷达", flags)
 
@@ -54,6 +58,13 @@ def alive(pid: int) -> bool:
     return psutil.pid_exists(pid)
 
 
+def open_browser() -> None:
+    # 自动化测试或远程桌面里不想弹窗口时设 RADAR_NO_BROWSER=1。
+    if os.environ.get("RADAR_NO_BROWSER") == "1":
+        return
+    webbrowser.open(base_url())
+
+
 def main() -> int:
     if not PYTHONW.is_file():
         message("还没装运行环境。\n\n请先在这个文件夹里运行：\n    python install.py", error=True)
@@ -69,7 +80,7 @@ def main() -> int:
         pass
 
     if alive(supervisor_pid()):
-        webbrowser.open(base_url())
+        open_browser()
         return 0
 
     env = dict(os.environ)
@@ -91,7 +102,7 @@ def main() -> int:
         message("服务好像没起来。\n\n看看这个文件里最后几行写了什么：\n"
                 f"{ROOT / 'data' / 'logs' / 'app-api-console.log'}", error=True)
         return 1
-    webbrowser.open(base_url())
+    open_browser()
     return 0
 
 
