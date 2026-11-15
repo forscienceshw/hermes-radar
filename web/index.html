@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Hermes 科研雷达</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="brand-mark">H</span><div><strong>Hermes 科研雷达</strong><small>持续收集 · 证据精读 · idea 连接</small></div></div>
+  <div class="health"><span id="healthDot" class="dot"></span><span id="healthText">正在连接后台</span><button id="taskQueueBtn" class="task-chip" type="button">任务队列 <b id="taskPendingBadge">0</b></button></div>
+</header>
+<div class="layout">
+<nav class="sidebar">
+  <div class="nav-scroll">
+    <button class="nav active" data-view="dashboard">总览</button>
+    <button class="nav" data-view="library">资料库</button>
+    <button class="nav" data-view="papers">论文中心</button>
+    <button class="nav" data-view="ideas">我的 ideas 与笔记</button>
+    <button class="nav" data-view="wechat">公众号库</button>
+    <button class="nav" data-view="notifications">汇报记录</button>
+    <button class="nav" data-view="sources">采集来源</button>
+    <button class="nav" data-view="settings">设置</button>
+  </div>
+  <div class="storage-note">数据位置<br><code>E:\HermesResearchRadar\data</code></div>
+</nav>
+<main>
+<section id="dashboard" class="view active">
+  <div class="section-title"><div><h1>科研信息流水线</h1><p>重要发现即时汇报，普通内容按数量和等待时间自动合并。</p></div></div>
+  <div id="stats" class="stat-grid"></div>
+  <div id="creditsPanel" class="panel credits-panel"></div>
+  <div id="dashboardProgress" class="panel progress-panel"></div>
+  <div class="panel">
+    <h2>收录链接或分享文本</h2><p class="muted">支持公众号、普通网页、B站视频和 DOI 页面；一次可粘贴多个链接。</p>
+    <textarea id="quickText" rows="4" placeholder="粘贴链接或整段分享文字"></textarea>
+    <div class="actions"><button id="ingestBtn" class="primary">立即进入流水线</button><span id="ingestResult" class="muted"></span></div>
+  </div>
+  <div class="panel"><div class="panel-head"><h2>最近运行事件</h2><button data-refresh="events">刷新</button></div><div id="events" class="event-list"></div></div>
+</section>
+<section id="sources" class="view">
+  <div class="section-title"><div><h1>采集来源</h1><p>每个来源独立调度、退避和报告故障；停用来源不会删除已归档资料。</p></div></div>
+  <div class="notice">当前微信3.x可只读 PublicMsg 并增量追新，无需第三方 API；默认与「公众号库」的启用名单联动。覆盖范围以本机微信实际接收和同步的消息为准，微信需保持登录；DataXAPI 仅作为可选的外部补扫来源。</div>
+  <div class="panel"><h2>批量导入我的公众号</h2><p class="muted">每行粘贴一个公众号准确名称，自动去重。也可把微信“通讯录 → 公众号”列表截图发给 Hermes 整理成名单，无需提供微信密码。</p>
+    <textarea id="wechatNames" rows="7" placeholder="例如：&#10;Nature Portfolio&#10;Science 科学&#10;生物世界"></textarea>
+    <div class="form-grid three"><label>首次回溯天数<input id="wechatBackfillDays" type="number" min="1" max="365" value="30"></label><label>调度检查间隔（秒）<input id="wechatPollSeconds" type="number" min="30" value="300"><small>公众号会按更新频率自适应调用接口；重要号可在配置中单独设 interval_seconds</small></label><label>第三方 Key 状态<small>在「设置 → 公众号与论文」填写 DataXAPI Key 后自动启用</small></label></div>
+    <div class="actions"><button id="importWechat" class="primary">保存清单并开始监测</button><span id="wechatImportResult" class="muted"></span></div>
+  </div>
+  <div class="panel"><h2>新增其他来源</h2>
+    <div class="form-grid three"><label>名称<input id="sourceName" placeholder="例如：科研 RSS"></label><label>类型<select id="sourceType"><option value="rss">RSS / Atom / RSSHub</option><option value="wechat_datax">公众号列表（DataXAPI）</option><option value="wecom_kf">企业微信微信客服（接收转发）</option><option value="wechat_local">本机微信指定聊天窗口（只读）</option><option value="wechat_public_local">本机微信公众号消息库（零API费用）</option><option value="bilibili_datax">B站关键词 / UP主（DataXAPI）</option><option value="jsonl">分享桥 JSONL</option></select></label><label>检查间隔（秒）<input id="sourcePoll" type="number" min="2" value="300"></label></div>
+    <label>来源配置（JSON）<textarea id="sourceConfig" rows="5">{"url":"https://example.com/feed.xml","kind":"article"}</textarea></label>
+    <div class="actions"><button id="addSource" class="primary">添加并持续运行</button><span id="sourceResult" class="muted"></span></div>
+    <details><summary>查看配置示例</summary><pre>公众号：{"accounts":[{"name":"公众号准确名称","id":"gh_原始编号"}],"max_price_per_call":"0.05","initial_backfill_days":30,"overlap_hours":24,"max_pages_per_account_per_run":3,"adaptive_polling":true}
+分享桥：{"path":"E:\\HermesResearchRadar\\data\\share_inbox.jsonl","start_at_end":false}
+企业微信客服：{"corp_id":"ww...","open_kf_id":"wk...","start_at_now":true}
+当前微信指定聊天窗口：{"target_wxid":"对方微信号","target_name":"窗口名称","history_mode":"index_only"}（历史仅索引，新转发自动处理；仅限已验证的微信3.x）
+本机公众号消息库：{"start_at_now":true,"use_catalog":true,"max_rows_per_poll":1000}（联动重点账号；改为false可设initial_backfill_days回扫）
+B站监测：{"queries":["基因编辑 研究进展","蛋白质结构预测"],"up_ids":["8047632"],"sort":"latest","min_views":100,"exclude_keywords":["课程","广告"]}
+B站 UP 主：也可使用你自建的 RSSHub 地址，kind 设为 video。</pre></details>
+  </div>
+  <div id="sourcesList" class="card-list"></div>
+</section>
+<section id="wechat" class="view">
+  <div class="section-title"><div><h1>我的公众号库</h1><p>按 OCR 分类结果管理 1,460 个公众号。启用名单同时控制本机微信监测和可选 DataX 补扫；本机监测按名称精确匹配，无需补内部编号。</p></div></div>
+  <div id="wechatStats" class="stat-grid"></div>
+  <div class="notice">本机微信监测使用这里的启用名单，不消耗 DataX 余额。DataX 仍保持停用，仅在你主动开启后用于外部补扫；本机只能看到微信实际接收或同步的公众号文章。</div>
+  <div class="toolbar"><input id="waQ" placeholder="搜索名称、简介或分类理由"><select id="waCategory"><option value="">全部分类</option></select><select id="waFit"><option value="">全部建议</option><option value="CORE">CORE 核心</option><option value="OPTIONAL">OPTIONAL 可选</option><option value="EXCLUDE">EXCLUDE 排除</option></select><select id="waEnabled"><option value="">全部状态</option><option value="1">已启用</option><option value="0">已停用</option></select></div>
+  <div class="toolbar"><button id="waCheckPage">勾选当前页</button><button id="waUncheckPage">取消当前页</button><button id="waCheckAll">勾选全部筛选结果</button><button id="waEnable" class="primary">启用已勾选</button><button id="waDisable">停用已勾选</button><span id="waSelectedInfo" class="muted">已勾选 0 个</span></div>
+  <div class="table-wrap"><table><thead><tr><th><input id="waHeaderCheck" type="checkbox"></th><th>公众号</th><th>分类</th><th>建议</th><th>状态</th><th>理由 / 最近文章</th></tr></thead><tbody id="waRows"></tbody></table></div>
+  <div class="actions" style="margin-top:14px"><button id="waPrev">上一页</button><span id="waPageInfo" class="muted"></span><button id="waNext">下一页</button></div>
+</section>
+<section id="library" class="view">
+  <div class="section-title"><div><h1>资料库</h1><p>仅保留科研相关公众号文章和B站视频；其他来源及非科研内容会在本地过滤。搜索会同时匹配标题、全文、字幕、摘要与标签，多个词用空格分开。</p></div></div>
+  <div id="libraryProgress" class="panel progress-panel"></div>
+  <div class="toolbar filter-bar">
+    <input id="searchQ" placeholder="搜索机制、作者、DOI、视频内容……">
+    <select id="searchKind"><option value="">全部类型</option><option value="article">文章</option><option value="video">视频</option></select>
+    <select id="searchStatus"><option value="">全部状态</option><option value="discovered">仅历史索引</option><option value="ready">已精读</option><option value="archived">已归档</option><option value="filtered">低相关已留存</option><option value="insufficient">无法详细归档</option><option value="error">失败</option></select>
+    <select id="searchRange" title="按发布时间筛选"><option value="">全部时间</option><option value="1">今天</option><option value="3">近 3 天</option><option value="7">近 7 天</option><option value="30">近 30 天</option><option value="90">近 90 天</option><option value="365">近一年</option></select>
+    <select id="searchCollection" title="按收藏夹筛选"><option value="">全部收藏夹</option><option value="__none__">未收藏</option></select>
+    <button id="manageCollections" type="button">管理收藏夹</button>
+    <label class="check"><input id="searchExcluded" type="checkbox"> 含已过滤</label>
+    <button id="searchBtn" class="primary">搜索</button>
+  </div>
+  <div id="itemsSummary" class="list-summary muted"></div>
+  <div id="itemsList" class="item-list"></div>
+  <div id="pager" class="pager"></div>
+</section>
+<section id="papers" class="view">
+  <div class="section-title"><div><h1>论文中心</h1><p>开放获取自动下载；其余保留完整书目信息和失败原因。</p></div><div class="actions"><a class="button" href="/api/papers/needed.csv">导出待下载 CSV</a><button id="copyPapers">复制代下清单</button></div></div>
+  <div class="toolbar"><select id="paperStatus"><option value="needed">待人工/代下</option><option value="downloaded">已下载</option><option value="">全部</option><option value="failed">下载失败</option><option value="closed">未发现开放副本</option></select></div>
+  <div class="table-wrap"><table><thead><tr><th>论文</th><th>年份 / 期刊</th><th>DOI</th><th>状态</th><th>操作</th></tr></thead><tbody id="papersList"></tbody></table></div>
+</section>
+<section id="ideas" class="view">
+  <div class="section-title"><div><h1>我的 ideas 与笔记</h1><p>idea 会参与新文章关联；笔记是从精读里随手剪下来的句子和想法。</p></div></div>
+  <div class="panel"><h2 id="ideaFormTitle">新增 idea</h2><input type="hidden" id="ideaId"><label>标题<input id="ideaTitle" placeholder="一个具体假设、研究方向或长期问题"></label><label>内容<textarea id="ideaContent" rows="6" placeholder="背景、已知证据、猜想、可行实验、困惑……"></textarea></label><label>标签（逗号分隔）<input id="ideaTags"></label><div class="actions"><button id="saveIdea" class="primary">保存 idea</button><button id="cancelIdea">清空</button></div></div>
+  <div class="toolbar idea-tabs">
+    <button class="primary" data-idea-tab="ideas">Ideas</button><button data-idea-tab="notes">笔记库</button>
+    <input id="ideaQ" placeholder="搜索标题、正文或标签">
+    <select id="ideaRange" title="按更新时间筛选"><option value="">全部时间</option><option value="1">今天</option><option value="3">近 3 天</option><option value="7">近 7 天</option><option value="30">近 30 天</option><option value="90">近 90 天</option><option value="365">近一年</option></select>
+    <select id="ideaCollection" title="按收藏夹筛选"><option value="">全部收藏夹</option><option value="__none__">未收藏</option></select>
+    <button id="manageIdeaCollections" type="button">管理收藏夹</button>
+    <select id="noteItemFilter" style="display:none"><option value="">全部文章</option></select>
+  </div>
+  <div id="ideasList" class="card-list"></div>
+  <div id="notesList" class="card-list" style="display:none"></div>
+</section>
+<section id="notifications" class="view">
+  <div class="section-title"><div><h1>汇报记录</h1><p>发送采用持久队列；进程重启不会重新生成或重复入队。</p></div><div class="actions"><button id="flushNotifications" class="primary">立即合并当前待汇报</button><button id="testNotification">测试通知渠道</button></div></div>
+  <div id="notificationsList" class="card-list"></div>
+</section>
+<section id="settings" class="view">
+  <div class="section-title"><div><h1>设置</h1><p>保存后新任务采用新配置；端口和并发数等标注项需重启。</p></div></div>
+  <form id="settingsForm">
+    <div class="panel"><h2>大模型精读</h2><div class="form-grid four"><label>启用语义精读<select id="llmEnabled"><option value="false">关闭，仅规则初筛</option><option value="true">启用</option></select></label><label>调用方式<select id="llmProvider"><option value="workbuddy_cloud">WorkBuddy 点数（官方云 SDK）</option><option value="openai_compatible">OpenAI 兼容 API</option><option value="ollama">Ollama 本地模型（免 Key）</option></select></label><label>Base URL<input id="llmBase" placeholder="https://api.deepseek.com/v1"></label><label>模型<input id="llmModel"></label></div><p class="muted">WorkBuddy 点数模式已实测可由后台调用，默认 hy4free，也可填 deepseek-v4-pro 等目录内模型 ID。Ollama 默认地址为 http://127.0.0.1:11434/v1。</p><div class="actions"><button id="loadWorkbuddyModels" type="button">查看 WorkBuddy 可用模型</button><span id="workbuddyModelInfo" class="muted"></span></div><div class="accounts-head"><h3>对话模型账户</h3><button id="addAccount" type="button">添加账户</button></div><p class="muted">用于右侧「问 Hermes」对话。默认账户沿用上面的精读模型；也可以在这里加 DeepSeek、Kimi、通义等 OpenAI 兼容端点。</p><div id="accountList" class="account-list"></div><div class="form-grid three"><label>API Key（留空保持不变）<input id="llmKey" type="password" autocomplete="off"><small id="llmKeyStatus"></small></label><label>启用图片理解<select id="visionEnabled"><option value="false">关闭</option><option value="true">启用（需模型支持）</option></select></label><label>每日调用上限<input id="llmDaily" type="number" min="1"></label><label>云精读本地初筛门槛<input id="llmPrefilter" type="number" min="0" max="100"><small>默认40；手动强制精读不受限制</small></label><label>长材料策略<select id="llmLongMaterial"><option value="head_tail">首尾证据压缩（单次，省点）</option><option value="chunked">分段笔记后综合（更慢更费点）</option></select></label></div><label>你的既往精读标准 / 额外要求<textarea id="readingPrompt" rows="5" placeholder="可粘贴你认可的精读范例或特别强调的检查项"></textarea></label></div>
+    <div class="panel"><h2>自动汇报</h2><div class="form-grid three"><label>渠道<select id="notifyChannel"><option value="inbox">站内收件箱</option><option value="wecom_webhook">企业微信群机器人 Webhook</option><option value="serverchan">Server酱（个人微信）</option><option value="generic_webhook">通用 JSON Webhook</option></select></label><label>Webhook（留空保持不变）<input id="notifyWebhook" type="password" autocomplete="off"><small id="webhookStatus"></small></label><label>即时汇报阈值（0-100）<input id="instantThreshold" type="number" min="0" max="100"></label></div><div class="form-grid four"><label>每次至少积攒<input id="batchSize" type="number" min="1"></label><label>最长等待（分钟）<input id="maxWait" type="number" min="1"></label><label>最低科研相关度<input id="minRelevance" type="number" min="0" max="100"></label><label>每日最多汇报次数<input id="maxPerDay" type="number" min="1" max="12"></label></div><div class="form-grid three"><label>发送时段（逗号分隔）<input id="sendWindows" placeholder="08:30,13:00,20:30"><small>只在时段前后发送；其余时间自动攒着</small></label><label>重点方向细讲阈值<input id="highlightThreshold" type="number" min="0" max="100"><small>达到阈值的重点方向文章用三段讲清，其余只列一行</small></label><label>速览最多列几条<input id="digestLimit" type="number" min="3" max="30"></label></div><div class="form-grid three"><label>免打扰开始<input id="quietStart" type="time"></label><label>免打扰结束<input id="quietEnd" type="time"></label><label>重要内容可突破免打扰<select id="quietCritical"><option value="true">允许</option><option value="false">不允许</option></select></label></div><p class="muted">Server酱填写完整发送地址：https://sctapi.ftqq.com/你的SendKey.send。免费版每天 5 条，请用合并汇报控制条数。企业微信机器人 Webhook 通常为 https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...</p></div>
+    <div class="panel"><h2>公众号与论文</h2><div class="form-grid two"><label>DataXAPI Key（可选，留空保持不变）<input id="dataxKey" type="password" autocomplete="off"><small id="dataxKeyStatus"></small></label><label>学术 API 联系邮箱<input id="paperEmail" type="email" placeholder="用于 Crossref / Unpaywall 礼貌调用"></label></div></div>
+    <div class="panel"><h2>原文删除识别自检</h2><p class="muted">拿资料库里已经确认被删除的文章、一篇正常文章、一个必然 404 的地址各探测一次，直接告诉你这套判断到底管不管用。也可以在任意条目详情页点「检查原文」单独验证。</p><div class="actions"><button id="goneSelfCheck" type="button">运行自检</button><span id="goneSelfCheckInfo" class="muted"></span></div><div id="goneSelfCheckResult"></div></div>
+    <div class="panel"><h2>企业微信「微信客服」收件口</h2><p class="muted">用于接收你从微信转发到客服会话的文章链接。企业 ID 和客服账号 ID 在「采集来源」的 wecom_kf 配置中填写；这里只保存专用 Secret。</p><label>微信客服 Secret（留空保持不变）<input id="wecomKfSecret" type="password" autocomplete="off"><small id="wecomKfSecretStatus"></small></label><p class="muted">电脑关机期间的消息可在最近 3 天内于下次启动时补拉；开机后每 30 秒检查一次。</p></div>
+    <div class="panel"><h2>B站无字幕视频</h2><div class="form-grid three"><label>本地语音识别<select id="asrEnabled"><option value="false">关闭，仅归档简介</option><option value="true">启用 faster-whisper</option></select></label><label>模型<input id="asrModel" placeholder="small / medium / large-v3"></label><label>最长视频（分钟）<input id="asrDuration" type="number" min="1"></label></div><p class="muted">启用前需在当前 E 盘 Python 环境安装 faster-whisper；模型与音频也只写入 E 盘。</p></div>
+    <div class="sticky-save"><span id="settingsResult"></span><button type="submit" class="primary">保存全部设置</button></div>
+  </form>
+</section>
+</main>
+</div>
+<div id="detailBackdrop" class="detail-backdrop"></div>
+<dialog id="detailDialog"><div class="dialog-head"><button id="closeDialog" aria-label="关闭">关闭</button></div><div id="detailContent"></div></dialog>
+<div id="taskBackdrop" class="task-backdrop"></div>
+<aside id="taskDrawer" class="task-drawer" aria-hidden="true">
+  <div class="task-drawer-head">
+    <div class="panel-head"><h2>任务队列</h2><button id="taskClose" type="button">关闭</button></div>
+    <div id="taskSummary" class="task-summary"></div>
+    <div class="actions"><button data-task-filter="active" class="primary">进行中</button><button data-task-filter="failed">失败</button><button data-task-filter="done">最近完成</button><button data-task-filter="all">全部</button><button id="taskRefresh">刷新</button><span id="taskUpdated" class="muted"></span></div>
+  </div>
+  <div id="taskList" class="task-list"></div>
+</aside>
+<div id="chatBackdrop" class="chat-backdrop"></div>
+<aside id="chatDrawer" class="chat-drawer" aria-hidden="true">
+  <div class="chat-head">
+    <div class="chat-title-row">
+      <select id="chatModel" title="切换模型"></select>
+      <button id="chatWebSearch" class="chat-toggle" type="button" aria-pressed="false" title="开启后先联网检索，再回答">联网</button>
+      <button id="chatSessions" type="button">记录</button>
+      <button id="chatNew" type="button">新对话</button>
+      <button id="chatClose" type="button">关闭</button>
+    </div>
+    <div id="chatContext" class="chat-context"></div>
+  </div>
+  <div id="chatMessages" class="chat-messages"></div>
+  <div class="chat-composer">
+    <textarea id="chatInput" rows="3" placeholder="问这篇文章的任何细节，比如「第三步那个对照为什么必要？」"></textarea>
+    <div class="chat-actions"><span id="chatStatus" class="muted">Enter 发送 · Shift+Enter 换行</span><button id="chatSend" class="primary" type="button">发送</button></div>
+  </div>
+  <div id="chatSessionsPanel" class="chat-sessions" hidden></div>
+</aside>
+<button id="chatFab" class="chat-fab" type="button" title="针对当前文章提问">问 AI</button>
+<div id="notePop" class="note-pop" hidden>
+  <div class="note-pop-head"><b>存到笔记库</b><button id="notePopClose" type="button">×</button></div>
+  <blockquote id="notePopQuote"></blockquote>
+  <textarea id="notePopBody" rows="3" placeholder="补一句你的想法（可留空）"></textarea>
+  <div class="actions"><button id="notePopSave" class="primary" type="button">保存笔记</button><span id="notePopFrom" class="muted"></span></div>
+</div>
+<div id="collectionPop" class="collection-pop" hidden>
+  <div class="collection-pop-head"><b>收藏到</b><button id="collectionPopClose" type="button">×</button></div>
+  <div id="collectionPopList" class="collection-pop-list"></div>
+  <div class="collection-pop-new">
+    <input id="collectionNewName" placeholder="新建收藏夹">
+    <button id="collectionCreate" type="button">新建并加入</button>
+  </div>
+</div>
+<dialog id="collectionDialog" class="mini-dialog">
+  <div class="dialog-head"><b id="collectionDialogTitle">管理收藏夹</b><button id="collectionDialogClose" type="button">关闭</button></div>
+  <div id="collectionDialogList" class="collection-manage"></div>
+  <div class="collection-pop-new">
+    <input id="collectionManageName" placeholder="新收藏夹名称">
+    <button id="collectionManageCreate" class="primary" type="button">新建</button>
+  </div>
+</dialog>
+<div id="selectionBar" class="selection-bar" hidden>
+  <span id="selectionInfo"></span>
+  <button type="button" data-sel-act="ask" class="primary">问这段</button>
+  <button type="button" data-sel-act="note">存笔记</button>
+  <button type="button" data-sel-act="copy">复制</button>
+  <button type="button" data-sel-act="clear">完成</button>
+</div>
+<dialog id="imageViewer" class="image-viewer" aria-label="图片查看器">
+  <div class="image-viewer-bar">
+    <span id="imageViewerInfo">双击图片可放大，滚轮缩放，拖动平移</span>
+    <button type="button" id="imageViewerOut" title="缩小">−</button>
+    <button type="button" id="imageViewerReset">1:1</button>
+    <button type="button" id="imageViewerIn" title="放大">+</button>
+    <button type="button" id="imageViewerClose">关闭 (Esc)</button>
+  </div>
+  <div class="image-viewer-stage" id="imageViewerStage"><img id="imageViewerImg" alt=""></div>
+</dialog>
+<div id="toast" class="toast"></div>
+<script src="/static/app.js"></script>
+<script src="/static/assistant.js"></script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+{
+  "name": "hermes-research-radar-cloud",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:cloud": "esbuild cloud/probe.mjs --bundle --platform=node --format=esm --outfile=cloud/dist/probe.mjs && esbuild cloud/llm-worker.mjs --bundle --platform=node --format=esm --outfile=cloud/dist/llm-worker.mjs",
+    "probe:cloud": "npm run build:cloud && node cloud/dist/probe.mjs"
+  },
+  "dependencies": {
+    "@tencent-ai/workbuddy-cloud-sdk": "dev"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}

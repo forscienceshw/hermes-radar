@@ -1,0 +1,16 @@
+fastapi>=0.115,<1
+uvicorn>=0.34,<1
+httpx>=0.28,<1
+beautifulsoup4>=4.12,<5
+lxml>=5.3,<7
+feedparser>=6.0,<7
+trafilatura>=2.0,<3
+pypdf>=5.0,<7
+yt-dlp>=2025.1.1
+python-multipart>=0.0.20,<1
+psutil>=6,<8; sys_platform == "win32"
+pymem>=1.13,<2; sys_platform == "win32"
+pywin32>=308,<312; sys_platform == "win32"
+pycryptodome>=3.21,<4; sys_platform == "win32"
+lz4>=4.3,<5; sys_platform == "win32"
+sqlcipher3-wheels==0.5.7; sys_platform == "win32"
