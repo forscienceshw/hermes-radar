@@ -36,7 +36,8 @@ python radar.py config-restore          # 只把设置恢复成上次保存的�
 
 ### 装到新机器
 
-把整个文件夹拷过去，然后：
+把整个文件夹拷过去，然后双击 **`Install.vbs`**（会弹一个黑窗口，在里面回答问题）。
+命令行也可以：
 
 ```bash
 python install.py
@@ -45,7 +46,9 @@ python install.py
 安装向导会建虚拟环境、装依赖、问几个配置问题（端口、用哪个模型、要不要推送）、
 把数据库建起来。已经装过再运行是安全的，不会覆盖现有设置。
 
-`python install.py --reconfigure` 重新配一遍，`--reinstall` 重装依赖。
+`python install.py --reconfigure` 重新配一遍，
+`--reinstall` 重装依赖，
+`--dry-run` 只检查不安装（想确认这个包完整时用）。
 
 ### 只搬程序，不搬资料
 
@@ -89,6 +92,9 @@ data/         运行时数据，不入库
 VERSION       版本号
 radar.py      所有日常操作的入口（版本控制 / 启停 / 打包）
 install.py    安装向导
+Install.vbs   双击安装（给不习惯命令行的人）
+Start Radar.vbs / Stop Radar.vbs   双击启停
+AGENTS.md     改动前后要遵守的规矩
 ```
 
 ## 依赖

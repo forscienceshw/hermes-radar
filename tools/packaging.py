@@ -29,6 +29,7 @@ INCLUDE_FILES = (
     "stop_radar.pyw",
     "Start Radar.vbs",
     "Stop Radar.vbs",
+    "Install.vbs",
     "package.json",
     "package-lock.json",
 )
@@ -137,13 +138,17 @@ def _install_note(version: str) -> str:
     return f"""Hermes 科研雷达 {version} —— 安装说明
 ==================================================
 
-一、装依赖
-   1. 装 Python 3.11 或更新的版本，安装时勾选 "Add Python to PATH"
-   2. 双击本目录里的 install.py（或在命令行运行 python install.py）
-      安装向导会自己建虚拟环境、装依赖、问几个配置问题
+一、装依赖（两种方式，选一种）
+   A. 双击 "Install.vbs"
+      会弹一个黑色窗口，在里面回答几个问题就行。装完窗口会停住，看完再关。
+   B. 命令行（如果 A 打不开）
+      在命令行里运行：python install.py
+
+   跑之前电脑上要有 Python 3.11 或更新版本。没有的话先去
+   https://www.python.org/downloads/ 装一个，安装时勾选 "Add Python to PATH"。
 
 二、启动
-   双击 "Start Radar.vbs"，浏览器打开 http://127.0.0.1:8766
+   双击 "Start Radar.vbs"，然后浏览器打开 http://127.0.0.1:8766
 
 三、想停
    双击 "Stop Radar.vbs"
@@ -156,8 +161,12 @@ def _install_note(version: str) -> str:
 
 五、这个包里没有什么
    - 不含任何文章、图片、数据库（那些在你的 data/ 目录里）
-   - 不含密钥。安装向导会问你要，密钥只存在本机
+   - 不含密钥。安装向导会问你要，密钥只存在本机，换机器要重填
    - 微信公众号自动监测需要本机装微信 3.x 并解密其数据库，属于可选功能
+
+六、想连资料一起搬
+   把原机器的 data/ 整个目录拷到同一个位置，再跑一次 Install.vbs。
+   已有数据库不会被覆盖。
 """
 
 
