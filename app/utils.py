@@ -176,11 +176,37 @@ def local_date() -> str:
     return datetime.now().astimezone().date().isoformat()
 
 
+_HTML_HEAD_RE = re.compile(r"<(!doctype|html|head|body|meta|title)\b", re.I)
+_HTML_TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
+
+
+def humanize_error_text(text: str, limit: int = 1500) -> str:
+    """把原始报错变成一句人话，绝不让整页 HTML 落进 items.error。
+
+    正常情况下接口错误是 JSON。但网关抽风时会直接返回一整页 HTML（腾讯 COS 的
+    「WAF拦截页面」就是这样），原样存库等于在资料库里躺 8000 字网页源码。
+    """
+    value = (text or "").strip()
+    if not value:
+        return ""
+    if not _HTML_HEAD_RE.search(value[:800]):
+        return value[:limit]
+    match = _HTML_TITLE_RE.search(value[:4000])
+    label = re.sub(r"\s+", " ", match.group(1)).strip()[:40] if match else "网页"
+    head = value[:4000]
+    if "WAF" in head.upper() or "拦截" in head or "BLOCK" in head.upper():
+        return (f"接口返回了「{label}」而不是数据，通常是网关临时风控或限流，"
+                f"过几分钟重试即可；内容本身没有问题")
+    return f"接口返回了网页（{label}）而不是数据，可能是网关异常，稍后重试"
+
+
 def job_error_is_retryable(message: str) -> bool:
     text = (message or "").lower()
     transient = ("timeout", "timed out", "connection", "temporarily", "temporary failure",
                  "429", "502", "503", "504", "database is locked", "gateway_stream_interrupted",
-                 "quota_rate_limited", "network", "eof occurred")
+                 "quota_rate_limited", "network", "eof occurred",
+                 "超时", "连接失败", "连接被重置", "网络异常", "网络错误",
+                 "临时风控", "网关临时", "稍后重试", "过几分钟重试")
     permanent = ("invalid_parameter", "invalid parameter", "keyerror", "typeerror",
                  "attributeerror", "syntaxerror", "not found", "401", "403", "404",
                  "insufficient_balance", "authentication")

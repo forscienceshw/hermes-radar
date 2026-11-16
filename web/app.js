@@ -20,10 +20,227 @@ const WA_LABELS={LIFE_MOLECULAR:'生命科学基础',STRUCT_BIO:'结构生物学
 let waAll=[],waFiltered=[],waPage=0,waLoaded=false;const waSelected=new Set(),WA_PAGE_SIZE=60;
 async function loadWechatAccounts(){const data=await api('/api/wechat/accounts?limit=2000');waAll=data.items;const s=data.stats||{};const cards=[['收录总数',s.total||0],['已启用',s.enabled||0],['CORE',s.core||0],['OPTIONAL',s.optional||0],['EXCLUDE',s.excluded||0],['已停用',(s.total||0)-(s.enabled||0)]];$('#wechatStats').innerHTML=cards.map(([k,v])=>`<div class="stat"><strong>${v}</strong><span>${k}</span></div>`).join('');if(!waLoaded){$('#waCategory').innerHTML='<option value="">全部分类</option>'+Object.entries(WA_LABELS).map(([k,v])=>`<option value="${k}">${v}</option>`).join('');waLoaded=true}applyWaFilter()}
 function applyWaFilter(){const q=$('#waQ').value.trim().toLowerCase(),cat=$('#waCategory').value,fit=$('#waFit').value,en=$('#waEnabled').value;waFiltered=waAll.filter(x=>(!q||(x.name+' '+x.description+' '+x.reason+' '+(x.recent_article?x.recent_article.title:'')+' '+WA_LABELS[x.category_code]).toLowerCase().includes(q))&&(!cat||x.category_code===cat)&&(!fit||x.fit===fit)&&(!en||String(x.enabled)===en));waPage=0;renderWechat()}
-function renderWechat(){const pages=Math.max(1,Math.ceil(waFiltered.length/WA_PAGE_SIZE));waPage=Math.min(waPage,pages-1);const rows=waFiltered.slice(waPage*WA_PAGE_SIZE,(waPage+1)*WA_PAGE_SIZE);$('#waRows').innerHTML=rows.map(x=>`<tr><td><input type="checkbox" data-wa-check="${x.id}" ${waSelected.has(x.id)?'checked':''}></td><td><b>${esc(x.name)}</b>${x.account_id?`<div class="update">${esc(x.account_id)}</div>`:''}</td><td><span class="badge">${esc(WA_LABELS[x.category_code]||x.category_code)}</span></td><td><span class="badge ${x.fit.toLowerCase()}">${x.fit}</span></td><td><span class="badge ${x.enabled?'ok':'wait'}">${x.enabled?'已启用':'已停用'}</span></td><td><span class="reason">${esc(x.reason||'—')}</span><br><span class="recent">${x.recent_article?`最近：${esc((x.recent_article.title||'').slice(0,70))} · ${time(x.recent_article.discovered_at)}`:'<span class="muted">本站还没收录它的文章</span>'}</span>${x.description?`<br><small class="muted">简介：${esc(x.description.slice(0,56))}</small>`:''}</td></tr>`).join('')||'<tr><td colspan="6" class="muted">没有匹配的公众号</td></tr>';$('#waPageInfo').textContent=`第 ${waPage+1}/${pages} 页 · 筛选结果 ${waFiltered.length} 个`;$('#waSelectedInfo').textContent=`已勾选 ${waSelected.size} 个`;$('#waHeaderCheck').checked=rows.length>0&&rows.every(x=>waSelected.has(x.id));$('#waPrev').disabled=waPage<=0;$('#waNext').disabled=waPage>=pages-1}
+function renderWechat(){const pages=Math.max(1,Math.ceil(waFiltered.length/WA_PAGE_SIZE));waPage=Math.min(waPage,pages-1);const rows=waFiltered.slice(waPage*WA_PAGE_SIZE,(waPage+1)*WA_PAGE_SIZE);$('#waRows').innerHTML=rows.map(x=>`<tr><td><input type="checkbox" data-wa-check="${x.id}" ${waSelected.has(x.id)?'checked':''}></td><td><b class="wa-open" data-wa-open="${x.id}" title="点开看它最近的推文">${esc(x.name)}</b>${x.account_id?`<div class="update">${esc(x.account_id)}</div>`:''}</td><td><span class="badge">${esc(WA_LABELS[x.category_code]||x.category_code)}</span></td><td><span class="badge ${x.fit.toLowerCase()}">${x.fit}</span></td><td><span class="badge ${x.enabled?'ok':'wait'}">${x.enabled?'已启用':'已停用'}</span></td><td><span class="reason">${esc(x.reason||'—')}</span><br><span class="recent">${x.recent_article?`最近：${esc((x.recent_article.title||'').slice(0,70))} · ${time(x.recent_article.discovered_at)}`:'<span class="muted">本站还没收录它的文章</span>'}</span>${x.description?`<br><small class="muted">简介：${esc(x.description.slice(0,56))}</small>`:''}</td></tr>`).join('')||'<tr><td colspan="6" class="muted">没有匹配的公众号</td></tr>';$('#waPageInfo').textContent=`第 ${waPage+1}/${pages} 页 · 筛选结果 ${waFiltered.length} 个`;$('#waSelectedInfo').textContent=`已勾选 ${waSelected.size} 个`;$('#waHeaderCheck').checked=rows.length>0&&rows.every(x=>waSelected.has(x.id));$('#waPrev').disabled=waPage<=0;$('#waNext').disabled=waPage>=pages-1}
 async function setWaEnabled(enabled){if(!waSelected.size)return toast('请先勾选公众号');const r=await api('/api/wechat/accounts/bulk',{method:'POST',body:{ids:[...waSelected],enabled}});toast(`已${enabled?'启用':'停用'} ${r.updated} 个公众号`);await loadWechatAccounts()}
-$('#waQ').oninput=applyWaFilter;$('#waCategory').onchange=applyWaFilter;$('#waFit').onchange=applyWaFilter;$('#waEnabled').onchange=applyWaFilter;$('#waPrev').onclick=()=>{waPage--;renderWechat()};$('#waNext').onclick=()=>{waPage++;renderWechat()};$('#waEnable').onclick=()=>setWaEnabled(true).catch(e=>toast(e.message));$('#waDisable').onclick=()=>setWaEnabled(false).catch(e=>toast(e.message));$('#waCheckPage').onclick=()=>{waFiltered.slice(waPage*WA_PAGE_SIZE,(waPage+1)*WA_PAGE_SIZE).forEach(x=>waSelected.add(x.id));renderWechat()};$('#waUncheckPage').onclick=()=>{waFiltered.slice(waPage*WA_PAGE_SIZE,(waPage+1)*WA_PAGE_SIZE).forEach(x=>waSelected.delete(x.id));renderWechat()};$('#waCheckAll').onclick=()=>{waFiltered.forEach(x=>waSelected.add(x.id));renderWechat()};$('#waHeaderCheck').onchange=e=>{waFiltered.slice(waPage*WA_PAGE_SIZE,(waPage+1)*WA_PAGE_SIZE).forEach(x=>e.target.checked?waSelected.add(x.id):waSelected.delete(x.id));renderWechat()};
+$('#waQ').oninput=applyWaFilter;$('#waSearch').onclick=applyWaFilter;$('#waCategory').onchange=applyWaFilter;$('#waFit').onchange=applyWaFilter;$('#waEnabled').onchange=applyWaFilter;$('#waPrev').onclick=()=>{waPage--;renderWechat()};$('#waNext').onclick=()=>{waPage++;renderWechat()};$('#waEnable').onclick=()=>setWaEnabled(true).catch(e=>toast(e.message));$('#waDisable').onclick=()=>setWaEnabled(false).catch(e=>toast(e.message));$('#waCheckPage').onclick=()=>{waFiltered.slice(waPage*WA_PAGE_SIZE,(waPage+1)*WA_PAGE_SIZE).forEach(x=>waSelected.add(x.id));renderWechat()};$('#waUncheckPage').onclick=()=>{waSelected.clear();renderWechat()};$('#waCheckAll').onclick=()=>{waFiltered.forEach(x=>waSelected.add(x.id));renderWechat()};$('#waHeaderCheck').onchange=e=>{waFiltered.slice(waPage*WA_PAGE_SIZE,(waPage+1)*WA_PAGE_SIZE).forEach(x=>e.target.checked?waSelected.add(x.id):waSelected.delete(x.id));renderWechat()};
 $('#waRows').addEventListener('change',e=>{if(e.target.matches('[data-wa-check]')){const id=+e.target.dataset.waCheck;e.target.checked?waSelected.add(id):waSelected.delete(id);$('#waSelectedInfo').textContent=`已勾选 ${waSelected.size} 个`}});
+
+/* ---------- 公众号近期推文面板 ----------
+   数据来自本机微信的公众号消息库（PublicMsg.db），所以能看到很多还没进雷达的推文，
+   那正是「补录」的来源。补录＝建条目＋排队抓正文，排除＝记住原因并可选地建一条
+   该号专属的过滤规则（以后同类标题在入库那一刻就被挡住）。 */
+let waPanelAcc=null,waPanelItems=[],waPanelRules=[],waPanelOffset=0,waPanelDays=365,waPanelHasMore=false;
+const waPanelSelected=new Set();
+let waPresets=[],waExcludeTargets=[];
+const WA_PANEL_PAGE=24;
+
+const waStateTag={archived:'<span class="wa-tag ok">已收录</span>',index_only:'<span class="wa-tag info">仅索引</span>',
+  excluded:'<span class="wa-tag warn">已排除</span>',new:''};
+
+function waCard(item){
+  const state=item.state||'new';
+  // 封面走本机代理：微信图床有防盗链，浏览器直连只会拿到"不可引用"的占位图。
+  const cover=item.cover?`<img class="wa-cover-img" src="/api/wechat/cover?u=${encodeURIComponent(item.cover)}" alt="" loading="lazy" onerror="this.remove()">`:'';
+  const initial=`<span class="wa-initial">${esc((item.title||'#').slice(0,1))}</span>`;
+  const detail=item.detail||{};
+  let note='';
+  if(state==='excluded')note=`<div class="wa-note">${esc(detail.reason||'已排除')}</div>`;
+  else if(item.rule_note)note=`<div class="wa-note">按现有规则不会收录：${esc(item.rule_note)}</div>`;
+  const tools=[];
+  if(state==='new')tools.push('<button type="button" data-wa-act="import">补录</button>');
+  if(state==='index_only')tools.push('<button type="button" data-wa-act="import">补全文</button>');
+  if(state==='archived'&&detail.item_id)tools.push('<button type="button" data-wa-act="go">在资料库</button>');
+  if(state==='excluded')tools.push('<button type="button" data-wa-act="restore">恢复</button>');
+  if(state!=='excluded')tools.push('<button type="button" class="danger" data-wa-act="exclude">排除</button>');
+  const picked=waPanelSelected.has(item.canonical_url)?' picked':'';
+  return `<article class="wa-card${picked}" data-state="${state}" data-wa-key="${esc(item.canonical_url)}">
+    <div class="wa-cover ${item.cover?'':'noimg'}">${initial}${cover}<span class="wa-pick">✓</span>${waStateTag[state]||''}</div>
+    <div class="wa-body">
+      <a class="wa-title" href="${esc(item.url)}" target="_blank" rel="noreferrer" title="${esc(item.summary||'')}">${esc(item.title)}</a>
+      ${note}
+      <div class="wa-meta"><span>${time(item.published_at).slice(0,10)}</span></div>
+      <div class="wa-tools">${tools.join('')}</div>
+    </div>
+  </article>`;
+}
+
+async function openWaPanel(id){
+  const acc=waAll.find(x=>x.id===id);
+  if(!acc)return;
+  waPanelAcc=acc;waPanelSelected.clear();waPanelOffset=0;waPanelItems=[];waPanelRules=[];
+  const cat=$('#waPanelCategory');
+  cat.innerHTML=Object.entries(WA_LABELS).map(([k,v])=>`<option value="${k}">${esc(v)}</option>`).join('');
+  cat.value=acc.category_code||'OTHER';
+  $('#waPanelFit').value=acc.fit||'OPTIONAL';
+  $('#waPanelEnabled').checked=!!acc.enabled;
+  $('#waPanelName').textContent=acc.name;
+  $('#waPanelMeta').innerHTML=`${acc.account_id?`<span class="badge">${esc(acc.account_id)}</span>`:''}<span>${esc(acc.reason||'')}</span>`;
+  $('#waPanelStatus').textContent='正在读取本机微信的公众号消息库…';
+  $('#waArticlesGrid').innerHTML='';
+  $('#waPanelMore').hidden=true;$('#waPanelCount').textContent='';
+  syncWaPanelPicked();
+  if(!$('#waArticles').open)$('#waArticles').showModal();
+  await loadWaPanel(true);
+}
+function closeWaPanel(){const d=$('#waArticles');if(d.open)d.close()}
+
+async function loadWaPanel(reset){
+  if(!waPanelAcc)return;
+  if(reset){waPanelOffset=0;waPanelItems=[];}
+  const more=$('#waPanelMore');more.hidden=true;more.disabled=true;
+  try{
+    const data=await api(`/api/wechat/accounts/${waPanelAcc.id}/articles?limit=${WA_PANEL_PAGE}&offset=${waPanelOffset}&days=${waPanelDays}`);
+    if(data.error){
+      $('#waPanelStatus').textContent=data.error;
+      if(reset)$('#waArticlesGrid').innerHTML='<div class="wa-empty">这台电脑上暂时看不到它的推文</div>';
+      return;
+    }
+    waPanelItems=waPanelItems.concat(data.items||[]);
+    waPanelRules=data.rules||[];
+    waPanelHasMore=!!data.has_more;
+    waPanelOffset+=WA_PANEL_PAGE;
+    const bits=[`共 ${data.total} 篇`];
+    bits.push(`资料库已收录 ${waPanelItems.filter(x=>x.state==='archived'||x.state==='index_only').length} 篇`);
+    if(waPanelRules.length)bits.push(`本号排除规则 ${waPanelRules.length} 条`);
+    if(data.note)bits.push(data.note);
+    $('#waPanelStatus').textContent=bits.join(' · ');
+    $('#waArticlesGrid').innerHTML=waPanelItems.map(waCard).join('')||'<div class="wa-empty">这段时间里它没有推文</div>';
+    more.hidden=!waPanelHasMore;
+    $('#waPanelCount').textContent=waPanelHasMore?`已显示 ${waPanelItems.length} / ${data.total} 篇`:`共 ${waPanelItems.length} 篇`;
+  }catch(e){
+    $('#waPanelStatus').textContent=e.message;
+  }finally{
+    more.disabled=false;
+  }
+}
+
+function syncWaPanelPicked(){
+  for(const card of $$('#waArticlesGrid .wa-card')){
+    card.classList.toggle('picked',waPanelSelected.has(card.dataset.waKey));
+  }
+  $('#waPanelSelected').textContent=`已选 ${waPanelSelected.size} 篇`;
+}
+function toggleWaPick(key){
+  waPanelSelected.has(key)?waPanelSelected.delete(key):waPanelSelected.add(key);
+  syncWaPanelPicked();
+}
+
+async function waImport(articles){
+  if(!articles.length)return toast('先勾选要补录的推文');
+  try{
+    const r=await api(`/api/wechat/accounts/${waPanelAcc.id}/articles/import`,{method:'POST',body:{articles}});
+    toast(`已补录 ${r.created} 篇，正在排队抓正文`+(r.existing?`（${r.existing} 篇本来就有）`:''));
+    waPanelSelected.clear();
+    await loadWaPanel(true);
+    loadHealth().catch(()=>{});
+  }catch(e){toast(e.message)}
+}
+async function waRestore(articles){
+  try{
+    const r=await api(`/api/wechat/accounts/${waPanelAcc.id}/articles/restore`,{method:'POST',body:{articles}});
+    toast(`已恢复 ${r.restored} 篇`);
+    waPanelSelected.clear();
+    await loadWaPanel(true);
+  }catch(e){toast(e.message)}
+}
+
+async function openWaExclude(articles){
+  if(!articles.length)return toast('先勾选要排除的推文');
+  waExcludeTargets=articles;
+  if(!waPresets.length){
+    try{waPresets=(await api('/api/wechat/exclude-presets')).presets||[]}catch(e){waPresets=[]}
+  }
+  const sel=$('#waExcludePreset');
+  sel.innerHTML=waPresets.map((p,i)=>`<option value="${i}">${esc(p.label)}</option>`).join('')||'<option value="0">手动排除</option>';
+  sel.value='0';
+  applyWaPreset();
+  $('#waExcludeTitle').textContent=`排除 ${articles.length} 篇 · ${waPanelAcc.name}`;
+  $('#waExcludeCount').textContent=waPanelRules.length
+    ?`本号现有 ${waPanelRules.length} 条排除规则：${waPanelRules.map(r=>`${r.patterns}（命中 ${r.hits}）`).join('；')}`
+    :'本号还没有排除规则。';
+  $('#waExcludeDisable').checked=false;
+  if(!$('#waExcludeDialog').open)$('#waExcludeDialog').showModal();
+}
+function applyWaPreset(){
+  const preset=waPresets[+$('#waExcludePreset').value]||{keywords:[]};
+  $('#waExcludeKeywords').value=(preset.keywords||[]).join('、');
+}
+
+$('#waPanelClose').onclick=closeWaPanel;
+$('#waPanelMore').onclick=()=>loadWaPanel(false).catch(e=>toast(e.message));
+$('#waPanelRange').onchange=e=>{waPanelDays=+e.target.value;waPanelSelected.clear();loadWaPanel(true).catch(e=>toast(e.message))};
+$('#waPanelSelectNew').onclick=()=>{waPanelItems.filter(x=>x.state==='new'||x.state==='index_only').forEach(x=>waPanelSelected.add(x.canonical_url));syncWaPanelPicked()};
+$('#waPanelSelectNone').onclick=()=>{waPanelSelected.clear();syncWaPanelPicked()};
+$('#waPanelImport').onclick=()=>waImport(waPanelItems.filter(x=>waPanelSelected.has(x.canonical_url)));
+$('#waPanelExclude').onclick=()=>openWaExclude(waPanelItems.filter(x=>waPanelSelected.has(x.canonical_url)));
+$('#waArticlesGrid').addEventListener('click',e=>{
+  const card=e.target.closest('.wa-card');
+  if(!card||!waPanelAcc)return;
+  const item=waPanelItems.find(x=>x.canonical_url===card.dataset.waKey);
+  if(!item)return;
+  const act=e.target.closest('[data-wa-act]');
+  if(act){
+    const name=act.dataset.waAct;
+    if(name==='import')waImport([item]);
+    else if(name==='exclude')openWaExclude([item]);
+    else if(name==='restore')waRestore([item]);
+    else if(name==='go'&&item.detail&&item.detail.item_id)showItem(item.detail.item_id).catch(err=>toast(err.message));
+    return;
+  }
+  if(e.target.closest('a'))return;
+  toggleWaPick(item.canonical_url);
+});
+$('#waPanelCategory').onchange=async e=>{
+  if(!waPanelAcc)return;
+  try{
+    await api(`/api/wechat/accounts/${waPanelAcc.id}`,{method:'PATCH',body:{category_code:e.target.value}});
+    waPanelAcc.category_code=e.target.value;
+    toast(`分类已改为 ${WA_LABELS[e.target.value]||e.target.value}`);
+    loadWechatAccounts().catch(()=>{});
+  }catch(err){toast(err.message)}
+};
+$('#waPanelFit').onchange=async e=>{
+  if(!waPanelAcc)return;
+  try{
+    await api(`/api/wechat/accounts/${waPanelAcc.id}`,{method:'PATCH',body:{fit:e.target.value}});
+    waPanelAcc.fit=e.target.value;
+    toast(`建议已改为 ${e.target.value}`);
+    loadWechatAccounts().catch(()=>{});
+  }catch(err){toast(err.message)}
+};
+$('#waPanelEnabled').onchange=async e=>{
+  if(!waPanelAcc)return;
+  try{
+    await api(`/api/wechat/accounts/${waPanelAcc.id}`,{method:'PATCH',body:{enabled:e.target.checked}});
+    waPanelAcc.enabled=e.target.checked?1:0;
+    toast(e.target.checked?'已恢复监测':'已停止监测这个号');
+    loadWechatAccounts().catch(()=>{});
+  }catch(err){toast(err.message)}
+};
+$('#waExcludePreset').onchange=applyWaPreset;
+$('#waExcludeClose').onclick=$('#waExcludeCancel').onclick=()=>$('#waExcludeDialog').close();
+$('#waExcludeOk').onclick=async()=>{
+  const keywords=$('#waExcludeKeywords').value.split(/[\n,，、;；|]+/).map(x=>x.trim()).filter(Boolean);
+  const mode=$('#waExcludeMode').value;
+  if(mode==='rule'&&!keywords.length)return toast('留一个关键词，否则以后同类还是会进来');
+  const preset=waPresets[+$('#waExcludePreset').value]||{};
+  try{
+    const r=await api(`/api/wechat/accounts/${waPanelAcc.id}/articles/exclude`,{method:'POST',body:{
+      articles:waExcludeTargets,mode,reason:preset.label||'手动排除',keywords,
+      disable_account:$('#waExcludeDisable').checked}});
+    $('#waExcludeDialog').close();
+    toast(`已排除 ${r.excluded} 篇`+(r.rule_id?'，以后同类不再收录':''));
+    if(r.hit_existing)toast(`顺手把已收录的 ${r.hit_existing} 篇也排除了`);
+    waPanelSelected.clear();
+    await loadWaPanel(true);
+    loadWechatAccounts().catch(()=>{});
+  }catch(e){toast(e.message)}
+};
+$('#waRows').addEventListener('click',e=>{
+  const target=e.target.closest('[data-wa-open]');
+  if(target)openWaPanel(+target.dataset.waOpen);
+});
+
 let listRefreshTimer=null;
 function itemStage(x){
   if(x.status==='discovered'){
@@ -268,7 +485,37 @@ async function showItem(id,silent){
   return x;
 }
 async function previewPaper(id){const p=currentPapers.find(x=>x.id===id)||{title:'PDF 预览'};$('#detailContent').innerHTML=`<h1>${esc(p.title||'PDF 预览')}</h1><p class="muted">文件保存在：<code>${esc(p.local_path||'E 盘论文目录')}</code></p><iframe src="/api/papers/${id}/file#view=FitH" style="width:100%;height:78vh;border:1px solid #dde3e9;border-radius:8px"></iframe>`;openDetail()}
-async function loadPapers(){currentPapers=await api('/api/papers?status='+$('#paperStatus').value);$('#papersList').innerHTML=currentPapers.map(p=>`<tr><td><b>${esc(p.title||'题名待解析')}</b><br><small>来源：${esc(p.source_title||'')}</small></td><td>${esc(p.year)}<br>${esc(p.journal)}</td><td><a href="https://doi.org/${esc(p.doi)}" target="_blank">${esc(p.doi)}</a><br><small class="error-text">${esc(p.error||'')}</small></td><td><span class="badge ${p.status==='downloaded'?'ok':'wait'}">${esc(p.status)}</span></td><td>${p.local_path?`<div class="actions"><button data-pdf-preview="${p.id}">网页预览</button><button data-paper-wps="${p.id}">WPS 打开</button><button data-paper-reveal="${p.id}">所在目录</button></div><small title="${esc(p.local_path)}">${esc(p.local_path)}</small>`:''}<button data-paper-retry="${p.id}">重试</button></td></tr>`).join('')||'<tr><td colspan="5" class="muted">当前清单为空</td></tr>'}
+let paperPage=1, paperPageSize=20, paperTotal=0;
+async function loadPapers(){
+  const status=$('#paperStatus').value;
+  const data=await api(`/api/papers?status=${encodeURIComponent(status)}&limit=${paperPageSize}&offset=${(paperPage-1)*paperPageSize}`);
+  const rows=data.items||[];paperTotal=Number(data.total||0);currentPapers=rows;
+  const pages=Math.max(1,Math.ceil(paperTotal/paperPageSize));
+  if(paperPage>pages&&paperTotal){paperPage=pages;return loadPapers()}
+  $('#papersList').innerHTML=rows.map(p=>{const md=JSON.parse(p.metadata_json||'{}');const via=md.matched_by?`<br><small class="muted" title="这篇论文是怎么找到的">🔎 ${esc(md.matched_by)}</small>`:'';return `<tr><td><b>${esc(p.title||'题名待解析')}</b><br><small>来源：${esc(p.source_title||'')}</small>${via}</td><td>${esc(p.year)}<br>${esc(p.journal)}</td><td><a href="https://doi.org/${esc(p.doi)}" target="_blank">${esc(p.doi)}</a><br><small class="error-text" title="${esc(p.error||'')}">${esc(p.error||'')}</small></td><td><span class="badge ${p.status==='downloaded'?'ok':'wait'}">${esc(p.status)}</span></td><td>${p.local_path?`<div class="actions"><button data-pdf-preview="${p.id}">网页预览</button><button data-paper-wps="${p.id}">WPS 打开</button><button data-paper-reveal="${p.id}">所在目录</button></div><small title="${esc(p.local_path)}">${esc(p.local_path)}</small>`:''}<button data-paper-retry="${p.id}">重试</button></td></tr>`}).join('')||'<tr><td colspan="5" class="muted">当前清单为空</td></tr>';
+  renderPaperPager();
+}
+function renderPaperPager(){
+  const pages=Math.max(1,Math.ceil(paperTotal/paperPageSize));
+  const box=$('#paperPager'); if(!box)return;
+  if(!paperTotal){box.innerHTML='';box.hidden=true;return}
+  box.hidden=false;
+  const nums=[];
+  const push=n=>nums.push(`<button type="button" class="${n===paperPage?'current':''}" data-ppage="${n}">${n}</button>`);
+  if(pages<=9){for(let n=1;n<=pages;n++)push(n)}
+  else{
+    push(1);
+    if(paperPage>3)nums.push('<span class="muted">…</span>');
+    for(let n=Math.max(2,paperPage-1);n<=Math.min(pages-1,paperPage+1);n++)push(n);
+    if(paperPage<pages-2)nums.push('<span class="muted">…</span>');
+    push(pages);
+  }
+  box.innerHTML=`<div class="pager-info">共 ${paperTotal} 篇 · 第 ${paperPage}/${pages} 页</div>
+    <div class="pager-btns"><button type="button" data-ppage="${paperPage-1}" ${paperPage<=1?'disabled':''}>上一页</button>${nums.join('')}<button type="button" data-ppage="${paperPage+1}" ${paperPage>=pages?'disabled':''}>下一页</button></div>
+    <label class="pager-size">每页 <select id="paperSizeSel">${[20,50,100,200].map(n=>`<option value="${n}" ${n===paperPageSize?'selected':''}>${n}</option>`).join('')}</select> 篇</label>`;
+  const select=$('#paperSizeSel');
+  if(select)select.onchange=()=>{paperPageSize=Number(select.value)||20;paperPage=1;loadPapers().catch(e=>toast(e.message))};
+}
 async function loadIdeas(){
   const params=new URLSearchParams();
   const since=daysAgoIso($('#ideaRange').value);
@@ -283,7 +530,24 @@ async function loadIdeas(){
   }).join('')||'<div class="panel muted">还没有匹配的 idea。新分析会如实标记“没有可参考的 idea”。</div>';
   window.ideaRows=rows;
 }
-async function loadNotifications(){const rows=await api('/api/notifications');const labels={SENT:'已发送',MERGED:'已合并',CLOSED:'等待发送',OPEN:'收集中',FAILED:'发送失败'};$('#notificationsList').innerHTML=rows.map(x=>`<div class="card"><div class="panel-head"><h3>${x.priority==='critical'?'重要发现':'合并汇报'} · ${x.item_count} 条</h3><span class="badge ${x.state==='SENT'?'ok':x.state==='MERGED'?'':x.state==='CLOSED'?'wait':'wait'}">${esc(labels[x.state]||x.state)}</span></div><small>渠道 ${esc(x.channel)} · 创建 ${time(x.created_at)} · 发送 ${time(x.sent_at)}</small>${x.last_error?`<p class="error-text">${esc(x.last_error)}</p>`:''}<div class="actions"><button data-batch="${x.id}">查看内容</button>${x.state==='MERGED'?'':`<button data-batch-retry="${x.id}">重新发送</button>`}</div></div>`).join('')||'<div class="panel muted">还没有汇报批次。</div>'}
+let notifyShowAll=false;
+async function loadNotifications(){
+  const data=await api('/api/notifications?limit=12'+(notifyShowAll?'&include_all=true':''));
+  const rows=data.items||[];
+  const labels={SENT:'已发送',MERGED:'已合并',CLOSED:'等待发送',OPEN:'收集中',FAILED:'发送失败'};
+  $('#notificationsList').innerHTML=rows.map(x=>`<div class="card"><div class="panel-head"><h3>${x.priority==='critical'?'重要发现':'合并汇报'} · ${x.item_count} 条</h3><span class="badge ${x.state==='SENT'?'ok':x.state==='MERGED'?'':x.state==='CLOSED'?'wait':'wait'}">${esc(labels[x.state]||x.state)}</span></div><small>渠道 ${esc(x.channel)} · 创建 ${time(x.created_at)} · 发送 ${time(x.sent_at)}</small>${x.last_error?`<p class="error-text">${esc(x.last_error)}</p>`:''}<div class="actions"><button data-batch="${x.id}">查看内容</button>${x.state==='MERGED'?'':`<button data-batch-retry="${x.id}">重新发送</button>`}</div></div>`).join('')||'<div class="panel muted">还没有汇报批次。</div>';
+  const more=$('#notificationsMore');
+  if(!more)return;
+  const total=Number(data.total||rows.length);
+  if(total<=rows.length){more.hidden=true;more.innerHTML='';return}
+  more.hidden=false;
+  more.innerHTML=notifyShowAll
+    ? `<button type="button" id="notifyShowLess">只看最近 ${12} 次</button>`
+    : `共 ${total} 次汇报，这里只显示最近几次和所有还没发出去的 · <button type="button" id="notifyShowAll">查看全部</button>`;
+  const moreBtn=$('#notifyShowAll'), lessBtn=$('#notifyShowLess');
+  if(moreBtn)moreBtn.onclick=()=>{notifyShowAll=true;loadNotifications().catch(e=>toast(e.message))};
+  if(lessBtn)lessBtn.onclick=()=>{notifyShowAll=false;loadNotifications().catch(e=>toast(e.message))};
+}
 async function loadSettings(){const data=await api('/api/settings'),s=data.settings;$('#llmEnabled').value=bool(s.llm.enabled);$('#llmProvider').value=s.llm.provider||'openai_compatible';$('#llmBase').value=s.llm.base_url;$('#llmModel').value=s.llm.model;$('#visionEnabled').value=bool(s.llm.vision_enabled);$('#llmDaily').value=s.llm.daily_call_limit;$('#llmPrefilter').value=s.llm.min_local_relevance??40;$('#llmLongMaterial').value=s.llm.long_material_strategy||'head_tail';$('#readingPrompt').value=s.analysis.custom_reading_prompt;$('#notifyChannel').value=s.notifications.channel;$('#instantThreshold').value=s.notifications.instant_threshold;$('#batchSize').value=s.notifications.batch_size;$('#maxWait').value=s.notifications.max_wait_minutes;$('#minRelevance').value=s.notifications.min_relevance;$('#quietStart').value=s.notifications.quiet_start;$('#quietEnd').value=s.notifications.quiet_end;$('#quietCritical').value=bool(s.notifications.quiet_allow_critical);$('#paperEmail').value=s.papers.email;window.__secretProviders=data.secrets.providers||[];$('#maxPerDay').value=s.notifications.max_per_day??3;$('#sendWindows').value=(s.notifications.send_windows||[]).join(',');$('#highlightThreshold').value=s.notifications.highlight_threshold??74;$('#digestLimit').value=s.notifications.digest_limit??10;if(window.renderAccounts)renderAccounts(s.llm.accounts||[]);$('#asrEnabled').value=bool(s.video.asr_enabled);$('#asrModel').value=s.video.asr_model;$('#asrDuration').value=s.video.max_duration_minutes;$('#llmKey').disabled=$('#llmProvider').value!=='openai_compatible';$('#llmBase').disabled=$('#llmProvider').value!=='openai_compatible';$('#llmKeyStatus').textContent=data.secrets.llm_api_key?'已安全保存':'未配置';$('#dataxKeyStatus').textContent=data.secrets.datax_api_key?'已安全保存':'未配置';$('#webhookStatus').textContent=data.secrets.notification_webhook?'已安全保存':'未配置';$('#wecomKfSecretStatus').textContent=data.secrets.wecom_kf_secret?'已安全保存':'未配置'}
 function fmtDuration(seconds){if(seconds===null||seconds===undefined)return '—';const s=Math.max(0,Math.round(seconds));if(s<60)return s+' 秒';if(s<3600)return Math.round(s/60)+' 分钟';return (s/3600).toFixed(1)+' 小时'}
 async function loadProgress(){
@@ -327,12 +591,12 @@ $('#searchQ').onkeydown=e=>{if(e.key==='Enter')reloadItems()};
 ['#searchKind','#searchStatus','#searchRange','#searchCollection','#searchExcluded','#hideLow'].forEach(sel=>{const el=$(sel);if(el)el.onchange=reloadItems});
 $('#manageCollections').onclick=()=>openCollectionManager('library').catch(e=>toast(e.message));
 $('#manageIdeaCollections').onclick=()=>openCollectionManager('ideas').catch(e=>toast(e.message));
-$('#paperStatus').onchange=()=>loadPapers().catch(e=>toast(e.message));
+$('#paperStatus').onchange=()=>{paperPage=1;loadPapers().catch(e=>toast(e.message))};
 $('#saveIdea').onclick=async()=>{try{const body={title:$('#ideaTitle').value,content:$('#ideaContent').value,tags:$('#ideaTags').value.split(/[,，]/).map(x=>x.trim()).filter(Boolean),enabled:true};const id=$('#ideaId').value;await api(id?'/api/ideas/'+id:'/api/ideas',{method:id?'PATCH':'POST',body});$('#ideaId').value=$('#ideaTitle').value=$('#ideaContent').value=$('#ideaTags').value='';loadIdeas();toast('idea 已保存，将参与后续关联')}catch(e){toast(e.message)}};
 $('#cancelIdea').onclick=()=>{$('#ideaId').value=$('#ideaTitle').value=$('#ideaContent').value=$('#ideaTags').value=''};
 $('#flushNotifications').onclick=async()=>{const r=await api('/api/notifications/flush',{method:'POST'});toast(r.merged_into?`已封闭 ${r.batches} 个批次，积压合并为 1 条上报后再发送`:`已封闭 ${r.batches} 个批次并进入发送队列`);loadNotifications()};
 $('#testNotification').onclick=async()=>{try{await api('/api/notifications/test',{method:'POST'});toast('测试成功；站内渠道无需外部发送')}catch(e){toast(e.message)}};
-$('#copyPapers').onclick=async()=>{const text=currentPapers.map(p=>`${p.title||'题名待解析'}\n作者：${JSON.parse(p.authors_json||'[]').join('; ')}\n期刊/年份：${p.journal} ${p.year}\nDOI：https://doi.org/${p.doi}\n来源：${p.source_url||''}`).join('\n\n---\n\n');await navigator.clipboard.writeText(text||'当前没有待下载论文');toast('已复制为便于人工或代下的文本')};
+$('#copyPapers').onclick=async()=>{let all=[];try{all=await api('/api/papers?status=needed')}catch(e){toast(e.message);return}const text=all.map(p=>`${p.title||'题名待解析'}\n作者：${JSON.parse(p.authors_json||'[]').join('; ')}\n期刊/年份：${p.journal} ${p.year}\nDOI：https://doi.org/${p.doi}\n来源：${p.source_url||''}`).join('\n\n---\n\n');await navigator.clipboard.writeText(text||'当前没有待下载论文');toast(`已复制 ${all.length} 篇为便于人工或代下的文本`)};
 $('#llmProvider').onchange=()=>{const provider=$('#llmProvider').value,local=provider==='ollama',cloud=provider==='workbuddy_cloud',base=$('#llmBase'),model=$('#llmModel');base.disabled=provider!=='openai_compatible';$('#llmKey').disabled=provider!=='openai_compatible';if(cloud||local){base.dataset.remote=base.value.includes('127.0.0.1')?'https://api.deepseek.com/v1':base.value;model.dataset.remote=model.value}if(cloud){model.value='hy4free';$('#llmKey').value=''}else if(local){base.value='http://127.0.0.1:11434/v1';model.value='qwen3:8b';$('#llmKey').value=''}else{base.value=base.dataset.remote||'https://api.deepseek.com/v1';model.value=model.dataset.remote||'deepseek-chat'}};
 $('#loadWorkbuddyModels').onclick=async()=>{try{$('#workbuddyModelInfo').textContent='正在读取官方目录……';const r=await api('/api/llm/workbuddy/models');$('#workbuddyModelInfo').textContent=`共 ${r.models.length} 个可用模型`;$('#detailContent').innerHTML=`<h1>WorkBuddy 可用模型</h1><p class="muted">倍率仅为目录展示信息，实际扣减以每次调用记录为准。</p><div class="table-wrap"><table><thead><tr><th>模型</th><th>ID</th><th>积分倍率</th><th>图片</th><th>选择</th></tr></thead><tbody>${r.models.map(m=>`<tr><td>${esc(m.name)}</td><td><code>${esc(m.id)}</code></td><td>${esc(m.credits||'未标注')}</td><td>${m.supportsImages===true?'支持':m.supportsImages===false?'不支持':'未知'}</td><td><button data-cloud-model="${esc(m.id)}">使用</button></td></tr>`).join('')}</tbody></table></div>`;openDetail()}catch(e){$('#workbuddyModelInfo').textContent='读取失败';toast(e.message)}};
 $('#settingsForm').onsubmit=async e=>{e.preventDefault();try{const patch={llm:{enabled:$('#llmEnabled').value==='true',provider:$('#llmProvider').value,base_url:$('#llmBase').value,model:$('#llmModel').value,vision_enabled:$('#visionEnabled').value==='true',daily_call_limit:Number($('#llmDaily').value),min_local_relevance:Number($('#llmPrefilter').value),long_material_strategy:$('#llmLongMaterial').value,accounts:window.collectAccounts?collectAccounts():undefined},analysis:{custom_reading_prompt:$('#readingPrompt').value},notifications:{channel:$('#notifyChannel').value,instant_threshold:Number($('#instantThreshold').value),batch_size:Number($('#batchSize').value),max_wait_minutes:Number($('#maxWait').value),min_relevance:Number($('#minRelevance').value),quiet_start:$('#quietStart').value,quiet_end:$('#quietEnd').value,quiet_allow_critical:$('#quietCritical').value==='true',max_per_day:Number($('#maxPerDay').value),send_windows:$('#sendWindows').value.split(',').map(x=>x.trim()).filter(Boolean),highlight_threshold:Number($('#highlightThreshold').value),digest_limit:Number($('#digestLimit').value)},papers:{email:$('#paperEmail').value},video:{asr_enabled:$('#asrEnabled').value==='true',asr_model:$('#asrModel').value,max_duration_minutes:Number($('#asrDuration').value)}};await api('/api/settings',{method:'PUT',body:patch});for(const [id,name] of [['llmKey','llm_api_key'],['dataxKey','datax_api_key'],['notifyWebhook','notification_webhook'],['wecomKfSecret','wecom_kf_secret']]){if($('#'+id).value){await api('/api/settings/secrets',{method:'POST',body:{name,value:$('#'+id).value}});$('#'+id).value=''}}$('#settingsResult').textContent='已保存';toast('设置已安全保存')}catch(err){toast(err.message)}};
@@ -354,6 +618,7 @@ if(t.dataset.ruleToggle!==undefined){await api(`/api/filter-rules/${t.dataset.ru
 if(t.dataset.ruleRemove!==undefined){if(!confirm('删除这条规则？被它挡住的条目会一起放回资料库。'))return;const r=await api(`/api/filter-rules/${t.dataset.ruleRemove}`,{method:'DELETE'});toast(`规则已删除${r.restored?`，恢复 ${r.restored} 条`:''}`);await loadRuleList();reloadItems();return}
 if(t.dataset.item)await showItem(t.dataset.item);
 if(t.dataset.page!==undefined&&t.dataset.page!==''){const n=Number(t.dataset.page);if(n>=1){itemPage=n;await loadItems()}return}
+if(t.dataset.ppage!==undefined&&t.dataset.ppage!==''){const n=Number(t.dataset.ppage);if(n>=1&&n!==paperPage){paperPage=n;await loadPapers()}return}
 if(t.dataset.collect){await openCollectPop(t.dataset.collectType||'item',t.dataset.collect,(t.dataset.collectIds||'').split(',').filter(Boolean),t,()=>currentView==='library'?loadItems():loadIdeas());return}
 if(t.dataset.restore){await api(`/api/items/${t.dataset.restore}/restore`,{method:'POST'});toast('已恢复收录');loadItems().catch(()=>{});await showItem(t.dataset.restore,true);return}
 if(t.dataset.collectionSave){const input=document.querySelector(`[data-collection-name="${t.dataset.collectionSave}"]`);await api(`/api/collections/${t.dataset.collectionSave}`,{method:'PATCH',body:{name:input.value}});toast('已改名');await loadCollections(window.__manageScope||'library');renderCollectionManage();fillCollectionSelect($('#searchCollection'),itemCollections);return}

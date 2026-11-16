@@ -22,6 +22,7 @@ from .logging_config import configure_logging
 from .paths import BLOB_DIR, DATA_DIR, LOG_DIR, WEB_DIR
 from .services.notify import flush_open_batches, send_test_notification
 from .services.relevance import assess_candidate
+from .services import wechat_panel, wechat_public
 from .settings import get_secret, get_settings, save_settings, secret_status, set_secret
 from .utils import (extract_bvid, extract_urls, job_error_is_retryable, json_loads, local_date, now_iso,
                     parse_time, redact_secrets, stable_json, utcnow)
@@ -75,7 +76,32 @@ class SourcePatch(BaseModel):
 
 
 class WeChatAccountPatch(BaseModel):
-    enabled: bool
+    enabled: bool | None = None
+    fit: str | None = None
+    category_code: str | None = None
+
+
+class WeChatArticle(BaseModel):
+    """面板上的一张推文卡片。前端把卡片原样回传，避免二次打开数据库。"""
+
+    url: str
+    title: str = ""
+    summary: str = ""
+    cover: str = ""
+    published_at: str | None = None
+    message_id: int | None = None
+
+
+class WeChatArticleAction(BaseModel):
+    articles: list[WeChatArticle] = Field(default_factory=list)
+
+
+class WeChatExcludeInput(WeChatArticleAction):
+    mode: str = "one"
+    reason: str = ""
+    keywords: list[str] = Field(default_factory=list)
+    account_match: str = ""
+    disable_account: bool = False
 
 
 class WeChatAccountBulkInput(BaseModel):
@@ -498,11 +524,130 @@ def wechat_accounts(q: str = "", category: str = "", fit: str = "", enabled: str
 
 @app.patch("/api/wechat/accounts/{account_pk}")
 def update_wechat_account(account_pk: int, data: WeChatAccountPatch) -> dict[str, Any]:
+    row = db.one("SELECT * FROM wechat_accounts WHERE id=?", (account_pk,))
+    if not row:
+        raise HTTPException(404, "公众号不存在")
+    changes, params = [], []
+    if data.enabled is not None:
+        changes.append("enabled=?")
+        params.append(int(data.enabled))
+    if data.fit is not None:
+        fit = str(data.fit).strip().upper()
+        if fit not in {"CORE", "OPTIONAL", "EXCLUDE"}:
+            raise HTTPException(400, "建议只能是 CORE / OPTIONAL / EXCLUDE")
+        changes.append("fit=?")
+        params.append(fit)
+    if data.category_code is not None:
+        changes.append("category_code=?")
+        params.append(str(data.category_code).strip() or "OTHER")
+    if not changes:
+        return {"updated": 0}
+    db.execute(f"UPDATE wechat_accounts SET {','.join(changes)},updated_at=? WHERE id=?",
+               [*params, now_iso(), account_pk])
+    if data.enabled is False:
+        db.add_event("wechat_account_disabled", f"停用公众号：{row['name']}")
+    return {"updated": 1, "enabled": row.get("enabled") if data.enabled is None else int(data.enabled),
+            "fit": data.fit or row.get("fit"), "category_code": data.category_code or row.get("category_code")}
+
+
+@app.get("/api/wechat/accounts/{account_pk}/articles")
+def wechat_account_articles(account_pk: int, limit: int = 24, offset: int = 0, days: int = 365) -> dict[str, Any]:
+    """某个号最近的推文，带上「在资料库里是什么状态」。
+
+    数据直接来自本机微信的公众号消息库（只读、零费用），不是本站收录的内容，
+    所以能看到很多还没进雷达的推文——那正是「补录」的来源。
+    """
+    account = db.one("SELECT * FROM wechat_accounts WHERE id=?", (account_pk,))
+    if not account:
+        raise HTTPException(404, "公众号不存在")
+    from .services import filters
+    gh_id = wechat_public.gh_id_for(account["name"], account.get("account_id") or "")
+    if gh_id and (account.get("account_id") or "") != gh_id:
+        # 顺手把编号补上：本机监测和面板都靠它对号。
+        db.execute("UPDATE wechat_accounts SET account_id=?,updated_at=? WHERE id=?",
+                   (gh_id, now_iso(), account_pk))
+        account["account_id"] = gh_id
+    base = {"account": {"id": account["id"], "name": account["name"], "account_id": gh_id,
+                        "category_code": account.get("category_code"), "fit": account.get("fit"),
+                        "enabled": int(account.get("enabled") or 0)},
+            "total": 0, "offset": offset, "limit": limit, "has_more": False, "items": []}
+    if not gh_id:
+        return {**base, "error": "没能把网页上的号名对到微信内部编号：微信里可能没关注它，或者备注名和清单不一致"}
+    try:
+        payload = wechat_public.recent_articles(gh_id, limit=limit, offset=offset, days=days)
+    except wechat_public.PublicMsgUnavailable as exc:
+        return {**base, "error": str(exc)}
+    articles = payload.get("items") or []
+    canonicals = [item["canonical_url"] for item in articles]
+    marks = wechat_panel.marks_for(db, canonicals)
+    library = wechat_panel.library_index(db, canonicals)
+    rules = filters.load_rules(db)
+    for item in articles:
+        state, detail = wechat_panel.state_of(item["canonical_url"], library, marks)
+        item["state"] = state
+        item["detail"] = detail or {}
+        if state == "new":
+            hit = filters.match(rules, account["name"], item["title"], item["summary"])
+            if hit:
+                item["rule_note"] = filters.describe(hit["rule"])
+    base.update({"items": articles, "total": payload.get("total") or 0,
+                 "has_more": bool(payload.get("has_more")),
+                 "note": payload.get("note") or "",
+                 "library_count": sum(1 for item in articles if item["state"] in {"archived", "index_only"}),
+                 "rules": wechat_panel.rules_for_account(db, account, gh_id)})
+    return base
+
+
+@app.post("/api/wechat/accounts/{account_pk}/articles/import")
+def import_wechat_articles(account_pk: int, data: WeChatArticleAction) -> dict[str, Any]:
+    account = db.one("SELECT * FROM wechat_accounts WHERE id=?", (account_pk,))
+    if not account:
+        raise HTTPException(404, "公众号不存在")
+    if not data.articles:
+        raise HTTPException(400, "没有选择推文")
+    gh_id = wechat_public.gh_id_for(account["name"], account.get("account_id") or "")
+    result = wechat_panel.import_articles(db, account, gh_id, [a.model_dump() for a in data.articles])
+    db.add_event("wechat_articles_imported",
+                 f"公众号面板补录「{account['name']}」{result['created']} 条，已排队归档")
+    return result
+
+
+@app.post("/api/wechat/accounts/{account_pk}/articles/exclude")
+def exclude_wechat_articles(account_pk: int, data: WeChatExcludeInput) -> dict[str, Any]:
+    account = db.one("SELECT * FROM wechat_accounts WHERE id=?", (account_pk,))
+    if not account:
+        raise HTTPException(404, "公众号不存在")
+    if not data.articles:
+        raise HTTPException(400, "没有选择推文")
+    gh_id = wechat_public.gh_id_for(account["name"], account.get("account_id") or "")
+    mode = data.mode if data.mode in {"one", "rule"} else "one"
+    try:
+        result = wechat_panel.exclude_articles(
+            db, account, gh_id, [a.model_dump() for a in data.articles], mode=mode,
+            reason=data.reason, keywords=data.keywords, account_match=data.account_match)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if mode == "rule" and result.get("rule_id"):
+        db.execute("UPDATE filter_rules SET hits=hits+?,updated_at=? WHERE id=?",
+                   (result["excluded"], now_iso(), result["rule_id"]))
+    if data.disable_account:
+        wechat_panel.disable_account(db, account_pk, data.reason or "面板里排除同名内容")
+    db.add_event("wechat_articles_excluded",
+                 f"公众号面板排除「{account['name']}」{result['excluded']} 条：{result['reason']}"
+                 + (f"；已建规则 #{result['rule_id']}" if result.get("rule_id") else ""))
+    return result
+
+
+@app.post("/api/wechat/accounts/{account_pk}/articles/restore")
+def restore_wechat_articles(account_pk: int, data: WeChatArticleAction) -> dict[str, Any]:
     if not db.one("SELECT id FROM wechat_accounts WHERE id=?", (account_pk,)):
         raise HTTPException(404, "公众号不存在")
-    db.execute("UPDATE wechat_accounts SET enabled=?,updated_at=? WHERE id=?",
-               (int(data.enabled), now_iso(), account_pk))
-    return {"updated": 1}
+    return wechat_panel.restore_articles(db, [a.model_dump() for a in data.articles])
+
+
+@app.get("/api/wechat/exclude-presets")
+def wechat_exclude_presets() -> dict[str, Any]:
+    return wechat_panel.preset_payload()
 
 
 @app.post("/api/wechat/accounts/bulk")
@@ -768,6 +913,49 @@ def blob(folder: str, name: str) -> FileResponse:
     return FileResponse(path)
 
 
+@app.get("/api/wechat/cover")
+async def wechat_cover(u: str) -> Response:
+    """代理公众号封面图，并留一份在本机。
+
+    图片床 mmbiz.qpic.cn 有防盗链：浏览器从 127.0.0.1 直连会被换成一张
+    「此图片来自微信公众平台，未经允许不可引用」的占位图，看着像图全挂了。
+    服务端不带 Referer 去取是正常的，所以这里绕一手，并缓存到 blobs/covers，
+    下次翻面板既不求人也不卡。
+    """
+    from urllib.parse import unquote, urlsplit
+    target = unquote(u or "").strip()
+    parts = urlsplit(target)
+    host = (parts.hostname or "").lower()
+    if parts.scheme not in {"http", "https"} or not (host == "qpic.cn" or host.endswith(".qpic.cn")):
+        raise HTTPException(400, "只允许公众号图片床的地址")
+    import hashlib
+    folder = BLOB_DIR / "covers"
+    folder.mkdir(parents=True, exist_ok=True)
+    stem = hashlib.sha1(target.encode("utf-8")).hexdigest()
+    cache_path = folder / f"{stem}.img"
+    type_path = folder / f"{stem}.type"
+    headers = {"Cache-Control": "public, max-age=2592000"}
+    if cache_path.is_file() and cache_path.stat().st_size > 0:
+        cached_type = type_path.read_text(encoding="ascii").strip() if type_path.is_file() else "image/jpeg"
+        return FileResponse(cache_path, media_type=cached_type, headers=headers)
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=12, follow_redirects=True) as client:
+            resp = await client.get(target, headers={"User-Agent": "Mozilla/5.0", "Accept": "image/*,*/*"})
+        content_type = (resp.headers.get("content-type") or "").split(";")[0].strip()
+        if resp.status_code != 200 or not content_type.startswith("image/") or not resp.content:
+            raise HTTPException(404, "封面取不到")
+        if len(resp.content) > 8 * 1024 * 1024:
+            raise HTTPException(413, "封面图过大")
+        cache_path.write_bytes(resp.content)
+        type_path.write_text(content_type, encoding="ascii")
+    except HTTPException:
+        raise
+    except Exception as exc:                                   # noqa: BLE001
+        raise HTTPException(404, f"封面取不到：{exc}") from exc
+    return FileResponse(cache_path, media_type=content_type, headers=headers)
+
+
 @app.post("/api/items/{item_id}/process")
 def process_discovered_item(item_id: str) -> dict[str, Any]:
     item = db.one("SELECT id,status FROM items WHERE id=? AND excluded_at IS NULL", (item_id,))
@@ -845,7 +1033,7 @@ async def gone_detection() -> dict[str, Any]:
 
 
 @app.get("/api/papers")
-def papers(status: str = "") -> list[dict[str, Any]]:
+def papers(status: str = "", limit: int = 0, offset: int = 0) -> Any:
     if status == "needed":
         condition = "WHERE p.status IN ('closed','failed','not_found')"
         params: tuple = ()
@@ -854,9 +1042,16 @@ def papers(status: str = "") -> list[dict[str, Any]]:
         params = (status,)
     else:
         condition, params = "", ()
-    return db.query(f"""SELECT p.*,(SELECT i.title FROM items i JOIN item_papers ip ON i.id=ip.item_id
+    select = f"""SELECT p.*,(SELECT i.title FROM items i JOIN item_papers ip ON i.id=ip.item_id
         WHERE ip.paper_id=p.id LIMIT 1) source_title,(SELECT i.url FROM items i JOIN item_papers ip ON i.id=ip.item_id
-        WHERE ip.paper_id=p.id LIMIT 1) source_url FROM papers p {condition} ORDER BY p.created_at DESC""", params)
+        WHERE ip.paper_id=p.id LIMIT 1) source_url FROM papers p {condition} ORDER BY p.created_at DESC"""
+    if limit <= 0:
+        # 不传分页就是整份清单：CSV 导出和「复制代下清单」要的是全部。
+        return db.query(select, params)
+    limit = min(200, max(1, limit))
+    total = int((db.one(f"SELECT COUNT(*) n FROM papers p {condition}", params) or {"n": 0})["n"])
+    rows = db.query(select + " LIMIT ? OFFSET ?", params + (limit, max(0, offset)))
+    return {"items": rows, "total": total, "limit": limit, "offset": max(0, offset)}
 
 
 def _paper_path(paper_id: str) -> tuple[dict[str, Any], Path]:
@@ -1315,9 +1510,23 @@ def export_chat(chat_id: str) -> Response:
 
 
 @app.get("/api/notifications")
-def notifications() -> list[dict[str, Any]]:
-    return db.query("""SELECT b.*,COUNT(n.item_id) item_count FROM notification_batches b
-        LEFT JOIN notification_items n ON n.batch_id=b.id GROUP BY b.id ORDER BY b.created_at DESC LIMIT 100""")
+def notifications(limit: int = 12, include_all: bool = False) -> dict[str, Any]:
+    """默认只给「要处理的 + 最近发出去的」，不把整部历史都铺出来。
+
+    汇报记录一周能攒十几批，全量渲染会让页面越来越重。MERGED 的那批内容已经并进
+    后面某一批（详情接口本来也拒绝渲染），留着只增加噪音，因此一律不列。
+    反过来，没发出去的（OPEN/CLOSED/FAILED）无论多久都得露头，否则出问题没人看得见。
+    """
+    limit = 200 if include_all else max(1, min(200, limit))
+    rows = db.query("""SELECT b.*,COUNT(n.item_id) item_count FROM notification_batches b
+        LEFT JOIN notification_items n ON n.batch_id=b.id
+        WHERE b.state IN ('OPEN','CLOSED','FAILED')
+           OR (b.state='SENT' AND b.id IN (SELECT id FROM notification_batches
+                                           WHERE state='SENT' ORDER BY created_at DESC LIMIT ?))
+        GROUP BY b.id ORDER BY b.created_at DESC""", (limit,))
+    total = int((db.one("SELECT COUNT(*) n FROM notification_batches WHERE state<>'MERGED'") or {"n": 0})["n"])
+    return {"items": rows, "total": total, "shown": len(rows), "limit": limit,
+            "include_all": include_all}
 
 
 @app.get("/api/notifications/{batch_id}")

@@ -64,8 +64,8 @@ B站 UP 主：也可使用你自建的 RSSHub 地址，kind 设为 video。</pre
   <div class="section-title"><div><h1>我的公众号库</h1><p>按 OCR 分类结果管理 1,460 个公众号。启用名单同时控制本机微信监测和可选 DataX 补扫；本机监测按名称精确匹配，无需补内部编号。</p></div></div>
   <div id="wechatStats" class="stat-grid"></div>
   <div class="notice">本机微信监测使用这里的启用名单，不消耗 DataX 余额。DataX 仍保持停用，仅在你主动开启后用于外部补扫；本机只能看到微信实际接收或同步的公众号文章。</div>
-  <div class="toolbar"><input id="waQ" placeholder="搜索名称、简介或分类理由"><select id="waCategory"><option value="">全部分类</option></select><select id="waFit"><option value="">全部建议</option><option value="CORE">CORE 核心</option><option value="OPTIONAL">OPTIONAL 可选</option><option value="EXCLUDE">EXCLUDE 排除</option></select><select id="waEnabled"><option value="">全部状态</option><option value="1">已启用</option><option value="0">已停用</option></select></div>
-  <div class="toolbar"><button id="waCheckPage">勾选当前页</button><button id="waUncheckPage">取消当前页</button><button id="waCheckAll">勾选全部筛选结果</button><button id="waEnable" class="primary">启用已勾选</button><button id="waDisable">停用已勾选</button><span id="waSelectedInfo" class="muted">已勾选 0 个</span></div>
+  <div class="toolbar"><input id="waQ" placeholder="搜索名称、简介或分类理由"><button id="waSearch">搜索</button><select id="waCategory"><option value="">全部分类</option></select><select id="waFit"><option value="">全部建议</option><option value="CORE">CORE 核心</option><option value="OPTIONAL">OPTIONAL 可选</option><option value="EXCLUDE">EXCLUDE 排除</option></select><select id="waEnabled"><option value="">全部状态</option><option value="1">已启用</option><option value="0">已停用</option></select></div>
+  <div class="toolbar"><button id="waCheckPage">勾选当前页</button><button id="waUncheckPage">取消所有已勾选</button><button id="waCheckAll">勾选全部筛选结果</button><button id="waEnable" class="primary">启用已勾选</button><button id="waDisable">停用已勾选</button><span id="waSelectedInfo" class="muted">已勾选 0 个</span></div>
   <div class="table-wrap"><table><thead><tr><th><input id="waHeaderCheck" type="checkbox"></th><th>公众号</th><th>分类</th><th>建议</th><th>状态</th><th>理由 / 最近文章</th></tr></thead><tbody id="waRows"></tbody></table></div>
   <div class="actions" style="margin-top:14px"><button id="waPrev">上一页</button><span id="waPageInfo" class="muted"></span><button id="waNext">下一页</button></div>
 </section>
@@ -73,16 +73,22 @@ B站 UP 主：也可使用你自建的 RSSHub 地址，kind 设为 video。</pre
   <div class="section-title"><div><h1>资料库</h1><p>仅保留科研相关公众号文章和B站视频；其他来源及非科研内容会在本地过滤。搜索会同时匹配标题、全文、字幕、摘要与标签，多个词用空格分开。</p></div></div>
   <div id="libraryProgress" class="panel progress-panel"></div>
   <div class="toolbar filter-bar">
-    <input id="searchQ" placeholder="搜索机制、作者、DOI、视频内容……">
-    <select id="searchKind"><option value="">全部类型</option><option value="article">文章</option><option value="video">视频</option></select>
-    <select id="searchStatus"><option value="">全部状态</option><option value="ready">已精读</option><option value="archived">已归档</option><option value="filtered">低相关</option><option value="discovered">仅历史索引</option><option value="insufficient">无法详细归档</option><option value="error">失败</option></select>
-    <select id="searchRange" title="按发布时间筛选"><option value="">全部时间</option><option value="1">今天</option><option value="3">近 3 天</option><option value="7">近 7 天</option><option value="30">近 30 天</option><option value="90">近 90 天</option><option value="365">近一年</option></select>
-    <select id="searchCollection" title="按收藏夹筛选"><option value="">全部收藏夹</option><option value="__none__">未收藏</option></select>
-    <button id="manageCollections" type="button">管理收藏夹</button>
-    <button id="filterRulesBtn" type="button">过滤规则</button>
-    <label class="check" title="只看相关度达标的条目"><input id="hideLow" type="checkbox"> 隐藏低相关</label>
-    <label class="check"><input id="searchExcluded" type="checkbox"> 含已删除</label>
-    <button id="searchBtn" class="primary">搜索</button>
+    <div class="filter-row">
+      <input id="searchQ" placeholder="搜索机制、作者、DOI、视频内容……">
+      <button id="searchBtn" class="primary">搜索</button>
+    </div>
+    <div class="filter-row filter-sub">
+      <select id="searchKind"><option value="">全部类型</option><option value="article">文章</option><option value="video">视频</option></select>
+      <select id="searchStatus"><option value="">全部状态</option><option value="ready">已精读</option><option value="archived">已归档</option><option value="filtered">低相关</option><option value="discovered">仅历史索引</option><option value="insufficient">无法详细归档</option><option value="error">失败</option></select>
+      <select id="searchRange" title="按发布时间筛选"><option value="">全部时间</option><option value="1">今天</option><option value="3">近 3 天</option><option value="7">近 7 天</option><option value="30">近 30 天</option><option value="90">近 90 天</option><option value="365">近一年</option></select>
+      <select id="searchCollection" title="按收藏夹筛选"><option value="">全部收藏夹</option><option value="__none__">未收藏</option></select>
+      <label class="check" title="只看相关度达标的条目"><input id="hideLow" type="checkbox"> 隐藏低相关</label>
+      <label class="check"><input id="searchExcluded" type="checkbox"> 含已删除</label>
+      <div class="filter-actions">
+        <button id="manageCollections" type="button">管理收藏夹</button>
+        <button id="filterRulesBtn" type="button">过滤规则</button>
+      </div>
+    </div>
   </div>
   <div id="itemsSummary" class="list-summary muted"></div>
   <div id="bulkBar" class="bulk-bar" hidden>
@@ -97,6 +103,7 @@ B站 UP 主：也可使用你自建的 RSSHub 地址，kind 设为 video。</pre
   <div class="section-title"><div><h1>论文中心</h1><p>开放获取自动下载；其余保留完整书目信息和失败原因。</p></div><div class="actions"><a class="button" href="/api/papers/needed.csv">导出待下载 CSV</a><button id="copyPapers">复制代下清单</button></div></div>
   <div class="toolbar"><select id="paperStatus"><option value="needed">待人工/代下</option><option value="downloaded">已下载</option><option value="">全部</option><option value="failed">下载失败</option><option value="closed">未发现开放副本</option></select></div>
   <div class="table-wrap"><table><thead><tr><th>论文</th><th>年份 / 期刊</th><th>DOI</th><th>状态</th><th>操作</th></tr></thead><tbody id="papersList"></tbody></table></div>
+  <div id="paperPager" class="pager"></div>
 </section>
 <section id="ideas" class="view">
   <div class="section-title"><div><h1>我的 ideas 与笔记</h1><p>idea 会参与新文章关联；笔记是从精读里随手剪下来的句子和想法。</p></div></div>
@@ -115,6 +122,7 @@ B站 UP 主：也可使用你自建的 RSSHub 地址，kind 设为 video。</pre
 <section id="notifications" class="view">
   <div class="section-title"><div><h1>汇报记录</h1><p>发送采用持久队列；进程重启不会重新生成或重复入队。</p></div><div class="actions"><button id="flushNotifications" class="primary">立即合并当前待汇报</button><button id="testNotification">测试通知渠道</button></div></div>
   <div id="notificationsList" class="card-list"></div>
+  <div id="notificationsMore" class="notifications-more" hidden></div>
 </section>
 <section id="settings" class="view">
   <div class="section-title">
@@ -344,6 +352,46 @@ B站 UP 主：也可使用你自建的 RSSHub 地址，kind 设为 video。</pre
   <div id="rulePreviewResult" class="muted rule-preview"></div>
   <h3 class="rule-list-title">已有规则</h3>
   <div id="ruleList" class="rule-list"></div>
+</dialog>
+<dialog id="waArticles" class="wa-dialog">
+  <div class="wa-head">
+    <div class="wa-head-main">
+      <h2 id="waPanelName">公众号</h2>
+      <div id="waPanelMeta" class="wa-head-meta"></div>
+    </div>
+    <div class="wa-head-actions">
+      <label class="wa-inline">分类<select id="waPanelCategory"></select></label>
+      <label class="wa-inline">建议<select id="waPanelFit"><option value="CORE">CORE 核心</option><option value="OPTIONAL">OPTIONAL 可选</option><option value="EXCLUDE">EXCLUDE 排除</option></select></label>
+      <label class="check wa-inline"><input id="waPanelEnabled" type="checkbox"> 参与监测</label>
+      <button id="waPanelClose" type="button">关闭</button>
+    </div>
+  </div>
+  <div class="wa-bar">
+    <button id="waPanelSelectNew" type="button">勾选未收录</button>
+    <button id="waPanelSelectNone" type="button">清空勾选</button>
+    <button id="waPanelImport" type="button" class="primary">补录所选</button>
+    <button id="waPanelExclude" type="button">排除所选</button>
+    <select id="waPanelRange" title="看多久以内的推文">
+      <option value="30">近 30 天</option>
+      <option value="90">近 90 天</option>
+      <option value="365" selected>近一年</option>
+      <option value="1095">近三年</option>
+    </select>
+    <span id="waPanelSelected" class="muted">已选 0 篇</span>
+  </div>
+  <div id="waPanelStatus" class="wa-status muted"></div>
+  <div id="waArticlesGrid" class="wa-grid"></div>
+  <div class="wa-foot"><button id="waPanelMore" type="button" hidden>加载更多</button><span id="waPanelCount" class="muted"></span></div>
+</dialog>
+<dialog id="waExcludeDialog" class="mini-dialog">
+  <div class="dialog-head"><b id="waExcludeTitle">排除推文</b><button id="waExcludeClose" type="button">关闭</button></div>
+  <p class="muted">排除只是不在面板里出现、也不再补录，原文还在微信里。选「以后同类也不再收录」会在「过滤规则」里建一条该号专属的规则，随时能改能删。</p>
+  <label>原因<select id="waExcludePreset"></select></label>
+  <label>关键词（命中标题或简介就算同一类，可自己加）<input id="waExcludeKeywords" placeholder="用逗号或顿号分隔，例如：广告, 带货"></label>
+  <label>范围<select id="waExcludeMode"><option value="rule">以后同类也不再收录（推荐）</option><option value="one">只排除这几篇</option></select></label>
+  <label class="check"><input id="waExcludeDisable" type="checkbox"> 顺便把这个号整个停掉，不再监测</label>
+  <div class="actions"><button id="waExcludeCancel" type="button">取消</button><button id="waExcludeOk" type="button" class="primary">确定排除</button></div>
+  <div id="waExcludeCount" class="muted"></div>
 </dialog>
 <div id="taskBackdrop" class="task-backdrop"></div>
 <aside id="taskDrawer" class="task-drawer" aria-hidden="true">

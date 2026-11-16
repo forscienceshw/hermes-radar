@@ -10,12 +10,12 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from .paths import DB_PATH
-from .utils import canonical_url, now_iso, parse_time, stable_json, utcnow
+from .utils import canonical_url, humanize_error_text, now_iso, parse_time, stable_json, utcnow
 
 # 库结构版本。加字段/改表时把这个数字 +1，init() 会把新值写进
 # PRAGMA user_version，于是"这是哪个版本的库"可以和代码版本对得上。
 # 目前只用于诊断：新代码遇到旧库靠下面的补列逻辑自动升级。
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sources (
@@ -235,6 +235,17 @@ CREATE TABLE IF NOT EXISTS filter_rules (
     updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_filter_rules_enabled ON filter_rules(enabled);
+CREATE TABLE IF NOT EXISTS wechat_article_marks (
+    canonical_url TEXT PRIMARY KEY,
+    account_pk INTEGER NOT NULL DEFAULT 0,
+    gh_id TEXT NOT NULL DEFAULT '',
+    title TEXT NOT NULL DEFAULT '',
+    state TEXT NOT NULL DEFAULT 'excluded',
+    reason TEXT NOT NULL DEFAULT '',
+    rule_id INTEGER,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_wechat_article_marks_account ON wechat_article_marks(account_pk, state);
 """
 
 
@@ -500,6 +511,8 @@ class Database:
             # A failed re-run must never destroy an earlier successful reading.
             self.add_event("item_error", f"重新处理失败，已保留上次精读结果：{message}", item_id)
             return
+        # 兜底：任何一整页 HTML 的报错都先压成一句话，资料库里不存网页源码。
+        message = humanize_error_text(message)
         self.execute("UPDATE items SET status=?,error=? WHERE id=?", (status, message[:4000], item_id))
         self.add_event("item_error", message, item_id)
 

@@ -1,6 +1,9 @@
 import asyncio
+import difflib
 import json
 import os
+import re
+import unicodedata
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlencode
@@ -12,6 +15,138 @@ from ..net import download_file, get_json
 from ..settings import get_settings
 from ..storage import atomic_write, paper_folder, store_blob_file
 from ..utils import extract_dois, json_loads, now_iso, stable_json
+
+# 标题相似度低于这个值就当没找到——宁可留着「未发现论文」，也不能挂错一篇。
+TITLE_SIMILARITY = 0.86
+# nature.com/articles/s41893-026-01986-6 的后半段就是 DOI，公众号文末常贴这种链接。
+NATURE_ARTICLE_RE = re.compile(r"https?://(?:www\.)?nature\.com/articles/([A-Za-z0-9._\-]+)", re.I)
+QUOTED_RE = re.compile(r"[“\"「『《]([^”\"」』》]{18,220})[”\"」』》]")
+
+
+def doi_from_links(text: str) -> list[str]:
+    """从正文里的出版社链接反推 DOI。
+
+    公众号习惯在文末贴原文地址，而 `nature.com/articles/s41893-026-01986-6`
+    这种链接里没有「10.xxxx/」，`extract_dois` 的正则认不出来，但后缀就是 DOI。
+    只做确定性映射，猜不准的形态一律不碰。
+    """
+    found: list[str] = []
+    for match in NATURE_ARTICLE_RE.finditer(text or ""):
+        suffix = match.group(1).strip(".,;）)")
+        if len(suffix) >= 8 and not suffix.startswith("10."):
+            found.append(f"10.1038/{suffix}".lower())
+    return list(dict.fromkeys(found))
+
+
+def _norm_title(text: str) -> str:
+    value = unicodedata.normalize("NFKC", str(text or "")).casefold()
+    value = re.sub(r"[^0-9a-z\u4e00-\u9fff ]+", " ", value)
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def title_similarity(left: str, right: str) -> float:
+    """标题比对：词覆盖率与整串相似度取高者，长标题缩写也能对上。"""
+    a, b = _norm_title(left), _norm_title(right)
+    if not a or not b:
+        return 0.0
+    if a == b:
+        return 1.0
+    ta, tb = set(a.split()), set(b.split())
+    overlap = len(ta & tb) / max(1, min(len(ta), len(tb)))
+    return max(overlap, difflib.SequenceMatcher(None, a, b).ratio())
+
+
+# 期刊名经常也被引号括起来（「《Accounts of Chemical Research》」），别拿它当论文标题去查。
+JOURNAL_LIKE_RE = re.compile(
+    r"^(journal of|proceedings of|frontiers in|accounts of|annual review of|advances in|"
+    r"nature|science|cell|the lancet|bmj|pnas|elife|chemical reviews|chemical society reviews)\b",
+    re.I)
+
+
+def _looks_like_paper_title(span: str) -> bool:
+    span = span.strip()
+    if not 18 <= len(span) <= 220:
+        return False
+    lowered = span.lower()
+    if "http" in lowered or "@" in span:
+        return False
+    if JOURNAL_LIKE_RE.match(span) and len(span.split()) <= 5:
+        return False
+    ascii_ratio = sum(ch.isascii() for ch in span) / max(1, len(span))
+    if ascii_ratio < 0.85:
+        # 中文标题交给正文关键词判断，不在这里猜——中文重名太多，猜错代价更大。
+        return False
+    return len(re.findall(r"[A-Za-z][A-Za-z'\-]+", span)) >= 4
+
+
+def candidate_titles(text: str, limit: int = 4) -> list[str]:
+    """挑出正文里「像是论文标题」的英文片段。
+
+    公众号的写法很固定：研究报道“Title”、题为《Title》、发表在《Journal》的“Title”。
+    所以只认引号/书名号里的片段，不做整段英文识别——那样会把句子里任意一段当标题。
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+    for match in QUOTED_RE.finditer(text or ""):
+        span = re.sub(r"\s+", " ", match.group(1)).strip()
+        key = span.casefold()
+        if key in seen or not _looks_like_paper_title(span):
+            continue
+        seen.add(key)
+        out.append(span)
+        if len(out) >= limit:
+            break
+    return out
+
+
+async def _title_candidates(title: str, email: str) -> list[dict[str, Any]]:
+    """按标题找 DOI。Crossref 优先，Europe PMC 兜底，相似度不够的一律丢掉。"""
+    hits: list[dict[str, Any]] = []
+    params = {"query.bibliographic": title, "rows": "5", "select": "DOI,title", "mailto": email or ""}
+    try:
+        payload, _ = await get_json("https://api.crossref.org/works?" + urlencode(params),
+                                    headers={"Accept": "application/json"}, max_bytes=2_000_000)
+        for row in (payload.get("message") or {}).get("items") or []:
+            name = (row.get("title") or [""])[0]
+            doi = str(row.get("DOI") or "").strip().lower()
+            if doi and name:
+                hits.append({"doi": doi, "title": name, "source": "Crossref",
+                             "similarity": title_similarity(title, name)})
+    except Exception:
+        pass
+    if not any(hit["similarity"] >= TITLE_SIMILARITY for hit in hits):
+        try:
+            payload, _ = await get_json(
+                "https://www.ebi.ac.uk/europepmc/webservices/rest/search?" + urlencode(
+                    {"query": f'TITLE:"{title}"', "format": "json", "pageSize": "5"}),
+                max_bytes=2_000_000)
+            for row in (payload.get("resultList") or {}).get("result") or []:
+                doi = str(row.get("doi") or "").strip().lower()
+                name = row.get("title") or ""
+                if doi and name:
+                    hits.append({"doi": doi, "title": name, "source": "Europe PMC",
+                                 "similarity": title_similarity(title, name)})
+        except Exception:
+            pass
+    hits.sort(key=lambda hit: hit["similarity"], reverse=True)
+    return [hit for hit in hits if hit["similarity"] >= TITLE_SIMILARITY]
+
+
+async def _doi_is_real(doi: str, email: str) -> bool:
+    """启发式 DOI 先过一遍 Crossref，免得往论文中心塞不存在的东西。
+
+    网络不通时按「通过」处理：宁可多一条待核实的记录，也不能因为断网漏掉真论文。
+    """
+    url = f"https://api.crossref.org/works/{quote(doi, safe='')}"
+    if email:
+        url += "?" + urlencode({"mailto": email})
+    try:
+        payload, _ = await get_json(url, headers={"Accept": "application/json"}, max_bytes=1_000_000)
+    except Exception as exc:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        return status != 404
+    return bool((payload.get("message") or {}).get("title"))
+
 
 
 def _crossref_metadata(payload: dict[str, Any]) -> dict[str, Any]:
@@ -95,6 +230,8 @@ async def resolve_and_download(db: Database, paper_id: str) -> None:
     pdf_candidates = list(dict.fromkeys(pdf_candidates))
     landing_candidates = list(dict.fromkeys(landing_candidates))
     timestamp = now_iso()
+    # matched_by 是入库时记下的「这篇是怎么找到的」，重查一次不能把它抹掉。
+    matched_by = (json_loads(paper.get("metadata_json"), {}) or {}).get("matched_by")
     db.execute("""UPDATE papers SET title=?,authors_json=?,year=?,journal=?,oa_status=?,pdf_url=?,landing_url=?,
         metadata_json=?,updated_at=? WHERE id=?""", (
         metadata.get("title") or paper["title"], stable_json(metadata.get("authors") or []),
@@ -102,7 +239,8 @@ async def resolve_and_download(db: Database, paper_id: str) -> None:
         pdf_candidates[0] if pdf_candidates else None,
         landing_candidates[0] if landing_candidates else f"https://doi.org/{doi}",
         stable_json({"crossref": metadata.get("crossref"), "openalex": openalex_payload,
-                     "unpaywall": unpaywall_payload, "lookup_errors": errors}), timestamp, paper_id,
+                     "unpaywall": unpaywall_payload, "lookup_errors": errors,
+                     **({"matched_by": matched_by} if matched_by else {})}), timestamp, paper_id,
     ))
     if not pdf_candidates:
         db.execute("UPDATE papers SET status='closed',error=?,updated_at=? WHERE id=?",
@@ -142,6 +280,35 @@ async def resolve_and_download(db: Database, paper_id: str) -> None:
                ("；".join(download_errors + errors)[:4000], now_iso(), paper_id))
 
 
+async def _guess_dois(db: Database, item_id: str, body_text: str, raw_text: str,
+                      settings: dict[str, Any]) -> tuple[list[str], dict[str, str]]:
+    """正文没写 DOI 时，从文末链接和引号里的论文标题再找一遍。
+
+    真实文章上的两种写法都见过：文末直接贴 `nature.com/articles/...`（链接里没有
+    10.xxxx/，正则认不出），或者正文写「研究报道“Bistable regulation of adipocyte
+    heterogeneity governs thermogenesis”」。两种都能反推出 DOI。
+    """
+    email = str(settings.get("email") or "").strip()
+    guessed: list[tuple[str, str]] = [(doi, "正文里贴出的原文链接")
+                                      for doi in doi_from_links(body_text + "\n" + raw_text)]
+    if not guessed:
+        for title in candidate_titles(body_text or raw_text):
+            hits = await _title_candidates(title, email)
+            if not hits:
+                continue
+            top = hits[0]
+            guessed.append((top["doi"], f"正文标题匹配「{top['title'][:70]}」"
+                                        f"（{top['source']}，相似度 {top['similarity']:.2f}）"))
+            break
+    kept: dict[str, str] = {}
+    for doi, reason in guessed[:3]:
+        if await _doi_is_real(doi, email):
+            kept[doi] = reason
+        else:
+            db.add_event("paper_lookup", f"按{reason}推出的 DOI {doi} 在 Crossref 查不到，已忽略", item_id)
+    return list(kept), kept
+
+
 async def process_item_papers(db: Database, item_id: str, archive_only: bool = False,
                               skip_analysis: bool = False) -> None:
     item = db.one("SELECT id,url,text,raw_path,excluded_at FROM items WHERE id=?", (item_id,))
@@ -173,6 +340,9 @@ async def process_item_papers(db: Database, item_id: str, archive_only: bool = F
     if primary and not settings.get("download_references", False):
         candidates = primary
     dois = candidates[:int(settings["max_per_item"])]
+    matched: dict[str, str] = {}
+    if not dois and settings.get("title_lookup", True):
+        dois, matched = await _guess_dois(db, item_id, body_text, raw_text, settings)
     paper_ids = []
     for doi in dois:
         existing = db.one("SELECT id FROM papers WHERE doi=?", (doi,))
@@ -180,8 +350,12 @@ async def process_item_papers(db: Database, item_id: str, archive_only: bool = F
         timestamp = now_iso()
         with db.transaction() as conn:
             if not existing:
-                conn.execute("INSERT INTO papers(id,doi,landing_url,created_at,updated_at) VALUES(?,?,?,?,?)",
-                             (paper_id, doi, f"https://doi.org/{doi}", timestamp, timestamp))
+                conn.execute("INSERT INTO papers(id,doi,landing_url,metadata_json,created_at,updated_at) "
+                             "VALUES(?,?,?,?,?,?)",
+                             (paper_id, doi, f"https://doi.org/{doi}",
+                              # 这一列 NOT NULL：没有「怎么找到的」就写空对象，别塞 None。
+                              stable_json({"matched_by": matched[doi]}) if doi in matched else "{}",
+                              timestamp, timestamp))
             conn.execute("INSERT OR IGNORE INTO item_papers(item_id,paper_id) VALUES(?,?)", (item_id, paper_id))
         paper_ids.append(paper_id)
     if get_settings()["papers"]["enabled"]:

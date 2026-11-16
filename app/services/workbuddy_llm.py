@@ -8,11 +8,12 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ..paths import BASE_DIR, DATA_DIR
-from ..utils import now_iso
+from ..utils import humanize_error_text, now_iso
 
 WORKER_PATH = BASE_DIR / "cloud" / "dist" / "llm-worker.mjs"
 USAGE_LOG = DATA_DIR / "llm-usage.jsonl"
 MAX_PAYLOAD_BYTES = 28_000_000
+
 
 
 def _hidden_process_options() -> dict[str, Any]:
@@ -166,14 +167,14 @@ async def _run_worker(payload: dict[str, Any], timeout_seconds: float = 240,
                 error = item
                 break
         if error:
-            message = (error.get("message") or "").strip() or None
+            message = humanize_error_text(error.get("message") or "", limit=600) or None
             code = error.get("code")
             retry_after = error.get("retryAfterMs")
         elif errors:
-            message = str(errors[-1])[:1500]
+            message = humanize_error_text(str(errors[-1]))
         if not message:
             # An empty stderr used to surface as a bare "RuntimeError"; keep the exit code visible.
-            snippet = stdout.decode("utf-8", errors="replace").strip()[:300]
+            snippet = humanize_error_text(stdout.decode("utf-8", errors="replace"), limit=300)
             message = f"云模型进程异常退出（退出码 {process.returncode}，未返回错误详情）"
             if snippet:
                 message += f"；输出：{snippet}"

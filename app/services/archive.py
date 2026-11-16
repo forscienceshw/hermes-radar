@@ -363,7 +363,8 @@ def _share_card_archive(item: dict[str, Any], folder: Path, url: str, reason: st
     description = str(metadata.get("description") or "").strip()
     author = str(item.get("author") or "").strip()
     if len(description) < 20:
-        raise ValueError(f"{reason}；分享卡片上也没有足够的文字，没有可归档的内容")
+        raise ValueError(f"{reason}；分享卡片上也只有「{description[:16]}」这么短的文字，"
+                         f"没有可归档的内容——这条只能回微信里看")
 
     paragraphs = [line.strip() for line in description.splitlines() if line.strip()]
     if len(paragraphs) <= 1:
@@ -468,6 +469,11 @@ async def archive_web(item: dict[str, Any]) -> dict[str, Any]:
         # An illustrated post can be nothing but pictures — a two-frame anatomy
         # plate has no prose at all and is still worth keeping.  Only a page with
         # neither prose nor figures is a genuine failure.
+        if wechat:
+            # 微信有时给一个空的 #js_content 空壳（正文在客户端里渲染），本质跟验证页
+            # 一样：正文拿不到。这时候退回卡片摘要比记一条看不懂的 error 有用。
+            reason = detect_verify_page(_page_text(response)) or "微信只返回了空壳页面，正文没取到"
+            return _share_card_archive(item, folder, url, reason, response.url)
         raise ValueError("没有提取到有效正文，页面上也没有可归档的配图；已保留任务以便重试，"
                          "不会伪造摘要或调用付费接口")
     unique_images = list(url_tags.items())[:int(settings["max_images_per_article"])]

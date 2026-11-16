@@ -55,6 +55,20 @@ python radar.py save "一句话说清改了什么"     # 存
 （核钟、MPC、混合键合都掉在这一档）。所以它**默认照旧显示**，只在用户勾
 「隐藏低相关」时让位（`/api/items?hide_low=true`）。别把它改回默认隐藏。
 
+## 公众号面板：读的是本机微信，不是网络
+
+`services/wechat_public.py` 直接读 `Msg/PublicMsg.db`（只读）。两个坑踩过一次就别再踩：
+
+1. **按 `StrTalker` 查是全表扫描。** 表里 36 万行、每页都要 SQLCipher 解密，实测一次 20 秒以上。
+   按 `TalkerId` 查走 `MsgTalkerIdTypeSeqIndex`，1~3 毫秒；`TalkerId` 就是 `PublicNameToID`
+   的 rowid，所以先映射再查。别图省事用号名直接过滤。
+2. **封面图有防盗链。** `mmbiz.qpic.cn` 被浏览器直连（带 `Referer: 127.0.0.1`）会换成
+   「此图片来自微信公众平台，未经允许不可引用」的占位图，看着像图全挂了。必须走服务端
+   `/api/wechat/cover` 代理，顺带缓存进 `blobs/covers/`。
+
+面板的「排除」不是删：它写 `wechat_article_marks`（这张卡变灰）**并且**按原因在该号名下
+建一条 `filter_rules`。所以入库闸门只有 `filter_rules` 这一处，别再给面板单独加一套过滤逻辑。
+
 ## 删除必须直删，别走回收站
 
 这台机器给 `python.exe` / `bash.exe` 挂了安全删除垫片（`sitecustomize` + `safe-bin/rm`），

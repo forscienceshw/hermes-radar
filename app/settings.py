@@ -61,6 +61,8 @@ DEFAULTS: dict[str, Any] = {
         "max_per_item": 10,
         "extract_text": True,
         "download_references": False,
+        # 正文里没有 DOI 时，按「正文链接反推」和「引号里的论文标题」再找一遍。
+        "title_lookup": True,
     },
     "notifications": {
         "enabled": True,

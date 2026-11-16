@@ -148,9 +148,15 @@ dialog{position:fixed;inset:0;margin:auto;z-index:40;overflow:auto}
 .mini-dialog{width:min(560px,92vw);max-height:80vh;padding:0 22px 22px}
 
 /* ---------- 资料库筛选与分页 ---------- */
-.filter-bar{flex-wrap:wrap;align-items:center}
-.filter-bar input#searchQ{flex:1 1 320px;max-width:none}
-.filter-bar select{max-width:180px}
+/* 两行：第一行只管「搜什么」，第二行管「筛哪些」。按回车和点按钮是同一件事。 */
+.filter-bar{display:grid;gap:9px;align-items:stretch}
+.filter-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.filter-row>*{margin:0}
+.filter-bar .filter-row input#searchQ{flex:1 1 320px;max-width:none;margin:0}
+.filter-bar .filter-row select{max-width:168px;margin:0}
+.filter-sub{padding-top:1px}
+.filter-actions{display:flex;gap:8px;margin-left:auto}
+.filter-actions button{margin:0;padding:7px 13px;font-size:13px}
 .toolbar .check{display:inline-flex;align-items:center;gap:6px;margin:0;font-size:12.5px;color:#4d5965;white-space:nowrap}
 .toolbar .check input{width:auto;margin:0}
 .list-summary{font-size:12.5px;margin:-6px 0 10px}
@@ -340,3 +346,84 @@ body.viewer-open{overflow:hidden}
 .rule-row .actions{flex:none}
 .rule-row b{font-weight:600}
 #waRows .badge{white-space:nowrap}
+
+/* ---------- 汇报记录的收尾提示 ---------- */
+.notifications-more{display:flex;align-items:center;gap:10px;flex-wrap:wrap;color:var(--muted);font-size:12.5px;padding:4px 2px 8px}
+.notifications-more[hidden]{display:none}
+.notifications-more button{padding:5px 11px;font-size:12.5px}
+
+/* ---------- 论文中心表格：DOI 与报错文本不许把操作列挤成竖排 ---------- */
+#papersList td{word-break:break-word}
+#papersList td .error-text{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;white-space:normal;word-break:break-all}
+#papersList td:nth-child(3){min-width:210px;max-width:300px}
+#papersList td:nth-child(4),#papersList td:nth-child(5){white-space:nowrap;width:1%}
+#papersList td:last-child .actions{flex-wrap:nowrap}
+
+/* ---------- 公众号近期推文面板：模仿微信订阅号消息的平铺卡片 ---------- */
+.wa-dialog{width:min(1180px,95vw);max-height:90vh;padding:0 0 4px;overflow:auto;border-radius:16px}
+.wa-dialog::backdrop{background:#17232b99}
+.wa-head{position:sticky;top:0;z-index:3;display:flex;justify-content:space-between;align-items:flex-start;gap:18px;background:#fff;border-bottom:1px solid var(--line);padding:16px 22px 13px}
+.wa-head h2{margin:0 0 4px;font-size:20px}
+.wa-head-meta{display:flex;flex-wrap:wrap;gap:6px 10px;color:var(--muted);font-size:12.5px;align-items:center}
+.wa-head-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end}
+.wa-head-actions label{display:flex;align-items:center;gap:6px;margin:0;font-size:12.5px;font-weight:500;color:#45515e;white-space:nowrap}
+.wa-head-actions select{margin:0;padding:5px 8px;width:auto;min-width:96px;font-size:12.5px}
+.wa-inline input[type=checkbox]{margin:0;width:auto}
+.wa-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:12px 22px 0}
+.wa-bar button{padding:6px 12px;font-size:13px}
+.wa-bar select{margin:0;padding:6px 9px;width:auto;font-size:13px;max-width:130px}
+.wa-status{padding:8px 22px 0;font-size:12.5px;line-height:1.6}
+.wa-status:empty{display:none}
+.wa-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(184px,1fr));gap:15px;padding:15px 22px 6px}
+.wa-card{position:relative;display:flex;flex-direction:column;border:1px solid var(--line);border-radius:12px;background:#fff;overflow:hidden;transition:transform .14s ease,box-shadow .14s ease,border-color .14s ease}
+.wa-card:hover{transform:translateY(-2px);border-color:#8dbdb8;box-shadow:0 10px 24px rgba(30,45,55,.1)}
+.wa-cover{position:relative;aspect-ratio:1/1;background:#eef2f5 center/cover no-repeat;display:grid;place-items:end start;cursor:pointer}
+.wa-cover.noimg{background:linear-gradient(135deg,#dfe9e8,#eef2f5)}
+.wa-cover .wa-initial{position:absolute;inset:0;display:grid;place-items:center;font:700 30px/1 Georgia;color:#9fb3b0}
+.wa-cover-img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:1;display:block}
+.wa-pick,.wa-tag{z-index:2}
+.wa-pick{position:absolute;top:8px;left:8px;width:22px;height:22px;border-radius:7px;border:1.5px solid #ffffffcc;background:#0000002e;color:transparent;display:grid;place-items:center;font-size:13px;font-weight:700}
+.wa-card.picked .wa-pick{background:var(--accent);border-color:var(--accent);color:#fff}
+.wa-card.picked{border-color:var(--accent);box-shadow:0 0 0 2px #126e6733}
+.wa-tag{position:absolute;top:8px;right:8px;font-size:11px;padding:2px 7px;border-radius:20px;background:#000000a6;color:#fff;letter-spacing:.2px}
+.wa-tag.ok{background:#126e67d9}
+.wa-tag.warn{background:#b42318d9}
+.wa-tag.info{background:#8a6d1fd9}
+.wa-body{display:flex;flex-direction:column;gap:6px;padding:9px 10px 10px;flex:1}
+.wa-title{margin:0;font-size:13.5px;line-height:1.45;font-weight:600;color:var(--ink);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;text-decoration:none}
+.wa-title:hover{color:var(--accent)}
+.wa-meta{display:flex;justify-content:space-between;gap:8px;color:var(--muted);font-size:11.5px;margin-top:auto}
+.wa-note{font-size:11.5px;color:#805c0c;background:#fff8e6;border-radius:6px;padding:3px 6px;line-height:1.4}
+.wa-tools{display:flex;gap:6px;flex-wrap:wrap}
+.wa-tools button{padding:3px 8px;font-size:12px;border-radius:6px}
+.wa-tools button.danger{background:#fff;color:var(--danger);border-color:#e6c1bd}
+.wa-tools button.danger:hover{background:#fff4f2}
+.wa-card[data-state="excluded"]{opacity:.5}
+.wa-card[data-state="excluded"]:hover{opacity:.86}
+.wa-empty{padding:44px 22px;text-align:center;color:var(--muted)}
+.wa-foot{display:flex;align-items:center;gap:12px;justify-content:center;padding:8px 22px 20px}
+.wa-foot button[hidden]{display:none}
+.wa-card.skeleton{pointer-events:none}
+.wa-card.skeleton .wa-cover{background:linear-gradient(100deg,#eef2f5,#f7f9fa,#eef2f5);background-size:200% 100%;animation:waShimmer 1.2s linear infinite}
+@keyframes waShimmer{from{background-position:0 0}to{background-position:-200% 0}}
+@media(max-width:720px){
+  .wa-grid{grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:11px;padding:13px 14px 4px}
+  .wa-head,.wa-bar,.wa-status,.wa-foot{padding-left:14px;padding-right:14px}
+  .wa-head{flex-direction:column;align-items:stretch}
+  .wa-head-actions{justify-content:flex-start}
+}
+@media(prefers-color-scheme:dark){
+  /* 页面本身是浅色的，这里只保证表格里的公众号名像链接一样可点 */
+}
+
+/* 公众号名字本身是「看它最近推文」的入口：做成虚线下划线，别让它像普通加粗文本 */
+.wa-open{cursor:pointer;border-bottom:1px dashed #b7c6c4;transition:color .15s,border-color .15s}
+.wa-open:hover{color:var(--accent);border-bottom-color:var(--accent)}
+
+/* 排除对话框：`.check` 这条在工具栏外没有样式，复选框会被 input{width:100%} 撑满一行 */
+#waExcludeDialog .dialog-head{justify-content:space-between;align-items:center}
+#waExcludeDialog label{font-size:13px;margin-bottom:2px}
+#waExcludeDialog label.check{display:inline-flex;align-items:center;gap:8px;margin:2px 0 12px;font-weight:500}
+#waExcludeDialog label.check input{width:auto;margin:0}
+#waExcludeDialog input,#waExcludeDialog select{margin:4px 0 10px}
+#waExcludeDialog .actions{margin-top:2px}

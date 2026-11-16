@@ -35,6 +35,8 @@ class JobRunner:
             await self._archive_history_batch(payload)
         elif kind == "analyze_item":
             await self._archive_if_missing(payload["item_id"])
+            if payload.get("force"):
+                await self._refresh_papers(payload["item_id"])
             await analyze_item(self.db, payload["item_id"], force=bool(payload.get("force")))
         elif kind == "flush_batch":
             flush_open_batches(self.db)
@@ -109,6 +111,26 @@ class JobRunner:
             return
         # The manual job already carries force=True; don't let the papers step queue a second reading.
         await self._archive(item_id, skip_analysis=True)
+
+    async def _refresh_papers(self, item_id: str) -> None:
+        """手动「重新精读」时，把论文匹配也重跑一遍。
+
+        以前只重跑精读：正文里没有 DOI 的条目永远停在「没查到对应论文」，
+        哪怕正文末尾就贴着 nature.com 的原文链接。现在会按链接和引号里的
+        英文标题再找一次；已经挂上论文的条目不动，避免重复挂一篇错的进来。
+        """
+        from .settings import get_settings
+        if not get_settings()["papers"].get("enabled", True):
+            return
+        row = self.db.one("""SELECT i.text,i.excluded_at,
+                (SELECT COUNT(*) FROM item_papers ip WHERE ip.item_id=i.id) papers
+            FROM items i WHERE i.id=?""", (item_id,))
+        if not row or row["excluded_at"] or int(row["papers"] or 0) or not (row["text"] or "").strip():
+            return
+        try:
+            await process_item_papers(self.db, item_id, archive_only=True)
+        except Exception as exc:
+            log.warning("重新匹配论文失败 item=%s：%s", item_id, exc)
 
     async def _archive(self, item_id: str, archive_only: bool = False, skip_analysis: bool = False) -> None:
         row = self.db.one("SELECT * FROM items WHERE id=?", (item_id,))
