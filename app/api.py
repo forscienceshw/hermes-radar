@@ -158,6 +158,25 @@ class CollectionEntryInput(BaseModel):
     member: bool | None = None
 
 
+class ItemDeleteInput(BaseModel):
+    ids: list[str] = Field(default_factory=list)
+    note: str = ""
+
+
+class FilterRuleInput(BaseModel):
+    scope: str = "account"
+    account: str = ""
+    field: str = "title"
+    patterns: str = ""
+    match_mode: str = "any"
+    note: str = ""
+    apply_now: bool = True
+
+
+class FilterRulePatch(BaseModel):
+    enabled: bool = True
+
+
 def _source_view(row: dict[str, Any]) -> dict[str, Any]:
     item = row_with_json(row, "config_json", "cursor_json")
     if item["type"] == "wechat_public_local":
@@ -543,14 +562,22 @@ def import_wechat_catalog() -> dict[str, Any]:
 @app.get("/api/items")
 def items(q: str = "", kind: str = "", status: str = "", limit: int = 50, offset: int = 0,
           since: str = "", until: str = "", collection: str = "",
-          include_excluded: bool = False) -> dict[str, Any]:
+          include_excluded: bool = False, hide_low: bool = False) -> dict[str, Any]:
     limit = min(200, max(1, limit))
     offset = max(0, offset)
+    # 「低相关」是精读打分低于阈值的中间档，判断不一定准，所以默认照旧显示，
+    # 只是给个开关让列表清净。真正判死的引流软文走的是 excluded_at，默认就看不见。
+    hide_status = "filtered" if (hide_low and status != "filtered") else ""
     filters = {"query": q, "kind": kind, "status": status, "since": since or None,
                "until": until or None, "collection": collection or None,
-               "include_excluded": include_excluded}
+               "include_excluded": include_excluded, "hide_status": hide_status}
     rows = db.search(**filters, limit=limit, offset=offset)
     total = db.search_count(**filters)
+    hidden_low = 0
+    if hide_status:
+        hidden_low = db.search_count(query=q, kind=kind, since=since or None,
+                                     until=until or None, collection=collection or None,
+                                     status="filtered")
     busy: dict[str, str] = {}
     for job in db.query("""SELECT kind,state,payload_json FROM jobs
         WHERE state IN ('LEASED','READY','RETRY_WAIT') AND kind IN ('archive_item','papers_item','analyze_item')
@@ -563,7 +590,8 @@ def items(q: str = "", kind: str = "", status: str = "", limit: int = 50, offset
     for row in rows:
         row["active_job"] = busy.get(row["id"])
         row["collections"] = membership.get(row["id"], [])
-    return {"items": rows, "total": total, "limit": limit, "offset": offset}
+    return {"items": rows, "total": total, "limit": limit, "offset": offset,
+            "hidden_low_relevance": hidden_low}
 
 
 @app.get("/api/items/{item_id}")
@@ -629,6 +657,98 @@ def restore_item(item_id: str) -> dict[str, Any]:
         db.set_items_excluded([item_id], "手动恢复收录", excluded=False)
         db.add_event("restored", "手动恢复收录", item_id)
     return {"restored": bool(row["excluded_at"])}
+
+
+@app.post("/api/items/{item_id}/delete")
+def delete_item(item_id: str, data: ItemDeleteInput = ItemDeleteInput()) -> dict[str, Any]:
+    """手动删除：移出资料库但保留已归档的正文与图片，随时能恢复。"""
+    row = db.one("SELECT id,excluded_at,exclusion_reason FROM items WHERE id=?", (item_id,))
+    if not row:
+        raise HTTPException(404, "条目不存在")
+    if row["excluded_at"]:
+        return {"deleted": False, "reason": row.get("exclusion_reason") or "已经在资料库之外"}
+    reason = "手动删除"
+    note = data.note.strip()
+    if note:
+        reason += f"：{note[:120]}"
+    db.set_items_excluded([item_id], reason)
+    db.add_event("item_deleted", f"手动移出资料库（{reason}）", item_id)
+    return {"deleted": True, "reason": reason}
+
+
+@app.post("/api/items/bulk-delete")
+def delete_items(data: ItemDeleteInput) -> dict[str, Any]:
+    ids = [item_id for item_id in dict.fromkeys(data.ids) if item_id]
+    if not ids:
+        raise HTTPException(400, "没有指定要删除的条目")
+    reason = "手动删除"
+    if data.note.strip():
+        reason += f"：{data.note.strip()[:120]}"
+    changed = db.set_items_excluded(ids, reason)
+    if changed:
+        db.add_event("item_deleted", f"手动移出资料库 {changed} 条（{reason}）")
+    return {"deleted": changed, "reason": reason}
+
+
+@app.get("/api/filter-rules")
+def list_filter_rules() -> dict[str, Any]:
+    from .services import filters
+    rules = filters.load_rules(db, enabled_only=False)
+    for rule in rules:
+        rule["description"] = filters.describe(rule)
+    return {"items": rules}
+
+
+@app.post("/api/filter-rules/preview")
+def preview_filter_rule(data: FilterRuleInput) -> dict[str, Any]:
+    from .services import filters
+    return filters.preview(db, data.model_dump())
+
+
+@app.post("/api/filter-rules")
+def create_filter_rule(data: FilterRuleInput) -> dict[str, Any]:
+    from .services import filters
+    patterns = filters.split_patterns(data.patterns)
+    if not patterns:
+        raise HTTPException(400, "至少写一个关键词")
+    if data.scope not in filters.SCOPE_LABELS:
+        raise HTTPException(400, "scope 只能是 account 或 all")
+    if data.scope == "account" and not data.account.strip():
+        raise HTTPException(400, "限定公众号时必须填公众号名称")
+    if data.field not in filters.FIELD_LABELS:
+        raise HTTPException(400, "field 只能是 title 或 header")
+    timestamp = now_iso()
+    db.execute("""INSERT INTO filter_rules(scope,account,field,patterns,match_mode,note,enabled,hits,created_at,updated_at)
+        VALUES(?,?,?,?,?,?,1,0,?,?)""",
+               (data.scope, data.account.strip(), data.field, "|".join(patterns),
+                "all" if data.match_mode == "all" else "any", data.note.strip(), timestamp, timestamp))
+    row = (db.query("SELECT * FROM filter_rules ORDER BY id DESC") or [None])[0]
+    if not row:
+        raise HTTPException(500, "规则写入后读不回来")
+    applied = filters.apply_to_existing(db) if data.apply_now else 0
+    row = db.one("SELECT * FROM filter_rules WHERE id=?", (row["id"],)) or row
+    row["description"] = filters.describe({**row, "pattern_list": patterns})
+    return {"rule": row, "applied": applied}
+
+
+@app.patch("/api/filter-rules/{rule_id}")
+def update_filter_rule(rule_id: int, data: FilterRulePatch) -> dict[str, Any]:
+    if not db.one("SELECT id FROM filter_rules WHERE id=?", (rule_id,)):
+        raise HTTPException(404, "规则不存在")
+    db.execute("UPDATE filter_rules SET enabled=?,updated_at=? WHERE id=?",
+               (int(data.enabled), now_iso(), rule_id))
+    return {"updated": 1}
+
+
+@app.delete("/api/filter-rules/{rule_id}")
+def delete_filter_rule(rule_id: int, restore: bool = True) -> dict[str, Any]:
+    from .services import filters
+    if not db.one("SELECT id FROM filter_rules WHERE id=?", (rule_id,)):
+        raise HTTPException(404, "规则不存在")
+    restored = filters.restore_by_rule(db, rule_id) if restore else 0
+    db.execute("DELETE FROM filter_rules WHERE id=?", (rule_id,))
+    db.add_event("filter_rule", f"删除过滤规则 #{rule_id}" + (f"，同时恢复 {restored} 条" if restored else ""))
+    return {"deleted": 1, "restored": restored}
 
 
 @app.get("/api/items/{item_id}/raw")

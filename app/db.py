@@ -15,7 +15,7 @@ from .utils import canonical_url, now_iso, parse_time, stable_json, utcnow
 # 库结构版本。加字段/改表时把这个数字 +1，init() 会把新值写进
 # PRAGMA user_version，于是"这是哪个版本的库"可以和代码版本对得上。
 # 目前只用于诊断：新代码遇到旧库靠下面的补列逻辑自动升级。
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sources (
@@ -221,6 +221,20 @@ CREATE TABLE IF NOT EXISTS collection_entries (
     FOREIGN KEY(collection_id) REFERENCES collections(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_collection_entries_entry ON collection_entries(entry_type, entry_id);
+CREATE TABLE IF NOT EXISTS filter_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope TEXT NOT NULL DEFAULT 'account',
+    account TEXT NOT NULL DEFAULT '',
+    field TEXT NOT NULL DEFAULT 'title',
+    patterns TEXT NOT NULL DEFAULT '',
+    match_mode TEXT NOT NULL DEFAULT 'any',
+    note TEXT NOT NULL DEFAULT '',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    hits INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_filter_rules_enabled ON filter_rules(enabled);
 """
 
 
@@ -685,7 +699,7 @@ class Database:
     def _search_where(self, query: str = "", kind: str = "", status: str = "",
                       since: str | None = None, until: str | None = None,
                       collection: str | None = None, include_excluded: bool = False,
-                      use_fts: bool = True) -> tuple[str, list[Any]]:
+                      use_fts: bool = True, hide_status: str = "") -> tuple[str, list[Any]]:
         """Build one shared WHERE clause for both the page and its total count.
 
         A term is matched in the title, summary, tags and archived text. Short
@@ -700,6 +714,10 @@ class Database:
         if status:
             conditions.append("i.status=?")
             params.append(status)
+        if hide_status and status != hide_status:
+            # 低相关条目默认不占资料库的位置，但仍可通过状态筛选单独查看。
+            conditions.append("i.status<>?")
+            params.append(hide_status)
         if since:
             conditions.append("COALESCE(i.published_at,i.discovered_at)>=?")
             params.append(since)
@@ -725,7 +743,8 @@ class Database:
 
     def search(self, query: str = "", kind: str = "", status: str = "", limit: int = 50,
                offset: int = 0, since: str | None = None, until: str | None = None,
-               collection: str | None = None, include_excluded: bool = False) -> list[dict[str, Any]]:
+               collection: str | None = None, include_excluded: bool = False,
+               hide_status: str = "") -> list[dict[str, Any]]:
         terms = self.search_terms(query)
         select = f"""SELECT i.id,i.kind,i.url,i.title,i.author,i.published_at,i.discovered_at,i.status,
             i.category,i.tags_json,i.importance,i.relevance,i.summary,i.error,i.excluded_at,i.exclusion_reason,
@@ -735,7 +754,7 @@ class Database:
         boost = "CASE WHEN i.title LIKE ? THEN 0 ELSE 1 END," if terms else ""
         for use_fts in (True, False):
             where, params = self._search_where(query, kind, status, since, until, collection,
-                                               include_excluded, use_fts)
+                                               include_excluded, use_fts, hide_status)
             args: list[Any] = list(params)
             if terms:
                 args.append(f"%{terms[0]}%")
@@ -749,10 +768,11 @@ class Database:
 
     def search_count(self, query: str = "", kind: str = "", status: str = "",
                      since: str | None = None, until: str | None = None,
-                     collection: str | None = None, include_excluded: bool = False) -> int:
+                     collection: str | None = None, include_excluded: bool = False,
+                     hide_status: str = "") -> int:
         for use_fts in (True, False):
             where, params = self._search_where(query, kind, status, since, until, collection,
-                                               include_excluded, use_fts)
+                                               include_excluded, use_fts, hide_status)
             try:
                 row = self.one(f"SELECT COUNT(*) c FROM items i {where}", params)
                 return int(row["c"]) if row else 0

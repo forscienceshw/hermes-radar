@@ -12,7 +12,7 @@ from .db import Database
 from .logging_config import configure_logging
 from .pipeline import JobRunner
 from .services.notify import QuietHours, merge_closed_batches
-from .services.relevance import cleanup_existing_items, dedupe_duplicate_items
+from .services.relevance import cleanup_existing_items, cleanup_marketing_items, dedupe_duplicate_items
 from .settings import get_settings
 from .utils import json_loads, now_iso, stable_json
 
@@ -159,6 +159,9 @@ class Worker:
         duplicates = dedupe_duplicate_items(self.db)
         if duplicates:
             log.info("重复链接整理：合并隐藏 %s 条重复副本", duplicates)
+        marketing = cleanup_marketing_items(self.db)
+        if marketing:
+            log.info("正文复核：%s 条引流软文已移出资料库（可在「已过滤」里恢复）", marketing)
         recovered = self.db.recover_expired_jobs()
         pruned = self.db.prune_stale_jobs()
         if pruned:

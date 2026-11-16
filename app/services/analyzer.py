@@ -533,6 +533,10 @@ def _is_picture_led(item: dict[str, Any]) -> bool:
         return True
     if metadata.get("archive_completeness") == "images_only":
         return True
+    if metadata.get("archive_completeness") == "share_card":
+        # 图片消息：微信只给验证页，能留下的就是分享卡片那段说明。
+        # 这不是「没抓到材料」，是内容形态本身如此，按原样记录即可。
+        return True
     if len(body) >= 1200:
         return False
     if extract_dois(body):
@@ -559,8 +563,27 @@ def _record_only(db: Database, item_id: str, body: str, images: int) -> None:
     metadata = json_loads(item.get("metadata_json"), {}) or {}
     shared_by_user = metadata.get("share_channel") == "wechat_self_chat"
     lead = head_tail((body or "").strip().replace("\n", " "), 220)
-    shape = "图片为主" if images >= 2 else "短正文"
+    share_card = metadata.get("archive_completeness") == "share_card"
+    shape = "图片消息" if share_card else ("图片为主" if images >= 2 else "短正文")
     analysis = dict(local)
+    if share_card:
+        analysis.update({
+            "analysis_mode": "record_only",
+            "summary": (f"图片消息（微信只给验证页，留下卡片上的 {len(body)} 字说明）：{lead}"
+                        if lead else "图片消息：微信只给验证页，卡片上也没有说明文字。"),
+            "one_sentence": head_tail(item.get("title") or "", 120),
+            "limits": ["这条是公众号「图片消息」，正文是图片，微信对这类页面只返回人机验证页。"
+                       "本地保存的是分享卡片上的说明文字，不是原文；要看原图请点原始链接。"],
+            "evidence_gaps": ["没有拿到正文和原图；卡片说明由发布者自己写，可能比正文简略。"],
+            "content_shape": shape,
+            "confidence_note": "share_card_only",
+        })
+        analysis["prompt_version"] = settings["analysis"]["prompt_version"]
+        score = float(analysis.get("relevance_score") or 0)
+        analysis["relevance_score"] = min(max(score, 46.0), 60.0)
+        threshold = float(settings["notifications"]["min_relevance"])
+        db.save_analysis(item_id, analysis, "ready" if analysis["relevance_score"] >= threshold else "filtered")
+        return
     analysis.update({
         "analysis_mode": "record_only",
         "summary": (f"图文短记（正文 {len(body)} 字、配图 {images} 张）：{lead}" if lead

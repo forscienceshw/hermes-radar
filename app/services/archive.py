@@ -245,6 +245,23 @@ def detect_gone(root: BeautifulSoup | None, page_text: str) -> str:
     return ""
 
 
+# 微信对「图片消息」（小绿书）和可疑请求一律换成这个验证页壳子：
+# 页面只有 17 KB、没有 #js_content，正文在 secitptpage 的验证脚本里，抓不到。
+VERIFY_MARKERS = ("secitptpage/template/verify.js", "TCaptcha.js", "cap_sid")
+
+
+def detect_verify_page(page_text: str) -> str:
+    """识别微信的人机验证页，返回给人看的原因；不是验证页时返回空串。"""
+    if not page_text:
+        return ""
+    hits = sum(1 for marker in VERIFY_MARKERS if marker in page_text)
+    if hits < 2:
+        return ""
+    if "image_detail" in page_text:
+        return "这是公众号的图片消息，微信对外只返回人机验证页，拿不到正文和原图"
+    return "微信返回人机验证页，这一次没拿到正文"
+
+
 async def probe_source(url: str) -> dict[str, Any]:
     """Check whether the original page still exists, without writing anything."""
     headers = {"Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5"}
@@ -333,6 +350,43 @@ async def _archive_wechat_video(item: dict[str, Any], folder: Path, title: str, 
             "raw_path": None, "metadata": metadata}
 
 
+def _share_card_archive(item: dict[str, Any], folder: Path, url: str, reason: str,
+                        final_url: str = "") -> dict[str, Any]:
+    """微信不给正文时，用分享卡片上的文字与封面拼一个能读的离线页。
+
+    图片消息（小绿书）的正文就是图和一段说明，微信对外只发验证页；
+    分享卡片里的 `description` 恰好就是那段说明，把它留下比记一条 error 有用：
+    用户至少能看到这篇在讲什么，也能一键跳回微信。
+    """
+    metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+    title = str(item.get("title") or "").strip() or "未命名"
+    description = str(metadata.get("description") or "").strip()
+    author = str(item.get("author") or "").strip()
+    if len(description) < 20:
+        raise ValueError(f"{reason}；分享卡片上也没有足够的文字，没有可归档的内容")
+
+    paragraphs = [line.strip() for line in description.splitlines() if line.strip()]
+    if len(paragraphs) <= 1:
+        paragraphs = [description]
+    body = "".join(f"<p>{html.escape(line)}</p>" for line in paragraphs)
+    body += (f'<p class="meta">原文在这里：<a href="{html.escape(url, quote=True)}">'
+             f'在微信里打开</a></p>')
+    warning = f"{reason}。下面这段是分享卡片上的文字，不是抓到的正文；点上面的链接回微信看原图。"
+    html_path = atomic_write(folder / "reader.html", _reader_html(title, author, url, body, warning))
+    atomic_write(folder / "content.txt", description)
+    atomic_write(folder / "content.md", f"# {title}\n\n{description}\n\n原文：{url}\n")
+    result_metadata = {
+        "images": [],
+        "archive_completeness": "share_card",
+        "degraded_reason": reason,
+        "final_url": final_url or url,
+        "archived_at": now_iso(),
+    }
+    atomic_write(folder / "metadata.json", json.dumps(result_metadata, ensure_ascii=False, indent=2))
+    return {"title": title, "author": author, "published_at": None, "text": description,
+            "html_path": str(html_path), "raw_path": None, "metadata": result_metadata}
+
+
 async def archive_web(item: dict[str, Any]) -> dict[str, Any]:
     settings = get_settings()
     folder = item_directory(item["id"])
@@ -365,10 +419,16 @@ async def archive_web(item: dict[str, Any]) -> dict[str, Any]:
     wechat = hostname.endswith("mp.weixin.qq.com")
     content_root = soup.select_one("#js_content") if wechat else None
     if wechat and content_root is None:
-        gone = detect_gone(None, _page_text(response))
+        page_text = _page_text(response)
+        gone = detect_gone(None, page_text)
         if gone:
             raise SourceGone(gone)
-        raise ValueError("微信返回验证页或非正文页面；本次只重试直接抓取，不会调用付费接口")
+        verify = detect_verify_page(page_text)
+        if verify:
+            # 图片消息/风控验证页：微信从来不给正文。与其记一条看不懂的 error，
+            # 不如把分享卡片上的文字留下来，并写明为什么没有正文。
+            return _share_card_archive(item, folder, url, verify, response.url)
+        raise ValueError("微信返回的页面里没有正文，也不是验证页；本次只重试直接抓取，不会调用付费接口")
     root = content_root
     root = root or soup.find("article") or soup.find("main") or soup.body or soup
     author = _meta_content(soup, "author", "article:author")

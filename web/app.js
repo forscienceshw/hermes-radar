@@ -46,6 +46,7 @@ function itemStage(x){
   return {badge:x.status,text:''};
 }
 let itemPage=1,itemPageSize=50,itemTotal=0,itemCollections=[],ideaCollections=[];
+const itemPicked=new Set();
 function daysAgoIso(value){const n=Number(value||0);if(!n)return '';const d=new Date();d.setHours(0,0,0,0);d.setDate(d.getDate()-(n-1));return d.toISOString()}
 async function loadCollections(scope){try{const rows=await api('/api/collections?scope='+scope);if(scope==='library'){itemCollections=rows;window.__itemCollections=rows}else{ideaCollections=rows;window.__ideaCollections=rows}return rows}catch(e){return []}}
 function collectionName(scope,id){const list=scope==='library'?itemCollections:ideaCollections;const hit=list.find(c=>c.id===id);return hit?hit.name:''}
@@ -64,6 +65,7 @@ async function loadItems(){
   const collection=$('#searchCollection').value;
   if(collection)params.set('collection',collection);
   if($('#searchExcluded').checked)params.set('include_excluded','true');
+  if($('#hideLow').checked)params.set('hide_low','true');
   const data=await api('/api/items?'+params.toString());
   itemTotal=data.total||0;
   const rows=data.items||[];
@@ -73,11 +75,17 @@ async function loadItems(){
     const tags=JSON.parse(x.tags_json||'[]'),stage=itemStage(x);
     const jobBadge=x.active_job?` <span class="badge wait"><span class="spin"></span>${x.active_job==='analyze'?'精读中':'归档中'}</span>`:'';
     const chips=(x.collections||[]).map(id=>{const name=collectionName('library',id);return name?`<span class="collection-chip">${esc(name)}</span>`:''}).join('');
-    const excluded=x.excluded_at?' <span class="badge error">已过滤</span>':'';
-    return `<article class="item" data-item="${x.id}"><div><h3>${esc(x.title||x.url)}</h3><div><span class="badge">${x.kind==='video'?'视频':'文章'}</span> <span class="badge ${x.status==='ready'?'ok':x.status==='error'?'error':x.status==='discovered'?'wait':''}">${esc(stage.badge)}</span> <span class="badge">${esc(x.category)}</span>${excluded}${jobBadge}${chips?` <span class="collection-chips">${chips}</span>`:''}</div><p>${esc(x.summary||x.error||stage.text)}</p><small>${esc(x.author)} · ${time(x.published_at||x.discovered_at)} · ${tags.map(esc).join(' / ')}</small></div><div class="score"><button class="star ${(x.collections||[]).length?'on':''}" type="button" data-collect="${x.id}" data-collect-type="item" data-collect-ids="${(x.collections||[]).join(',')}" title="${(x.collections||[]).length?'已在收藏夹中':'收藏到收藏夹'}">★</button><strong>${Math.round(x.importance)}</strong><small>重要度</small><small>相关度 ${Math.round(x.relevance)}</small></div></article>`;
-  }).join('')||`<div class="panel muted">没有匹配的资料。${$('#searchExcluded').checked?'':'如果确定它被本地规则过滤过，可勾选「含已过滤」再看一次。'}</div>`;
+    const excluded=x.excluded_at?` <span class="badge error" title="${esc(x.exclusion_reason||'')}">${x.exclusion_reason&&x.exclusion_reason.startsWith('手动删除')?'已删除':'已过滤'}</span>`:'';
+    const picked=itemPicked.has(x.id)?' checked':'';
+    return `<article class="item${picked?' picked':''}" data-item="${x.id}"><div><h3><label class="pick" title="选中后可批量删除"><input type="checkbox" data-pick="${x.id}"${picked}></label><span>${esc(x.title||x.url)}</span></h3><div><span class="badge">${x.kind==='video'?'视频':'文章'}</span> <span class="badge ${x.status==='ready'?'ok':x.status==='error'?'error':x.status==='discovered'?'wait':''}">${esc(stage.badge)}</span> <span class="badge">${esc(x.category)}</span>${excluded}${jobBadge}${chips?` <span class="collection-chips">${chips}</span>`:''}</div><p>${esc(x.summary||x.error||stage.text)}</p><small>${esc(x.author)} · ${time(x.published_at||x.discovered_at)} · ${tags.map(esc).join(' / ')}</small></div><div class="score"><button class="star ${(x.collections||[]).length?'on':''}" type="button" data-collect="${x.id}" data-collect-type="item" data-collect-ids="${(x.collections||[]).join(',')}" title="${(x.collections||[]).length?'已在收藏夹中':'收藏到收藏夹'}">★</button><strong>${Math.round(x.importance)}</strong><small>重要度</small><small>相关度 ${Math.round(x.relevance)}</small>${x.excluded_at?`<button class="item-del restore" type="button" data-restore="${x.id}" title="放回资料库">恢复</button>`:`<button class="item-del" type="button" data-delete="${x.id}" title="从资料库删除（可恢复）">删除</button>`}</div></article>`;
+  }).join('')||`<div class="panel muted">没有匹配的资料。${$('#searchExcluded').checked?'':'如果确定它被过滤或手动删过，可勾选「含已删除」再看一次。'}</div>`;
   renderPager();
-  $('#itemsSummary').textContent=`共 ${itemTotal} 条${$('#searchQ').value.trim()?`，搜索「${$('#searchQ').value.trim()}」`:''}`;
+  const searched=$('#searchQ').value.trim();
+  const hidden=Number(data.hidden_low_relevance||0);
+  $('#itemsSummary').innerHTML=`共 ${itemTotal} 条${searched?`，搜索「${esc(searched)}」`:''}`+
+    (hidden?` · <span class="low-hidden">另有 ${hidden} 条低相关已隐藏 <button type="button" class="link" id="showLow">看看</button></span>`:'');
+  if($('#showLow'))$('#showLow').onclick=()=>{$('#hideLow').checked=false;$('#searchStatus').value='filtered';reloadItems()};
+  syncBulkBar();
   if(rows.some(x=>x.active_job))scheduleListRefresh();
 }
 function renderPager(){
@@ -247,13 +255,14 @@ async function showItem(id,silent){
   const recordOnly=a.analysis_mode==='record_only';
   const recordNote=recordOnly?`<div class="notice"><b>图文短记</b>：这条没有可精读的论文，内容主要是正文与配图本身，已按原样保存，没有调用云模型精读。<br><small>${esc((a.limits||[])[0]||'')}</small></div>`:'';
   const main=readingBody(a,x.id);
-  const excludedLine=x.excluded_at?`<div class="notice"><b>这条已经被本地过滤规则移出主资料库</b>：${esc(x.exclusion_reason||'未记录原因')}。<br><small>正文和图片仍然保留；如果判断有误，可以恢复收录。</small> <button type="button" class="primary" data-restore="${x.id}">恢复收录</button></div>`:'';
+  const manual=x.excluded_at&&(x.exclusion_reason||'').startsWith('手动删除');
+  const excludedLine=x.excluded_at?`<div class="notice"><b>${manual?'你已经把这条从资料库删除了':'这条已经被本地过滤规则移出主资料库'}</b>：${esc(x.exclusion_reason||'未记录原因')}。<br><small>正文和图片仍然保留；如果判断有误，可以恢复收录。</small> <button type="button" class="primary" data-restore="${x.id}">恢复收录</button></div>`:'';
   const goneStatus=(x.metadata||{}).source_status||null;
   const goneLine=goneStatus&&goneStatus.state==='deleted'?`<div class="notice"><b>原文已被发布者删除</b>：${esc(goneStatus.reason||'原页面无法访问')}。<br><small>本地已保存离线页，所以这条继续留在资料库；内容以离线页为准。</small></div>`:'';
   const body=insufficient
     ? `<div class="notice insufficient"><b>无法详细归档</b><br>${esc(a.summary||'没有取得足以讲清这篇研究的材料。')}<br><small>为避免用只言片语编造解释，这里不做猜测性精读。</small></div>`
     : (recordNote+(main?`${main}${figureBlock(x)}${afterBlock(a)}`:`<section class="reading">${legacyBody(a)}${figureBlock(x)}${afterBlock(a)}</section>`));
-  $('#detailContent').innerHTML=`<h1 class="detail-title">${esc(x.title||x.url)}</h1><p>${esc(x.author)} · ${time(x.published_at||x.discovered_at)}</p><div class="actions">${x.html_path?`<a class="button primary" href="/api/items/${x.id}/archive" target="_blank">离线阅读页</a>`:''}<a class="button" href="${esc(x.url)}" target="_blank" rel="noopener">打开原文</a>${x.metadata.original_share_url&&x.metadata.original_share_url!==x.url?`<a class="button" href="${esc(x.metadata.original_share_url)}" target="_blank" rel="noopener">原始分享短链</a>`:''}${x.excluded_at?'':(x.status==='discovered'?`<button class="primary" data-process="${x.id}">归档并精读</button>`:`<button data-reanalyze="${x.id}">重新精读</button>`)}<button type="button" data-verify-source="${x.id}">检查原文</button>${(x.metadata.images||[]).length?`<button type="button" data-retriage="${x.id}">重新判断配图</button>`:''}<button type="button" data-collect="${x.id}" data-collect-type="item" data-collect-ids="${(x.collections||[]).join(',')}">收藏到…</button>${(x.collections||[]).map(id=>{const n=collectionName('library',id);return n?`<span class="collection-chip">${esc(n)}</span>`:''}).join('')}</div><p><span class="badge ${x.status==='ready'?'ok':x.status==='error'?'error':x.status==='discovered'?'wait':''}">${esc(stage.badge)}</span> <span class="badge">重要度 ${Math.round(x.importance)}</span> <span class="badge">相关度 ${Math.round(x.relevance)}</span> <span class="badge">证据 ${esc(x.metadata.archive_completeness||'未知')}</span>${elapsed?` <span class="badge">精读用时 ${elapsed}</span>`:''}${((x.metadata||{}).image_triage||{}).dropped?` <span class="badge">已过滤 ${x.metadata.image_triage.dropped} 张无用配图</span>`:''}</p>${excludedLine}${goneLine}${jobLine}${liveLine}${deadLine}${x.error?`<div class="notice error-text">${esc(x.error)}</div>`:''}${body}<details class="raw-text"><summary>归档全文 / 转录</summary><div class="detail-text">${esc(x.text||'尚无正文')}</div></details><div class="detail-section"><h2>关联论文</h2>${x.papers.map(p=>`<p><a href="https://doi.org/${esc(p.doi)}" target="_blank">${esc(p.doi)}</a> · ${esc(p.status)} · ${esc(p.title)}<br>${p.local_path?`<span class="actions"><button data-pdf-preview="${p.id}">网页预览</button><button data-paper-wps="${p.id}">WPS 打开</button><button data-paper-reveal="${p.id}">所在目录</button></span><br><small>${esc(p.local_path)}</small>`:''}<br><small>${esc(p.error||'')}</small></p>`).join('')||'<p class="muted">未识别到 DOI</p>'}</div>`;
+  $('#detailContent').innerHTML=`<h1 class="detail-title">${esc(x.title||x.url)}</h1><p>${esc(x.author)} · ${time(x.published_at||x.discovered_at)}</p><div class="actions">${x.html_path?`<a class="button primary" href="/api/items/${x.id}/archive" target="_blank">离线阅读页</a>`:''}<a class="button" href="${esc(x.url)}" target="_blank" rel="noopener">打开原文</a>${x.metadata.original_share_url&&x.metadata.original_share_url!==x.url?`<a class="button" href="${esc(x.metadata.original_share_url)}" target="_blank" rel="noopener">原始分享短链</a>`:''}${x.excluded_at?'':(x.status==='discovered'?`<button class="primary" data-process="${x.id}">归档并精读</button>`:`<button data-reanalyze="${x.id}">重新精读</button>`)}<button type="button" data-verify-source="${x.id}">检查原文</button>${(x.metadata.images||[]).length?`<button type="button" data-retriage="${x.id}">重新判断配图</button>`:''}<button type="button" data-collect="${x.id}" data-collect-type="item" data-collect-ids="${(x.collections||[]).join(',')}">收藏到…</button>${x.excluded_at?'':`<button type="button" class="danger" data-delete="${x.id}">删除</button>`}<button type="button" data-rule-from="${esc(x.author||'')}">以后屏蔽这类</button>${(x.collections||[]).map(id=>{const n=collectionName('library',id);return n?`<span class="collection-chip">${esc(n)}</span>`:''}).join('')}</div><p><span class="badge ${x.status==='ready'?'ok':x.status==='error'?'error':x.status==='discovered'?'wait':''}">${esc(stage.badge)}</span> <span class="badge">重要度 ${Math.round(x.importance)}</span> <span class="badge">相关度 ${Math.round(x.relevance)}</span> <span class="badge">证据 ${esc(x.metadata.archive_completeness||'未知')}</span>${elapsed?` <span class="badge">精读用时 ${elapsed}</span>`:''}${((x.metadata||{}).image_triage||{}).dropped?` <span class="badge">已过滤 ${x.metadata.image_triage.dropped} 张无用配图</span>`:''}</p>${excludedLine}${goneLine}${jobLine}${liveLine}${deadLine}${x.error?`<div class="notice error-text">${esc(x.error)}</div>`:''}${body}<details class="raw-text"><summary>归档全文 / 转录</summary><div class="detail-text">${esc(x.text||'尚无正文')}</div></details><div class="detail-section"><h2>关联论文</h2>${x.papers.map(p=>`<p><a href="https://doi.org/${esc(p.doi)}" target="_blank">${esc(p.doi)}</a> · ${esc(p.status)} · ${esc(p.title)}<br>${p.local_path?`<span class="actions"><button data-pdf-preview="${p.id}">网页预览</button><button data-paper-wps="${p.id}">WPS 打开</button><button data-paper-reveal="${p.id}">所在目录</button></span><br><small>${esc(p.local_path)}</small>`:''}<br><small>${esc(p.error||'')}</small></p>`).join('')||'<p class="muted">未识别到 DOI</p>'}</div>`;
   if(!silent||!$('#detailDialog').open)openDetail();
   if(x.active_job)watchItem(id);else if(detailWatchId===id)stopItemWatch();
   return x;
@@ -315,7 +324,7 @@ $('#importWechat').onclick=async()=>{try{const body={names_text:$('#wechatNames'
 function reloadItems(){itemPage=1;loadItems().catch(e=>toast(e.message))}
 $('#searchBtn').onclick=reloadItems;
 $('#searchQ').onkeydown=e=>{if(e.key==='Enter')reloadItems()};
-['#searchKind','#searchStatus','#searchRange','#searchCollection','#searchExcluded'].forEach(sel=>{const el=$(sel);if(el)el.onchange=reloadItems});
+['#searchKind','#searchStatus','#searchRange','#searchCollection','#searchExcluded','#hideLow'].forEach(sel=>{const el=$(sel);if(el)el.onchange=reloadItems});
 $('#manageCollections').onclick=()=>openCollectionManager('library').catch(e=>toast(e.message));
 $('#manageIdeaCollections').onclick=()=>openCollectionManager('ideas').catch(e=>toast(e.message));
 $('#paperStatus').onchange=()=>loadPapers().catch(e=>toast(e.message));
@@ -338,7 +347,12 @@ $('#collectionCreate').onclick=()=>{const scope=collectTarget?collectScope(colle
 $('#collectionDialogClose').onclick=()=>$('#collectionDialog').close();
 $('#collectionManageCreate').onclick=async()=>{const input=$('#collectionManageName');const scope=window.__manageScope||'library';try{await createCollectionFor(input.value,scope,false);input.value='';renderCollectionManage()}catch(e){toast(e.message)}};
 document.addEventListener('change',e=>{const box=e.target.closest('[data-collect-toggle]');if(box)toggleCollect(box.dataset.collectToggle,box.checked).catch(err=>toast(err.message))});
-document.addEventListener('click',async e=>{const t=e.target.closest('button,[data-item]');if(!t)return;try{if(t.dataset.item)await showItem(t.dataset.item);
+document.addEventListener('click',async e=>{if(e.target.closest('.pick'))return;const t=e.target.closest('button,[data-item]');if(!t)return;try{
+if(t.dataset.delete){await deleteItem(t.dataset.delete);return}
+if(t.dataset.ruleFrom){await openRuleDialog({account:t.dataset.ruleFrom,scope:'account',field:'title',patterns:''});return}
+if(t.dataset.ruleToggle!==undefined){await api(`/api/filter-rules/${t.dataset.ruleToggle}`,{method:'PATCH',body:{enabled:t.dataset.enabled!=='1'}});await loadRuleList();reloadItems();return}
+if(t.dataset.ruleRemove!==undefined){if(!confirm('删除这条规则？被它挡住的条目会一起放回资料库。'))return;const r=await api(`/api/filter-rules/${t.dataset.ruleRemove}`,{method:'DELETE'});toast(`规则已删除${r.restored?`，恢复 ${r.restored} 条`:''}`);await loadRuleList();reloadItems();return}
+if(t.dataset.item)await showItem(t.dataset.item);
 if(t.dataset.page!==undefined&&t.dataset.page!==''){const n=Number(t.dataset.page);if(n>=1){itemPage=n;await loadItems()}return}
 if(t.dataset.collect){await openCollectPop(t.dataset.collectType||'item',t.dataset.collect,(t.dataset.collectIds||'').split(',').filter(Boolean),t,()=>currentView==='library'?loadItems():loadIdeas());return}
 if(t.dataset.restore){await api(`/api/items/${t.dataset.restore}/restore`,{method:'POST'});toast('已恢复收录');loadItems().catch(()=>{});await showItem(t.dataset.restore,true);return}
@@ -384,5 +398,73 @@ $('#goneSelfCheck').onclick=async()=>{
     box.innerHTML=`<div class="table-wrap"><table><thead><tr><th>样本</th><th>期望判定</th><th>结论</th><th>依据</th></tr></thead><tbody>${r.samples.map(s=>`<tr><td>${esc(s.name)}${s.title?`<br><small class="muted">${esc(s.title)}</small>`:''}</td><td>${s.expect==='should_not_exist'?'应判为已删除':'应判为可访问'}</td><td>${s.pass?'通过':'不符'}</td><td><small>${esc(s.error||s.reason||'')}</small></td></tr>`).join('')}</tbody></table></div>`;
   }catch(e){info.textContent='自检失败：'+e.message}
 };
+// ---------------- 删除与过滤规则 ----------------
+function syncBulkBar(){
+  const bar=$('#bulkBar');if(!bar)return;
+  bar.hidden=itemPicked.size===0;
+  if(itemPicked.size)$('#bulkInfo').textContent=`已选 ${itemPicked.size} 条`;
+}
+async function deleteItem(id){
+  if(!confirm('从资料库删除这一条？\n\n正文与图片会保留，之后可以在「含已删除」里找回。'))return;
+  const r=await api(`/api/items/${id}/delete`,{method:'POST',body:{}});
+  itemPicked.delete(id);
+  toast(r.deleted?'已从资料库删除，可在「含已删除」里找回':(r.reason||'没有改动'));
+  loadItems().catch(()=>{});
+  if($('#detailDialog').open)showItem(id,true).catch(()=>{});
+}
+async function deletePicked(){
+  if(!itemPicked.size)return toast('先勾选要删的条目');
+  if(!confirm(`把选中的 ${itemPicked.size} 条从资料库删除？\n\n正文与图片会保留，之后可以在「含已删除」里找回。`))return;
+  const r=await api('/api/items/bulk-delete',{method:'POST',body:{ids:[...itemPicked]}});
+  itemPicked.clear();toast(`已删除 ${r.deleted} 条`);reloadItems();
+}
+let ruleRows=[];
+function rulePayload(){
+  return {scope:$('#ruleScope').value,account:$('#ruleAccount').value.trim(),field:$('#ruleField').value,
+          patterns:$('#rulePatterns').value,match_mode:'any',note:$('#ruleNote').value.trim(),apply_now:true};
+}
+async function openRuleDialog(prefill){
+  if(prefill){
+    $('#ruleScope').value=prefill.scope||'account';
+    $('#ruleAccount').value=prefill.account||'';
+    $('#ruleField').value=prefill.field||'title';
+    $('#rulePatterns').value=prefill.patterns||'';
+    $('#ruleNote').value=prefill.note||'';
+    $('#rulePreviewResult').textContent='';
+  }
+  await loadRuleList();
+  const d=$('#ruleDialog');if(!d.open)d.showModal();
+}
+async function loadRuleList(){
+  const r=await api('/api/filter-rules');ruleRows=r.items||[];
+  $('#ruleList').innerHTML=ruleRows.map(x=>`<div class="rule-row"><div><b>${esc(x.description)}</b>${x.note?`<br><small class="muted">${esc(x.note)}</small>`:''}<br><small class="muted">${x.enabled?'启用中':'已停用'} · 累计挡住 ${x.hits||0} 条</small></div><div class="actions"><button type="button" data-rule-toggle="${x.id}" data-enabled="${x.enabled?1:0}">${x.enabled?'停用':'启用'}</button><button type="button" data-rule-remove="${x.id}">删除</button></div></div>`).join('')||'<p class="muted">还没有规则。规则只看标题，比拿全文做屏蔽安全得多。</p>';
+}
+async function previewRule(){
+  const body=rulePayload();
+  if(!body.patterns.trim())return toast('先写关键词');
+  try{
+    const r=await api('/api/filter-rules/preview',{method:'POST',body});
+    $('#rulePreviewResult').innerHTML=r.matched
+      ? `会挡住 <b>${r.matched}</b> 条已收录的：<ul>${r.samples.map(s=>`<li>${esc((s.title||'').slice(0,64))} <span class="muted">· ${esc(s.author)} · 命中 ${esc(s.hits)}</span></li>`).join('')}</ul>`
+      : '按现在的关键词，一条都挡不到（以后新收录的会照规则拦）。';
+  }catch(err){$('#rulePreviewResult').textContent='试跑失败：'+err.message}
+}
+async function saveRule(){
+  const body=rulePayload();
+  if(!body.patterns.trim())return toast('至少写一个关键词');
+  try{
+    const r=await api('/api/filter-rules',{method:'POST',body});
+    toast(`规则已保存${r.applied?`，并从资料库移出 ${r.applied} 条`:'，之后新收录的会照规则拦'}`);
+    $('#rulePatterns').value='';$('#ruleNote').value='';$('#rulePreviewResult').textContent='';
+    await loadRuleList();reloadItems();
+  }catch(err){toast(err.message)}
+}
+$('#filterRulesBtn').onclick=()=>openRuleDialog().catch(e=>toast(e.message));
+$('#ruleClose').onclick=()=>$('#ruleDialog').close();
+$('#rulePreview').onclick=previewRule;
+$('#ruleSave').onclick=saveRule;
+$('#bulkDelete').onclick=()=>deletePicked().catch(e=>toast(e.message));
+$('#bulkClear').onclick=()=>{itemPicked.clear();loadItems().catch(()=>{})};
+document.addEventListener('change',e=>{const box=e.target.closest('[data-pick]');if(!box)return;if(box.checked)itemPicked.add(box.dataset.pick);else itemPicked.delete(box.dataset.pick);const card=box.closest('.item');if(card)card.classList.toggle('picked',box.checked);syncBulkBar()});
 const deepView=new URLSearchParams(location.search).get('view');if(deepView)setTimeout(()=>{if(loaders[deepView])switchView(deepView)},0);
 loadHealth();loadEvents();loadProgress().catch(()=>{});loadCredits().catch(()=>{});setInterval(loadHealth,5000);setInterval(()=>{if(currentView==='dashboard')loadCredits().catch(()=>{})},60000);setInterval(()=>{if(['dashboard','library'].includes(currentView))loadProgress().catch(()=>{})},2500);setInterval(()=>{if(['dashboard','sources','notifications'].includes(currentView))loaders[currentView]().catch(()=>{})},20000);

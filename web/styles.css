@@ -313,3 +313,30 @@ body.viewer-open{overflow:hidden}
 
 /* 右下角常驻「问 AI」按钮会盖住设置页的保存条，给保存条留出让位。 */
 #settings .sticky-save{padding-right:104px}
+
+/* ---------- 资料库：手动删除、批量选择、过滤规则 ---------- */
+.item h3{display:flex;align-items:flex-start;gap:8px}
+.item h3>span{min-width:0}
+.item .pick{display:inline-flex;align-items:center;margin:2px 0 0;flex:none;cursor:pointer}
+.item .pick input{width:15px;height:15px;margin:0;padding:0;accent-color:var(--accent);cursor:pointer}
+.item.picked{border-color:var(--accent);background:#f7fbfa}
+.item .item-del{margin-top:7px;padding:3px 10px;font-size:12px;border-radius:6px;color:#8a3b34;border-color:#e3c7c3}
+.item .item-del:hover{background:#fdf1ef}
+.item .item-del.restore{color:var(--accent);border-color:#bcd9d5}
+.danger{background:var(--danger);border-color:var(--danger);color:#fff}
+.danger:hover{background:#8f1c13}
+.bulk-bar{position:sticky;top:78px;z-index:6;display:flex;gap:12px;align-items:center;background:#fff;border:1px solid var(--accent);border-radius:10px;padding:9px 14px;margin-bottom:12px;box-shadow:var(--shadow)}
+.bulk-bar[hidden]{display:none}
+.link{border:0;background:none;padding:0;color:var(--accent);text-decoration:underline;font:inherit;cursor:pointer}
+.low-hidden{margin-left:2px}
+.rule-dialog{width:min(720px,94vw)}
+.rule-dialog .dialog-head{justify-content:space-between;align-items:center;gap:16px}
+.rule-dialog .dialog-head h2{margin:0}
+.rule-preview{margin:8px 0 4px;font-size:13px}
+.rule-preview ul{margin:6px 0 0;padding-left:18px}
+.rule-list-title{margin-top:22px}
+.rule-list{display:grid;gap:8px;max-height:32vh;overflow:auto}
+.rule-row{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;border:1px solid var(--line);border-radius:9px;padding:10px 12px;background:#fafbfc}
+.rule-row .actions{flex:none}
+.rule-row b{font-weight:600}
+#waRows .badge{white-space:nowrap}

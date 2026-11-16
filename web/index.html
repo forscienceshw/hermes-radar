@@ -75,14 +75,21 @@ B站 UP 主：也可使用你自建的 RSSHub 地址，kind 设为 video。</pre
   <div class="toolbar filter-bar">
     <input id="searchQ" placeholder="搜索机制、作者、DOI、视频内容……">
     <select id="searchKind"><option value="">全部类型</option><option value="article">文章</option><option value="video">视频</option></select>
-    <select id="searchStatus"><option value="">全部状态</option><option value="discovered">仅历史索引</option><option value="ready">已精读</option><option value="archived">已归档</option><option value="filtered">低相关已留存</option><option value="insufficient">无法详细归档</option><option value="error">失败</option></select>
+    <select id="searchStatus"><option value="">全部状态</option><option value="ready">已精读</option><option value="archived">已归档</option><option value="filtered">低相关</option><option value="discovered">仅历史索引</option><option value="insufficient">无法详细归档</option><option value="error">失败</option></select>
     <select id="searchRange" title="按发布时间筛选"><option value="">全部时间</option><option value="1">今天</option><option value="3">近 3 天</option><option value="7">近 7 天</option><option value="30">近 30 天</option><option value="90">近 90 天</option><option value="365">近一年</option></select>
     <select id="searchCollection" title="按收藏夹筛选"><option value="">全部收藏夹</option><option value="__none__">未收藏</option></select>
     <button id="manageCollections" type="button">管理收藏夹</button>
-    <label class="check"><input id="searchExcluded" type="checkbox"> 含已过滤</label>
+    <button id="filterRulesBtn" type="button">过滤规则</button>
+    <label class="check" title="只看相关度达标的条目"><input id="hideLow" type="checkbox"> 隐藏低相关</label>
+    <label class="check"><input id="searchExcluded" type="checkbox"> 含已删除</label>
     <button id="searchBtn" class="primary">搜索</button>
   </div>
   <div id="itemsSummary" class="list-summary muted"></div>
+  <div id="bulkBar" class="bulk-bar" hidden>
+    <span id="bulkInfo">已选 0 条</span>
+    <button type="button" id="bulkDelete" class="danger">删除所选</button>
+    <button type="button" id="bulkClear">取消选择</button>
+  </div>
   <div id="itemsList" class="item-list"></div>
   <div id="pager" class="pager"></div>
 </section>
@@ -323,6 +330,21 @@ B站 UP 主：也可使用你自建的 RSSHub 地址，kind 设为 video。</pre
 </div>
 <div id="detailBackdrop" class="detail-backdrop"></div>
 <dialog id="detailDialog"><div class="dialog-head"><button id="closeDialog" aria-label="关闭">关闭</button></div><div id="detailContent"></div></dialog>
+<dialog id="ruleDialog" class="rule-dialog">
+  <div class="dialog-head"><h2>过滤规则</h2><button id="ruleClose" type="button">关闭</button></div>
+  <p class="muted">规则只判断标题或「标题 + 简介」，入库时就生效——不想看的栏目连索引都不留。判断有误时，被挡住的条目在「全部状态 → 含已删除」里能找回并恢复。</p>
+  <div class="form-grid three">
+    <label>范围<select id="ruleScope"><option value="account">指定公众号</option><option value="all">所有公众号</option></select></label>
+    <label>公众号<input id="ruleAccount" placeholder="公众号名称，例如 EDN电子技术设计"></label>
+    <label>匹配字段<select id="ruleField"><option value="title">只看标题</option><option value="header">标题 + 简介</option></select></label>
+  </div>
+  <label>关键词<textarea id="rulePatterns" rows="3" placeholder="一行一个，或用逗号分隔：招聘 / 招生 / 会议通知 / 周报"></textarea></label>
+  <label>备注（只给你自己看）<input id="ruleNote" placeholder="例如：这个号发的展会广告不用推给我"></label>
+  <div class="actions"><button type="button" id="rulePreview">先试跑，看会挡住哪些</button><button type="button" class="primary" id="ruleSave">保存并应用</button></div>
+  <div id="rulePreviewResult" class="muted rule-preview"></div>
+  <h3 class="rule-list-title">已有规则</h3>
+  <div id="ruleList" class="rule-list"></div>
+</dialog>
 <div id="taskBackdrop" class="task-backdrop"></div>
 <aside id="taskDrawer" class="task-drawer" aria-hidden="true">
   <div class="task-drawer-head">

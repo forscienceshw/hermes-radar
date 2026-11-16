@@ -11,6 +11,13 @@ from app.utils import now_iso, utcnow
 
 ROOT = Path(__file__).resolve().parents[1]
 
+def _temp_root() -> Path:
+    """临时库放 .tmp/：data/ 是用户资料，测试残留在那里会污染归档目录。"""
+    root = ROOT / ".tmp"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
 
 def article(number: int, days_old: float) -> dict:
     from datetime import timedelta
@@ -102,7 +109,7 @@ class BackfillTests(unittest.TestCase):
 
     def test_bulk_import_is_idempotent_and_waits_for_key(self):
         from app.api import WeChatImportInput, import_wechat_accounts
-        with tempfile.TemporaryDirectory(dir=ROOT / "data") as temp:
+        with tempfile.TemporaryDirectory(dir=_temp_root()) as temp:
             db = Database(Path(temp) / "test.db")
             data = WeChatImportInput(names_text="科研一号\n科研二号\n科研一号\n", initial_backfill_days=30)
             with patch("app.api.db", db), patch("app.api.secret_status", return_value={"datax_api_key": False}):

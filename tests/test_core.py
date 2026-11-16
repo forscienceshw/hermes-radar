@@ -18,10 +18,17 @@ from app.utils import canonical_url, extract_dois, extract_urls, normalize_doi
 
 ROOT = Path(__file__).resolve().parents[1]
 
+def _temp_root() -> Path:
+    """临时库放 .tmp/：data/ 是用户资料，测试残留在那里会污染归档目录。"""
+    root = ROOT / ".tmp"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
 
 class CoreTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(dir=ROOT / "data")
+        self.temp = tempfile.TemporaryDirectory(dir=_temp_root())
         self.db = Database(Path(self.temp.name) / "test.db")
 
     def tearDown(self):

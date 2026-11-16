@@ -92,6 +92,81 @@ WEAK_TERMS = {"科研", "科学", "科学家", "科学传播", "研究", "论文
 URL_ONLY_RE = re.compile(r"^\s*https?://\S+\s*$", re.I)
 LATIN_TERM_RE = re.compile(r"^[a-z][a-z0-9 +.-]*$", re.I)
 
+# ---------------------------------------------------------------------------
+# 引流软文识别
+#
+# 有些账号发的是「借一篇技术文章把人引到自己的平台注册/下载」的软文：
+# 正文看着全是专业词，其实重点是文末那句「扫码下载资料」「立即注册」。
+# 这类不该占资料库的位置，但误伤真论文的代价更大，所以判据刻意收紧：
+#   命中硬引流话术 **且** 正文里找不到任何学术证据（DOI / 参考文献 / 图表编号）。
+# 真正的论文、综述、会议报道几乎不可能同时满足这两条。
+MARKETING_STRONG = (
+    "扫码下载", "扫码领取", "扫码注册", "扫码报名", "扫码观看", "扫码加入", "扫码进群",
+    "扫码免费下载", "免费下载", "长按识别二维码", "点击下方名片", "关注后回复", "回复「", '回复"',
+    "立即下载", "点击下载", "免费领取", "免费试用", "申请试用", "立即注册", "注册下载",
+    "预约直播", "加入社群", "添加客服", "知识星球", "小鹅通", "限时免费", "限时优惠",
+)
+MARKETING_WEAK = (
+    "扫码", "二维码", "下载资料", "下载pdf", "阅读原文", "关注公众号", "选型", "datasheet",
+    "数据手册", "白皮书", "产品手册", "报名", "优惠", "购买", "下单", "客服",
+)
+DOI_RE = re.compile(r"10\.\d{4,9}/[-._;()/:A-Za-z0-9]+")
+FIGURE_RE = re.compile(r"(?:图|fig(?:ure)?\.?)\s*\d+")
+# 正文前 40% 是「这篇想干什么」的位置；再往后基本是文末二维码和推荐阅读。
+HEAD_RATIO = 0.4
+
+
+def _academic_evidence(text: str) -> list[str]:
+    folded = text.casefold()
+    found: list[str] = []
+    if DOI_RE.search(text):
+        found.append("DOI")
+    if "参考文献" in text or "references" in folded:
+        found.append("参考文献")
+    if FIGURE_RE.search(folded):
+        found.append("图表编号")
+    if "arxiv" in folded or "biorxiv" in folded or "medrxiv" in folded:
+        found.append("预印本")
+    if "et al" in folded:
+        found.append("et al")
+    return found
+
+
+def detect_marketing(body: str) -> dict[str, Any]:
+    """判断正文是不是以引流为目的的软文，返回 {blocked, score, reason, signals}。
+
+    判据的关键是**位置**：真正讲研究的文章把「扫码关注」放在文末，正文开头
+    讲的是研究本身；软文则一上来就告诉你「扫码下载资料」。所以只看前 40%。
+    """
+    text = (body or "")[:20000]
+    length = len(text)
+    if length < 120:
+        return {"blocked": False, "score": 0, "reason": "", "signals": []}
+    folded = text.casefold()
+    evidence = _academic_evidence(text)
+    if evidence:
+        return {"blocked": False, "score": 0,
+                "reason": f"正文有学术证据（{'、'.join(evidence)}）", "signals": evidence}
+
+    strong: list[tuple[str, float]] = []
+    for term in MARKETING_STRONG:
+        index = folded.find(term.casefold())
+        if index >= 0:
+            strong.append((term, index / length))
+    head_hits = [term for term, ratio in strong if ratio <= HEAD_RATIO]
+    if head_hits:
+        return {"blocked": True, "score": 2 + min(2, len(strong) - 1),
+                "reason": f"正文开头就在引导扫码/下载（{'、'.join(head_hits[:4])}），"
+                          f"没有 DOI、参考文献或图表编号",
+                "signals": head_hits[:6]}
+
+    weak = [term for term in MARKETING_WEAK if term.casefold() in folded]
+    if len(weak) >= 4 and length < 3000:
+        return {"blocked": True, "score": 1,
+                "reason": f"正文是产品/活动介绍（{'、'.join(weak[:4])}），短且没有 DOI、参考文献或图表编号",
+                "signals": weak[:6]}
+    return {"blocked": False, "score": 0, "reason": "", "signals": weak[:6]}
+
 
 def _metadata(candidate: dict[str, Any]) -> dict[str, Any]:
     metadata = candidate.get("metadata")
@@ -219,6 +294,27 @@ def cleanup_existing_items(db: Any) -> dict[str, int]:
     for reason, item_ids in groups.items():
         changed += db.set_items_excluded(item_ids, reason)
     return {"checked": visible, "restored": restored, "excluded": changed, "remaining": visible - changed}
+
+
+def cleanup_marketing_items(db: Any, limit: int = 5000) -> int:
+    """把已经归档、但正文其实是引流软文的条目移出资料库。
+
+    只在正文有学术证据时才放行，判据见 detect_marketing；误判的可以从
+    「已过滤」里一键恢复，所以这里不必追求零误伤，但不能放过明显的软文。
+    """
+    rows = db.query(f"""SELECT id,title,text FROM items
+        WHERE excluded_at IS NULL AND kind='article' AND length(coalesce(text,''))>=120
+        ORDER BY discovered_at DESC LIMIT {int(limit)}""")
+    blocked: list[tuple[str, str]] = []
+    for row in rows:
+        verdict = detect_marketing(row.get("text") or "")
+        if verdict["blocked"]:
+            blocked.append((str(row["id"]), verdict["reason"]))
+    for item_id, reason in blocked:
+        db.set_items_excluded([item_id], f"引流/营销文章：{reason}")
+    if blocked:
+        db.add_event("marketing_filter", f"正文复核：{len(blocked)} 条引流软文移出资料库")
+    return len(blocked)
 
 
 def dedupe_duplicate_items(db: Any) -> int:

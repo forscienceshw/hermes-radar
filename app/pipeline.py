@@ -9,7 +9,8 @@ from .services.analyzer import analyze_item
 from .services.archive import SourceGone, archive_item
 from .services.notify import deliver_batch, flush_open_batches
 from .services.papers import process_item_papers
-from .services.relevance import assess_candidate
+from .services.relevance import assess_candidate, detect_marketing
+from .services.filters import load_rules, match as match_rules
 from .utils import now_iso, redact_secrets, stable_json
 
 log = logging.getLogger(__name__)
@@ -48,17 +49,27 @@ class JobRunner:
             return
         try:
             candidates, cursor = await poll_source(source, job["id"])
-            new_count = filtered_count = 0
+            new_count = filtered_count = rule_count = 0
+            rules = load_rules(self.db)
             for candidate in candidates:
                 assessment = assess_candidate(candidate)
                 if not assessment["keep"]:
                     filtered_count += 1
                     continue
+                if rules:
+                    metadata = candidate.get("metadata") or {}
+                    blocked = match_rules(rules, candidate.get("author"), candidate.get("title"),
+                                          metadata.get("description"))
+                    if blocked:
+                        # 用户自己定的规则优先于一切：不想看的栏目连索引都不留。
+                        rule_count += 1
+                        continue
                 metadata = candidate.setdefault("metadata", {})
                 metadata["admission_filter"] = {"reason": assessment["reason"], "matched_terms": assessment["matched_terms"]}
                 _, created = self.db.discover_item(candidate)
                 new_count += int(created)
             cursor["admission_filtered"] = filtered_count
+            cursor["rule_filtered"] = rule_count
             cursor_changed = stable_json(cursor) != source.get("cursor_json")
             if source["type"] == "jsonl" and not candidates and not cursor_changed:
                 return
@@ -75,6 +86,8 @@ class JobRunner:
                 detail = f"{source['name']}：新消息链接 {len(candidates)} 条，收录 {new_count} 条"
                 if filtered_count:
                     detail += f"，本地过滤 {filtered_count} 条"
+                if rule_count:
+                    detail += f"，按你的过滤规则跳过 {rule_count} 条"
                 self.db.add_event("source_polled", detail, source_id=source["id"])
             if warnings:
                 self.db.add_event("source_warning", f"{source['name']}：{warning_text}", source_id=source["id"])
@@ -110,6 +123,13 @@ class JobRunner:
             self._source_gone(item_id, exc.reason)
             return
         self.db.update_archive(item_id, result)
+        if (item.get("kind") or "article") == "article":
+            verdict = detect_marketing(result.get("text") or "")
+            if verdict["blocked"]:
+                # 抓完才知道正文是软文：与其让它占着资料库，不如当场移出去。
+                self.db.set_items_excluded([item_id], f"引流/营销文章：{verdict['reason']}")
+                self.db.add_event("marketing_filter", f"归档时判定为引流软文：{verdict['reason']}", item_id)
+                return
         # Triage right after archiving, not only when the item is read.  Otherwise a
         # queued article keeps its ad banners and group photos in the library until
         # someone happens to spend a reading call on it.
