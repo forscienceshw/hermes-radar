@@ -15,7 +15,6 @@ Release —— 脚本会告诉你补哪一条命令。
 from __future__ import annotations
 
 import argparse
-import base64
 import hashlib
 import json
 import subprocess
@@ -266,20 +265,18 @@ def write_manifest(version: str, notes: str, asset: Path, push: bool, proxy: str
     }
     MANIFEST.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
-    status, current = gh_api(f"repos/{OWNER}/{REPO}/contents/version.json", allow_404=True)
-    body = {
-        "message": f"version.json: {version}",
-        "content": base64.b64encode(MANIFEST.read_bytes()).decode("ascii"),
-    }
-    if status == 0 and isinstance(current, dict) and current.get("sha"):
-        body["sha"] = current["sha"]
-    gh_api(f"repos/{OWNER}/{REPO}/contents/version.json", "PUT", body)
-
+    # 只走 git push，不用 API 写文件。
+    # 用 API 写会在远端凭空生成一个 commit，本地这边也有一个改了同样内容的 commit，
+    # 下次 push 必然被拒 —— 今天已经踩过一次。
     run(["git", "add", "version.json"])
     run(["git", "commit", "-m", f"version.json: {version}"], check=False)
     if push:
-        run(["git", *(["-c", f"http.proxy={proxy}"] if proxy else []), "push", "origin", "main"],
-            check=False)
+        command = ["git", *(["-c", f"http.proxy={proxy}"] if proxy else []), "push", "origin", "main"]
+        result = run(command, capture=True, check=False)
+        if result.returncode != 0:
+            say((result.stderr or "")[-600:])
+            die("version.json 没推上去，各机器读不到新版本。网络恢复后补一句：\n"
+                f"  git -c http.proxy={proxy or 'http://127.0.0.1:7897'} push origin main")
     say(f"  sha256 {sha256[:16]}…  {asset.stat().st_size / 1024 / 1024:.1f} MB")
     return MANIFEST
 
