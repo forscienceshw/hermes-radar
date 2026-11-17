@@ -105,6 +105,12 @@ class Worker:
             except Exception:                       # noqa: BLE001 - 备份失败不该拖垮主流程
                 log.exception("资料库快照失败")
             try:
+                swept = backup.sweep_trash()
+                if swept:
+                    log.info("回收站里本项目的记录清掉 %d 条", swept)
+            except Exception:                       # noqa: BLE001 - 清扫失败也不影响主流程
+                log.exception("清扫回收站失败")
+            try:
                 await asyncio.wait_for(self.stop_event.wait(), timeout=6 * 3600)
                 return
             except asyncio.TimeoutError:

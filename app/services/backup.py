@@ -9,13 +9,14 @@ API 不锁库，采集和精读照跑，所以这个成本很低。
 """
 from __future__ import annotations
 
+import importlib.util
 import re
 import sqlite3
 import time
 from pathlib import Path
 from typing import Any
 
-from ..paths import DATA_DIR, DB_PATH
+from ..paths import BASE_DIR, DATA_DIR, DB_PATH
 from . import purge
 
 BACKUP_DIR = DATA_DIR / "backups"
@@ -95,3 +96,47 @@ def status() -> dict[str, Any]:
         "latest_size": latest.stat().st_size if latest else 0,
         "latest_at": time.strftime("%Y-%m-%d %H:%M", time.localtime(latest.stat().st_mtime)) if latest else "",
     }
+
+
+def _trash_module():
+    """把 `tools/trash.py` 当模块装上。它本来就是个独立脚本，这里只是复用。"""
+    path = BASE_DIR / "tools" / "trash.py"
+    if not path.is_file():
+        return None
+    spec = importlib.util.spec_from_file_location("radar_trash", path)
+    if spec is None or spec.loader is None:
+        return None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def sweep_trash() -> int:
+    """把回收站里**本项目目录下**的记录彻底删掉，返回清掉的条数。
+
+    为什么会有这些记录：应用删临时文件时，有一部分删除是 CPython / sqlite3 内部
+    调 `os.unlink` 做的（比如关闭连接时的 `radar.db-wal`），本机的"安全删除"垫片
+    会把它们塞进回收站，一天几十条。删的是我们自己刚造出来的文件，回收站留副本
+    没有任何意义。
+
+    只按 `BASE_DIR` / `DATA_DIR` 前缀匹配——别的软件、用户自己的文件一条都不碰。
+    """
+    module = _trash_module()
+    if module is None:
+        return 0
+    prefixes = [str(BASE_DIR), str(DATA_DIR)]
+    try:
+        items = [item for item in module.entries()
+                 if module._matches(item["original"], prefixes)]
+    except Exception:                                   # noqa: BLE001 - 清扫失败不影响备份
+        return 0
+    removed = 0
+    for item in items:
+        try:
+            if item["has_data"]:
+                module._delete_path(str(item["data"]))
+            module._delete_path(str(item["meta"]))
+            removed += 1
+        except Exception:                               # noqa: BLE001
+            continue
+    return removed
