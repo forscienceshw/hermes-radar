@@ -733,3 +733,88 @@ $('#bulkClear').onclick=()=>{itemPicked.clear();loadItems().catch(()=>{})};
 document.addEventListener('change',e=>{const box=e.target.closest('[data-pick]');if(!box)return;if(box.checked)itemPicked.add(box.dataset.pick);else itemPicked.delete(box.dataset.pick);const card=box.closest('.item');if(card)card.classList.toggle('picked',box.checked);syncBulkBar()});
 const deepView=new URLSearchParams(location.search).get('view');if(deepView)setTimeout(()=>{if(loaders[deepView])switchView(deepView)},0);
 loadHealth();loadEvents();loadProgress().catch(()=>{});loadCredits().catch(()=>{});setInterval(loadHealth,5000);setInterval(()=>{if(currentView==='dashboard')loadCredits().catch(()=>{})},60000);setInterval(()=>{if(['dashboard','library'].includes(currentView))loadProgress().catch(()=>{})},2500);setInterval(()=>{if(['dashboard','sources','notifications'].includes(currentView))loaders[currentView]().catch(()=>{})},20000);
+
+/* ---------- 自动更新 ----------
+   启动 20 秒后后端会自己查一次，这里只负责把结果画出来；也可以手动点检查。
+   装更新＝先下载 120 MB 的安装包（校验 sha256），再让安装器静默覆盖当前目录，
+   所以点"重启并更新"之后页面会断十几秒，属于正常。 */
+(function(){
+  const badge=$('#updateBadge'),badgeVer=$('#updateBadgeVer'),current=$('#updateCurrent'),
+        info=$('#updateInfo'),checkedAt=$('#updateCheckedAt'),notes=$('#updateNotes'),
+        applyBtn=$('#updateApply'),checkBtn=$('#updateCheck'),
+        progressWrap=$('#updateProgress'),bar=$('#updateBar'),progressText=$('#updateProgressText');
+  if(!badge||!checkBtn)return;
+  let timer=null;
+  const mb=bytes=>bytes?`${(bytes/1024/1024).toFixed(0)} MB`:'';
+  function paint(state){
+    current.textContent=state.current||'–';
+    checkedAt.textContent=state.checked_at?`上次检查 ${state.checked_at}`:'';
+    badge.hidden=!state.has_update;
+    badgeVer.textContent=state.latest||'';
+    applyBtn.hidden=!state.has_update;
+    applyBtn.disabled=false;
+    if(state.has_update){
+      info.textContent=`有新版本 ${state.latest}${state.size?`（${mb(state.size)}）`:''}${state.downloaded?'，安装包已下好':''}`;
+      notes.hidden=!state.notes;notes.textContent=state.notes||'';
+      applyBtn.textContent=state.downloaded?'重启并更新':'下载并更新';
+    }else{
+      notes.hidden=true;
+      info.textContent=state.error?`没查到：${state.error}`:(state.latest?'已经是最新的':'还没查过');
+    }
+    const d=state.download||{},downloading=d.state==='downloading';
+    progressWrap.hidden=!downloading&&d.state!=='done';
+    if(downloading){
+      bar.style.width=(d.percent||0)+'%';
+      progressText.textContent=`下载中 ${d.percent||0}% · ${mb(d.bytes)} / ${mb(d.total)}`;
+    }else if(d.state==='done'){
+      bar.style.width='100%';progressText.textContent='安装包已下好，点「重启并更新」';
+    }else if(d.state==='error'){
+      progressWrap.hidden=false;bar.style.width='0%';progressText.textContent='下载失败：'+(d.error||'');
+    }
+    return downloading;
+  }
+  async function refresh(){
+    try{
+      const state=await api('/api/update');
+      const downloading=paint(state);
+      if(downloading&&!timer)timer=setInterval(refresh,1200);
+      if(!downloading&&timer){clearInterval(timer);timer=null}
+    }catch(e){info.textContent='读不到更新状态：'+e.message}
+  }
+  checkBtn.onclick=async()=>{
+    checkBtn.disabled=true;info.textContent='正在查…';
+    try{
+      const state=await api('/api/update/check',{method:'POST',body:{}});
+      paint(state);
+      toast(state.has_update?`发现新版本 ${state.latest}`:'已经是最新版本');
+    }catch(e){info.textContent='检查失败：'+e.message}
+    finally{checkBtn.disabled=false}
+  };
+  applyBtn.onclick=async()=>{
+    const state=await api('/api/update').catch(()=>null);
+    if(!state)return;
+    if(!state.downloaded){
+      applyBtn.disabled=true;
+      try{
+        await api('/api/update/download',{method:'POST',body:{version:state.latest,url:state.url}});
+        toast('开始下载安装包');
+        if(!timer)timer=setInterval(refresh,1200);
+      }catch(e){toast(e.message);applyBtn.disabled=false}
+      return;
+    }
+    if(!confirm(`现在会退出程序，把 ${state.latest} 装到当前目录，装完自动重新打开。继续吗？`))return;
+    try{
+      await api('/api/update/apply',{method:'POST',body:{version:state.latest}});
+      toast('正在退出并安装…十几秒后刷新页面即可');
+    }catch(e){toast('启动更新失败：'+e.message)}
+  };
+  badge.onclick=()=>{
+    switchView('settings');
+    const tab=document.querySelector('.subnav-btn[data-subtab="params"]');
+    if(tab)tab.click();
+    setTimeout(()=>$('#updatePanel')?.scrollIntoView({behavior:'smooth',block:'center'}),180);
+  };
+  refresh();
+  setTimeout(refresh,9000);
+  window.refreshUpdateState=refresh;
+})();

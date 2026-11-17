@@ -5,7 +5,9 @@ import os
 import platform
 import subprocess
 import sys
+import threading
 import uuid
+from contextlib import asynccontextmanager
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -15,7 +17,7 @@ from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import __version__
+from . import __version__, updater
 from .collectors import COLLECTORS
 from .db import Database, row_with_json
 from .logging_config import configure_logging
@@ -29,7 +31,35 @@ from .utils import (extract_bvid, extract_urls, job_error_is_retryable, json_loa
 
 configure_logging("web")
 db = Database()
-app = FastAPI(title="Hermes 科研雷达", version=__version__)
+
+
+def _check_updates_in_background() -> None:
+    """开机后台查一次新版本，同一天不重复。
+
+    只查不下载：装不装由用户在界面上决定。延迟 20 秒是为了别和采集器抢带宽，
+    也别让首页首次渲染等它。
+    """
+    def worker() -> None:
+        import time as _time
+        _time.sleep(20)
+        try:
+            checked = str(updater.status().get("checked_at") or "")
+            if checked[:10] == _time.strftime("%Y-%m-%d"):
+                return
+            updater.check()
+        except Exception:  # noqa: BLE001 - 更新检查永远不该影响主流程
+            pass
+
+    threading.Thread(target=worker, daemon=True, name="update-check").start()
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    _check_updates_in_background()
+    yield
+
+
+app = FastAPI(title="Hermes 科研雷达", version=__version__, lifespan=_lifespan)
 app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
 
 # Files whose URL must change whenever their bytes change.  FastAPI's StaticFiles
@@ -1942,6 +1972,53 @@ def secret_update(data: SecretInput) -> dict[str, Any]:
     # Saving a key must never silently re-enable a paid source; enabling stays explicit
     # in 采集来源, so the toggle there is the single source of truth.
     return {"secrets": secret_status()}
+
+
+# --------------------------------------------------------------------------- #
+# 自动更新
+# --------------------------------------------------------------------------- #
+@app.get("/api/update")
+def update_status() -> dict[str, Any]:
+    return updater.status()
+
+
+@app.post("/api/update/check")
+def update_check(data: dict[str, Any] | None = None) -> dict[str, Any]:
+    """同步查一次。放在 def 而不是 async def，FastAPI 会丢进线程池，不挡事件循环。"""
+    timeout = float((data or {}).get("timeout") or 6)
+    return updater.check(timeout=max(3.0, min(timeout, 20.0)))
+
+
+@app.post("/api/update/download")
+def update_download(data: dict[str, Any] | None = None) -> dict[str, Any]:
+    """后台下载，立刻返回。进度靠 GET /api/update 轮询。"""
+    state = updater.status()
+    version = (data or {}).get("version") or state.get("latest") or ""
+    url = (data or {}).get("url") or state.get("url") or ""
+    if not version or not url:
+        raise HTTPException(400, "还没有可下载的版本，先检查更新。")
+    running = updater.download_state()
+    if running.get("state") == "downloading":
+        return {"started": False, "reason": "已经在下了", "download": running}
+
+    def worker() -> None:
+        try:
+            updater.download(url, version, state.get("sha256") or "")
+        except Exception:  # noqa: BLE001 - 失败信息已经写进进度
+            pass
+
+    threading.Thread(target=worker, daemon=True, name="update-download").start()
+    return {"started": True, "version": version}
+
+
+@app.post("/api/update/apply")
+def update_apply(data: dict[str, Any] | None = None) -> dict[str, Any]:
+    """静默覆盖安装。返回后几百毫秒内本进程就会退出（supervisor 收到停止信号）。"""
+    version = (data or {}).get("version") or updater.status().get("latest") or ""
+    try:
+        return updater.apply(version, restart=bool((data or {}).get("restart", True)))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(500, f"启动更新失败：{exc}") from exc
 
 
 def main() -> None:

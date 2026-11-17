@@ -9,7 +9,7 @@
 <body>
 <header class="topbar">
   <div class="brand"><span class="brand-mark">H</span><div><strong>Hermes 科研雷达</strong><small>持续收集 · 证据精读 · idea 连接</small></div></div>
-  <div class="health"><span id="healthDot" class="dot"></span><span id="healthText">正在连接后台</span><button id="taskQueueBtn" class="task-chip" type="button">任务队列 <b id="taskPendingBadge">0</b></button></div>
+  <div class="health"><button id="updateBadge" class="update-badge" type="button" hidden>新版本 <b id="updateBadgeVer"></b> 可更新</button><span id="healthDot" class="dot"></span><span id="healthText">正在连接后台</span><button id="taskQueueBtn" class="task-chip" type="button">任务队列 <b id="taskPendingBadge">0</b></button></div>
 </header>
 <div class="layout">
 <nav class="sidebar">
@@ -332,6 +332,22 @@ B站 UP 主：也可使用你自建的 RSSHub 地址，kind 设为 video。</pre
     <div class="panel"><h2>B站无字幕视频</h2><div class="form-grid three"><label>本地语音识别<select id="asrEnabled"><option value="false">关闭，仅归档简介</option><option value="true">启用 faster-whisper</option></select></label><label>模型<input id="asrModel" placeholder="small / medium / large-v3"></label><label>最长视频（分钟）<input id="asrDuration" type="number" min="1"></label></div><p class="muted">启用前需在当前 E 盘 Python 环境安装 faster-whisper；模型与音频也只写入 E 盘。</p></div>
     <div class="sticky-save"><span id="settingsResult"></span><button type="submit" class="primary">保存全部设置</button></div>
   </form>
+
+  <h2 class="group-title">版本与更新</h2>
+  <div class="panel" id="updatePanel">
+    <div class="panel-head">
+      <h2>当前版本 <span id="updateCurrent">–</span></h2>
+      <span id="updateCheckedAt" class="muted"></span>
+    </div>
+    <p class="muted">新版本发布在 GitHub，每次启动会在后台悄悄查一次。网络不好时查不到也不影响使用——直接在项目页下载安装包，双击覆盖安装就行。</p>
+    <div class="actions">
+      <button id="updateCheck" type="button">检查更新</button>
+      <button id="updateApply" type="button" class="primary" hidden>下载并更新</button>
+      <span id="updateInfo" class="muted">还没查过</span>
+    </div>
+    <div id="updateProgress" class="update-progress" hidden><div class="update-bar"><i id="updateBar"></i></div><span id="updateProgressText"></span></div>
+    <div id="updateNotes" class="update-notes" hidden></div>
+  </div>
   </div>
 </section>
 </main>

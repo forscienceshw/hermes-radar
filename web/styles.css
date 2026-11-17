@@ -427,3 +427,12 @@ body.viewer-open{overflow:hidden}
 #waExcludeDialog label.check input{width:auto;margin:0}
 #waExcludeDialog input,#waExcludeDialog select{margin:4px 0 10px}
 #waExcludeDialog .actions{margin-top:2px}
+
+/* 自动更新：顶栏小徽标 + 设置页的进度条 */
+.update-badge{border:1px solid #efc46d;background:#fff6dd;color:#7a5410;border-radius:20px;padding:4px 11px;font-size:12px;margin-right:6px;cursor:pointer;display:inline-flex;align-items:center;gap:4px}
+.update-badge:hover{background:#ffeec2}
+.update-badge b{font-weight:700;font-variant-numeric:tabular-nums}
+.update-progress{margin-top:13px;display:flex;align-items:center;gap:12px;font-size:12.5px;color:#4d5965}
+.update-bar{flex:1;min-width:120px;height:8px;border-radius:5px;background:#e9edf0;overflow:hidden}
+.update-bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#15966d,#126e67);transition:width .3s ease}
+.update-notes{margin-top:13px;background:#f7f9fa;border:1px solid #e8edf0;border-radius:8px;padding:12px 14px;white-space:pre-wrap;font-size:13px;line-height:1.7;color:#3d4a57;max-height:260px;overflow:auto}

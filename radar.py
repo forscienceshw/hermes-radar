@@ -8,6 +8,7 @@
     python radar.py check               语法 + 测试
     python radar.py start / stop        启停服务
     python radar.py pack                打成可分发的压缩包
+    python radar.py release "改了什么"   发一个新版本到 GitHub（打 tag + 传安装包）
     python radar.py where               报一下各目录在哪
 
 不需要懂 git。所有会覆盖改动的操作都会先自动留底。
@@ -252,6 +253,9 @@ def main(argv: list[str]) -> int:
         if command in ("pack", "build"):
             output = rest[0] if rest else ""
             return cmd_pack(repo, output)
+        if command in ("release", "publish", "发布"):
+            from tools import release
+            return release.main(rest)
         if command in ("where", "info"):
             return cmd_where()
         print(f"不认识这个命令：{command}\n")

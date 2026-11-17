@@ -23,6 +23,10 @@ DEFAULTS: dict[str, Any] = {
     # 留空 = 直连。有些站点（微信文章页尤其明显）按 IP 段上风控，换出口是唯一
     # 有效的解法：填 http://host:port 或 socks5://user:pass@host:port 即可。
     "http_proxy": "",
+    # 自动更新：只在启动时查一次"有没有新版本"，装不装由人决定。下载地址默认走
+    # GitHub Release，国内慢的话可以在这里填一个前缀（如 https://ghproxy.net/）。
+    "auto_update_check": True,
+    "update_mirror": "",
     # 图片是磁盘占用的大头：40 张 × 15 MB 的上限意味着一篇长图文能吃掉几百 MB，
     # 而真正会回看的通常只有开头几张图。
     "max_images_per_article": 12,
