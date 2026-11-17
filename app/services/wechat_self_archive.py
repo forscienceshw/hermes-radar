@@ -15,6 +15,7 @@ import os
 import shutil
 import sqlite3
 import tempfile
+import time
 import unicodedata
 from contextlib import contextmanager
 from ctypes import wintypes
@@ -452,16 +453,150 @@ def read_self_chat_links() -> list[dict[str, Any]]:
     return candidates
 
 
+# --------------------------------------------------------------------------- #
+# 3.x 那条路依赖 WeChat Files\Msg\*.db；4.x 的库在 xwechat_files\<账号>\db_storage，
+# 按会话分表、正文 zstd 压缩、加密也换了参数。两边只能各走各的，所以在入口处分派。
+def _wechat3_present() -> bool:
+    root = Path.home() / "Documents" / "WeChat Files"
+    try:
+        return root.is_dir() and any(root.iterdir())
+    except OSError:
+        return False
+
+
+def _wechat4():
+    """本机有 4.x 且（在跑 或 有解密缓存）时返回通道模块，否则 None。"""
+    try:
+        from . import wechat4_live
+    except Exception:                                # noqa: BLE001
+        return None
+    try:
+        return wechat4_live if wechat4_live.available() else None
+    except Exception:                                # noqa: BLE001
+        return None
+
+
+def _wechat4_sync(module) -> dict[str, Any]:
+    """刷新解密缓存，返回给游标里留痕的同步摘要。"""
+    try:
+        state = module.refresh()
+    except Exception as exc:                         # noqa: BLE001
+        return {"error": str(exc)[:300], "refreshed": 0, "skipped": 0, "failed": []}
+    return {"refreshed": state.refreshed, "skipped": state.skipped,
+            "failed": state.failed[:5], "key_source": state.key_source,
+            "storage": str(state.storage)}
+
+
+def _wechat4_since(previous: dict[str, Any], config: dict[str, Any]) -> int:
+    """增量窗口下界：上次读到的位置，没有就回填 initial_backfill_days 天。"""
+    value = previous.get("last_create_time")
+    if value:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            pass
+    days = max(1, min(365, int(config.get("initial_backfill_days", 3) or 3)))
+    return int(time.time() - days * 86400)
+
+
+def _wechat4_public_candidates(module, source: dict[str, Any], config: dict[str, Any],
+                               previous: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    directory = module.oa_directory()
+    allowed, catalog_matched, unmatched = _public_account_filter(config, directory)
+    excluded = {str(value) for value in config.get("exclude_account_ids") or []}
+    names = {user: info["name"] for user, info in directory.items()}
+    enforce_allowlist = bool(config.get("use_catalog", True) or allowed)
+
+    # 启用名单变了就回填：新勾上的公众号应该马上看到它最近的文章，
+    # 而不是从"勾选的这一刻"开始等下一篇。
+    effective = sorted(value for value in allowed if value not in excluded) \
+        if enforce_allowlist else []
+    fingerprint = hashlib.sha1("|".join(effective).encode("utf-8")).hexdigest()[:16]
+    days = max(1, min(365, int(config.get("initial_backfill_days", 7) or 7)))
+    since = int(previous.get("last_create_time") or 0)
+    if previous.get("catalog_fingerprint") != fingerprint or not since:
+        since = int(time.time() - days * 86400)
+
+    articles = module.official_articles(since_ts=since)
+    candidates: list[dict[str, Any]] = []
+    newest = since
+    for item in articles:
+        talker = item["user_name"]
+        newest = max(newest, int(item["create_time"] or 0))
+        if (enforce_allowlist and talker not in allowed) or talker in excluded:
+            continue
+        candidates.append({
+            "source_id": source["id"], "kind": "article",
+            "url": item["url"], "canonical_url": canonical_url(item["url"]),
+            "external_key": f"public4:{talker}:{item['local_id']}",
+            "title": item["title"] or item["url"],
+            "author": names.get(talker, item["account"]),
+            "published_at": epoch_iso(item["create_time"]),
+            "metadata": {"share_channel": "wechat_public_local", "wechat_version": "4.x",
+                         "wechat_account_id": talker,
+                         "public_message_id": item["local_id"],
+                         "description": item["digest"],
+                         "catalog_matched": talker in catalog_matched},
+        })
+    cursor = {"initialized": True, "wechat_version": "4.x",
+              "last_create_time": max(newest, int(previous.get("last_create_time") or 0)),
+              "catalog_fingerprint": fingerprint,
+              "tracked_accounts": len(effective),
+              "last_read_at": now_iso(), "matched_links": len(candidates),
+              "catalog_matched_accounts": len(catalog_matched),
+              "catalog_unmatched_names": unmatched, "warnings": []}
+    if not effective:
+        cursor["warnings"].append("还没有勾选要追踪的公众号，本批不采集任何推文")
+    return candidates, cursor
+
+
+def _wechat4_self_candidates(module, source: dict[str, Any], config: dict[str, Any],
+                             previous: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    since = _wechat4_since(previous, config)
+    items = module.self_links(since_ts=since)
+    candidates: list[dict[str, Any]] = []
+    newest = since
+    for item in items:
+        newest = max(newest, int(item["create_time"] or 0))
+        candidates.append({
+            "source_id": source["id"], "kind": "article",
+            "url": item["url"], "canonical_url": canonical_url(item["url"]),
+            "external_key": f"self4:{item['user_name']}:{item['local_id']}",
+            "title": item["title"] or item["url"], "author": "当前微信自己转发的",
+            "published_at": epoch_iso(item["create_time"]),
+            "metadata": {"share_channel": "wechat_self_chat", "wechat_version": "4.x",
+                         "message_id": item["local_id"],
+                         "description": item["digest"]},
+        })
+    cursor = {"initialized": True, "wechat_version": "4.x", "last_create_time": newest,
+              "last_read_at": now_iso(), "matched_links": len(candidates), "warnings": []}
+    return candidates, cursor
+
+
 async def poll_wechat_self(source: dict[str, Any], scope: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     config = json_loads(source.get("config_json"), {}) or {}
+    if not _wechat3_present():
+        module = _wechat4()
+        if module is not None:
+            previous = json_loads(source.get("cursor_json"), {}) or {}
+            candidates, cursor = _wechat4_self_candidates(module, source, config, previous)
+            cursor["sync"] = _wechat4_sync(module)
+            return _apply_history_policy(candidates, cursor, config, source["id"])
     candidates, cursor = sync_self_chat(json_loads(source.get("cursor_json"), {}) or {},
                                         config.get("target_wxid", ""), config.get("target_name", ""))
+    return _apply_history_policy(candidates, cursor, config, source["id"])
+
+
+def _apply_history_policy(candidates: list[dict[str, Any]], cursor: dict[str, Any],
+                          config: dict[str, Any],
+                          source_id: Any = None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """切换监测时间点之前的历史链接按 history_mode 处理（3.x / 4.x 两条通道共用）。"""
     cutoff = parse_time(config.get("auto_process_after"))
     history_mode = config.get("history_mode", "skip")
     kept: list[dict[str, Any]] = []
     skipped_history = 0
     for candidate in candidates:
-        candidate["source_id"] = source["id"]
+        candidate["source_id"] = source_id
         if config.get("target_name"):
             candidate["author"] = config["target_name"]
             candidate.setdefault("metadata", {})["target_name"] = config["target_name"]
@@ -541,6 +676,15 @@ async def poll_wechat_public_local(source: dict[str, Any], scope: str) -> tuple[
     """Incrementally read selected official accounts from the current PC WeChat."""
     config = json_loads(source.get("config_json"), {}) or {}
     previous = json_loads(source.get("cursor_json"), {}) or {}
+    if not _wechat3_present():
+        module = _wechat4()
+        if module is not None:
+            try:
+                candidates, cursor = _wechat4_public_candidates(module, source, config, previous)
+            except Exception as exc:                # noqa: BLE001
+                raise RuntimeError(f"微信 4.x 通道读取公众号失败：{exc}") from exc
+            cursor["sync"] = _wechat4_sync(module)
+            return candidates, cursor
     _, root, key = _account_and_key()
     database = root / "Msg" / "PublicMsg.db"
     if not database.is_file():

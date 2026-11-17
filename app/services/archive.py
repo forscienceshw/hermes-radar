@@ -228,6 +228,24 @@ class SourceGone(RuntimeError):
         super().__init__(reason)
 
 
+class WechatNeedsVerification(RuntimeError):
+    """微信把直接抓取挡在了人机验证页后面。
+
+    这不是「这篇文章坏了」——多半是本机这一刻被风控限流。必须当成「稍后重试」，
+    而不是把任务记成永久失败，否则一篇真文章会被永久判死。
+    """
+
+    retry_after_minutes = 45
+
+
+class NotAnArticle(RuntimeError):
+    """链接指向的不是文章正文（图片分享页 / 视频页 / 小程序页）。
+
+    这类端点本身就不返回文章 HTML，重试多少次都一样，所以入口直接判定，
+    不走网络、不占重试预算，并给一个准确理由。
+    """
+
+
 def _page_text(response: Any) -> str:
     text = getattr(response, "text", None)
     if text:
@@ -392,6 +410,12 @@ async def archive_web(item: dict[str, Any]) -> dict[str, Any]:
     settings = get_settings()
     folder = item_directory(item["id"])
     url = item["url"]
+    if "mp.weixin.qq.com" in url and "t=pages/" in url:
+        # 这不是文章正文页（分享图片/视频的浏览器页），端点本身就不返回 HTML，
+        # 重试多少次都一样；直接用卡片文字拼离线页，一次网络请求都不发。
+        return _share_card_archive(item, folder, url,
+                                   "这是公众号的图片/视频分享页（链接里带 t=pages/），"
+                                   "不是文章正文页，微信不对外返回内容")
     headers = {"Accept": "text/html,application/xhtml+xml,application/pdf;q=0.9,*/*;q=0.5"}
     if "mp.weixin.qq.com" in url:
         # WeChat serves a 18 KB "environment abnormal" interstitial to unknown agents.
@@ -426,9 +450,13 @@ async def archive_web(item: dict[str, Any]) -> dict[str, Any]:
             raise SourceGone(gone)
         verify = detect_verify_page(page_text)
         if verify:
-            # 图片消息/风控验证页：微信从来不给正文。与其记一条看不懂的 error，
-            # 不如把分享卡片上的文字留下来，并写明为什么没有正文。
-            return _share_card_archive(item, folder, url, verify, response.url)
+            if "image_detail" in page_text:
+                # 图片消息（小绿书）本来就没有正文 HTML，重试也没用。
+                return _share_card_archive(item, folder, url, verify, response.url)
+            # 普通文章的验证页 = 这一刻被风控限流。文章还在，过一会儿再来。
+            raise WechatNeedsVerification(
+                "微信返回了人机验证页（本机这一刻被风控限流），正文还没拿到；"
+                f"{WechatNeedsVerification.retry_after_minutes} 分钟后会自动重试")
         raise ValueError("微信返回的页面里没有正文，也不是验证页；本次只重试直接抓取，不会调用付费接口")
     root = content_root
     root = root or soup.find("article") or soup.find("main") or soup.body or soup
@@ -470,10 +498,15 @@ async def archive_web(item: dict[str, Any]) -> dict[str, Any]:
         # plate has no prose at all and is still worth keeping.  Only a page with
         # neither prose nor figures is a genuine failure.
         if wechat:
-            # 微信有时给一个空的 #js_content 空壳（正文在客户端里渲染），本质跟验证页
-            # 一样：正文拿不到。这时候退回卡片摘要比记一条看不懂的 error 有用。
-            reason = detect_verify_page(_page_text(response)) or "微信只返回了空壳页面，正文没取到"
-            return _share_card_archive(item, folder, url, reason, response.url)
+            # 微信有时给一个空的 #js_content 空壳（正文在客户端里渲染）。空壳不是
+            # 永久失败：先看是不是验证页，是就稍后重试；只有卡片文字实在没内容时才降级。
+            verify = detect_verify_page(_page_text(response))
+            if verify and "image_detail" not in _page_text(response):
+                raise WechatNeedsVerification(
+                    "微信返回了人机验证页（本机这一刻被风控限流），正文还没拿到；"
+                    f"{WechatNeedsVerification.retry_after_minutes} 分钟后会自动重试")
+            return _share_card_archive(item, folder, url,
+                                       verify or "微信只返回了空壳页面，正文没取到", response.url)
         raise ValueError("没有提取到有效正文，页面上也没有可归档的配图；已保留任务以便重试，"
                          "不会伪造摘要或调用付费接口")
     unique_images = list(url_tags.items())[:int(settings["max_images_per_article"])]

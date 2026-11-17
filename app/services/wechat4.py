@@ -102,7 +102,24 @@ def databases(storage: Path) -> list[Path]:
 
 
 def quick_status() -> dict[str, Any]:
-    """不碰内存的版本，给设置页『检测』用。"""
+    """不碰内存的版本，给设置页『检测』用。
+
+    4.2.0.53 起内存里已经没有 x'<hex>' 明文了，真正的取密钥/解密逻辑在
+    wechat4_live 里（已实测通过）。这里只做「在不在、有多少库」的浅检查。
+    """
+    try:
+        from . import wechat4_live
+        status = wechat4_live.quick_status()
+        return {
+            "running": status["running"],
+            "pid": (status["pids"] or [0])[0],
+            "storages": status["storages"],
+            "databases": status["databases"],
+            "template": bool(status["storages"]),
+            "supported": True,
+        }
+    except Exception:                                # noqa: BLE001
+        pass
     process = weixin_process()
     storages = db_roots()
     return {
@@ -111,6 +128,7 @@ def quick_status() -> dict[str, Any]:
         "storages": [str(path) for path in storages],
         "databases": sum(len(databases(path)) for path in storages),
         "template": (storages[0] / "message").is_dir() if storages else False,
+        "supported": False,
     }
 
 
@@ -295,26 +313,40 @@ def recent_message_links(storage: Path, key_by_db: dict[str, str], limit: int = 
 
 
 def probe(max_seconds: float = 25.0) -> dict[str, Any]:
-    """一次完整的 4.x 探测：找进程 → 找目录 → 扫密钥 → 试开库 → 统计。"""
-    process = weixin_process()
-    if process is None:
+    """一次完整的 4.x 探测：找进程 → 找目录 → 取密钥 → 解密 → 报告能读哪些库。
+
+    实际的取密钥/解密走 wechat4_live（Config.Cipher 掩码解码 + SQLCipher4 + WAL 合并），
+    这条链路已在 WeChat 4.2.0.53 上 20/20 通过。
+    """
+    try:
+        from . import wechat4_live
+    except Exception as exc:                         # noqa: BLE001
+        return {"ok": False, "reason": f"4.x 通道模块不可用：{exc}"}
+    status = wechat4_live.quick_status()
+    if not status["running"]:
         return {"ok": False, "reason": "Weixin.exe 没在运行；4.x 的密钥只在运行时存在，请先登录微信"}
-    storages = db_roots()
-    if not storages:
+    if not status["storages"]:
         return {"ok": False, "reason": "没找到 xwechat_files 数据目录；确认装的是微信 4.x 并登录过"}
-    scan = scan_keys(process.pid, max_seconds=max_seconds)
-    if not scan["keys"]:
-        return {"ok": False, "reason": scan.get("error") or "内存里没找到 x'…' 形式的密钥",
-                "scanned_mb": scan.get("scanned_mb")}
-    storage = storages[0]
-    unlocked = unlock(storage, scan["keys"])
+    started = time.monotonic()
+    try:
+        state = wechat4_live.refresh(budget=max_seconds)
+    except Exception as exc:                         # noqa: BLE001
+        return {"ok": False, "reason": str(exc)[:400]}
+    opened = sorted(
+        str(path.relative_to(state.cache))
+        for path in state.cache.rglob("*.db")
+        if path.is_file() and path.parent != state.cache
+    )
     return {
-        "ok": bool(unlocked["opened"]),
-        "pid": process.pid,
-        "storage": str(storage),
-        "keys_found": len(scan["keys"]),
-        "scanned_mb": scan.get("scanned_mb"),
-        "opened": list(unlocked["opened"].keys()),
-        "failed": unlocked["failed"],
-        "seconds": unlocked["seconds"],
+        "ok": bool(opened) and not state.failed,
+        "pid": (status["pids"] or [0])[0],
+        "storage": str(state.storage),
+        "cache": str(state.cache),
+        "keys_found": len(state.keys),
+        "key_source": state.key_source or "缓存",
+        "opened": opened,
+        "failed": state.failed,
+        "refreshed": state.refreshed,
+        "skipped": state.skipped,
+        "seconds": round(time.monotonic() - started, 1),
     }

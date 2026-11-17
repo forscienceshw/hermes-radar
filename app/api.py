@@ -522,6 +522,76 @@ def wechat_accounts(q: str = "", category: str = "", fit: str = "", enabled: str
     return {"total": total, "items": rows, "stats": stats or {}}
 
 
+@app.post("/api/wechat/accounts/sync-local")
+def sync_local_wechat_accounts() -> dict[str, Any]:
+    """把本机微信里「我关注的全部公众号」灌进公众号库，默认一个都不追踪。
+
+    4.x 走 wechat4_live（库在 xwechat_files、按会话分表）；读不到就回退到 3.x 的
+    Contact 表。新装环境必须走这一步：先让用户看见自己关注了什么，再由他自己勾选——
+    自动按分类勾选会把资料库变成垃圾场，所以 enabled 一律 0。
+    """
+    from .services import wechat4_live, wechat_self_archive
+
+    rows: list[dict[str, Any]] = []
+    channel = ""
+    detail: dict[str, Any] = {}
+    try:
+        state = wechat4_live.refresh()
+        rows = wechat4_live.account_rows()
+        if rows:
+            channel = "4.x"
+            detail = {"storage": str(state.storage), "refreshed": state.refreshed}
+    except Exception:                                # noqa: BLE001 - 没有 4.x 就走 3.x
+        rows = []
+    if not rows:
+        try:
+            _, root, key = wechat_self_archive._account_and_key()
+            directory = wechat_self_archive._official_account_directory(root, key)
+        except Exception as exc:                     # noqa: BLE001
+            raise HTTPException(400, f"读取本机微信公众号失败：{exc}") from exc
+        rows = [{"name": info["name"], "account_id": user, "description": ""}
+                for user, info in directory.items()]
+        channel = "3.x"
+    if not rows:
+        raise HTTPException(
+            400,
+            "本机微信里没读到公众号。请确认微信已登录并保持运行，"
+            "且在微信里打开过一次「订阅号消息」后重试。")
+    inserted = updated = 0
+    timestamp = now_iso()
+    with db.transaction() as conn:
+        for row in rows:
+            existing = conn.execute(
+                "SELECT id FROM wechat_accounts WHERE name=? COLLATE NOCASE",
+                (row["name"],)).fetchone()
+            if existing:
+                conn.execute(
+                    """UPDATE wechat_accounts SET
+                        account_id=CASE WHEN ?<>'' THEN ? ELSE account_id END,
+                        description=CASE WHEN description='' THEN ? ELSE description END,
+                        updated_at=? WHERE id=?""",
+                    (row["account_id"], row["account_id"], row.get("description") or "",
+                     timestamp, existing[0]))
+                updated += 1
+            else:
+                conn.execute(
+                    """INSERT INTO wechat_accounts
+                        (name,account_id,category_code,fit,reason,description,enabled,created_at,updated_at)
+                        VALUES(?,?,?,?,?,?,0,?,?)""",
+                    (row["name"], row["account_id"], "OTHER", "OPTIONAL",
+                     "本机微信同步，尚未判断是否要追踪", row.get("description") or "",
+                     timestamp, timestamp))
+                inserted += 1
+    db.add_event(
+        "wechat_accounts_synced",
+        f"从本机微信同步公众号（{channel}）：新增 {inserted} 个、更新 {updated} 个；"
+        f"默认全部不追踪，请自己勾选")
+    total = db.one("SELECT COUNT(*) c FROM wechat_accounts")["c"]
+    enabled = db.one("SELECT COUNT(*) c FROM wechat_accounts WHERE enabled=1")["c"]
+    return {"ok": True, "channel": channel, "found": len(rows), "inserted": inserted,
+            "updated": updated, "total": total, "enabled": enabled, **detail}
+
+
 @app.patch("/api/wechat/accounts/{account_pk}")
 def update_wechat_account(account_pk: int, data: WeChatAccountPatch) -> dict[str, Any]:
     row = db.one("SELECT * FROM wechat_accounts WHERE id=?", (account_pk,))
@@ -724,13 +794,21 @@ def items(q: str = "", kind: str = "", status: str = "", limit: int = 50, offset
                                      until=until or None, collection=collection or None,
                                      status="filtered")
     busy: dict[str, str] = {}
-    for job in db.query("""SELECT kind,state,payload_json FROM jobs
+    for job in db.query("""SELECT kind,state,payload_json,last_error FROM jobs
         WHERE state IN ('LEASED','READY','RETRY_WAIT') AND kind IN ('archive_item','papers_item','analyze_item')
         ORDER BY (state='LEASED') DESC, created_at"""):
         payload = json_loads(job["payload_json"], {}) or {}
         item_id = payload.get("item_id")
         if item_id and item_id not in busy:
-            busy[item_id] = "analyze" if job["kind"] == "analyze_item" else "archive"
+            reason = str(job.get("last_error") or "")
+            if job["kind"] == "analyze_item":
+                busy[item_id] = "analyze"
+            elif "人机验证" in reason or "微信验证" in reason:
+                # 被微信挡住的不是「正在归档」，是「在等微信放行」——
+                # 两种状态混在一起，用户只会觉得软件卡死了。
+                busy[item_id] = "verify"
+            else:
+                busy[item_id] = "archive"
     membership = db.collection_ids_for("item", [row["id"] for row in rows])
     for row in rows:
         row["active_job"] = busy.get(row["id"])
@@ -750,7 +828,15 @@ def item_detail(item_id: str) -> dict[str, Any]:
         WHERE kind IN ('archive_item','papers_item','analyze_item')
         AND json_extract(payload_json,'$.item_id')=? ORDER BY updated_at DESC""", (item_id,))
     active = bool(job) and job["state"] in {"LEASED", "READY", "RETRY_WAIT"}
-    item["active_job"] = ("analyze" if job["kind"] == "analyze_item" else "archive") if active else None
+    reason = str((job or {}).get("last_error") or "")
+    if not active:
+        item["active_job"] = None
+    elif job["kind"] == "analyze_item":
+        item["active_job"] = "analyze"
+    elif "人机验证" in reason or "微信验证" in reason:
+        item["active_job"] = "verify"
+    else:
+        item["active_job"] = "archive"
     item["last_job"] = ({"kind": job["kind"], "state": job["state"], "updated_at": job["updated_at"],
                          "error": job["last_error"]} if job else None)
     item["papers"] = db.query("""SELECT p.*,ip.evidence FROM papers p JOIN item_papers ip ON p.id=ip.paper_id
@@ -780,6 +866,29 @@ async def verify_source(item_id: str) -> dict[str, Any]:
     return {"exists": result["exists"], "reason": result["reason"], "archived": has_archive,
             "kept": bool(has_archive), "excluded": bool(fresh and fresh["excluded_at"]),
             "exclusion_reason": (fresh or {}).get("exclusion_reason") if fresh else None}
+
+
+@app.post("/api/items/retry-archives")
+def retry_wechat_archives() -> dict[str, Any]:
+    """把所有没拿到正文的公众号文章重新排一次归档。
+
+    微信的风控是按 IP 段、按时间段放的：它放开之后，用户需要一个「重来一次」的
+    按钮，而不是一条条点开详情。
+    """
+    rows = db.query("""SELECT id,title FROM items
+        WHERE kind='article' AND excluded_at IS NULL
+          AND canonical_url LIKE '%mp.weixin.qq.com%'
+          AND status IN ('discovered','insufficient','error')""")
+    queued = 0
+    for row in rows:
+        db.execute("DELETE FROM jobs WHERE kind='archive_item' AND state IN ('READY','RETRY_WAIT','DEAD')"
+                   " AND json_extract(payload_json,'$.item_id')=?", (row["id"],))
+        db.execute("UPDATE items SET status='discovered', error=NULL WHERE id=?", (row["id"],))
+        if db.enqueue_job("archive_item", {"item_id": row["id"]}, priority=120, max_attempts=4):
+            queued += 1
+    if queued:
+        db.add_event("wechat_archive_retry", f"手动重试公众号归档：重新排队 {queued} 条")
+    return {"queued": queued, "considered": len(rows)}
 
 
 @app.get("/api/items/{item_id}/archive", response_class=HTMLResponse)

@@ -20,6 +20,9 @@ DEFAULTS: dict[str, Any] = {
     "default_poll_seconds": 300,
     "request_timeout_seconds": 35,
     "max_html_mb": 25,
+    # 留空 = 直连。有些站点（微信文章页尤其明显）按 IP 段上风控，换出口是唯一
+    # 有效的解法：填 http://host:port 或 socks5://user:pass@host:port 即可。
+    "http_proxy": "",
     # 图片是磁盘占用的大头：40 张 × 15 MB 的上限意味着一篇长图文能吃掉几百 MB，
     # 而真正会回看的通常只有开头几张图。
     "max_images_per_article": 12,

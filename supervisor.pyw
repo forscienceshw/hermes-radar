@@ -68,6 +68,10 @@ def launch(module, log_file):
     env = os.environ.copy()
     env["PYTHONPATH"] = str(BASE)
     env["PYTHONUNBUFFERED"] = "1"
+    # 这台机器给 python 挂了「删除即入回收站」的垫片：采集器每轮给 PublicMsg.db
+    # 做一份临时快照、跑完删掉，SQLite 每次开关连接也删 -shm，一天能在回收站堆
+    # 三千多条。正式实例删的全是自己的临时副本，不需要回收站兜底，显式关掉。
+    env["CODEBUDDY_SAFE_DELETE_ENABLED"] = "0"
     env.setdefault("TEMP", str(BASE / ".tmp"))
     env.setdefault("TMP", str(BASE / ".tmp"))
     env.setdefault("XDG_CACHE_HOME", str(BASE / ".cache"))

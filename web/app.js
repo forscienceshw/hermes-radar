@@ -290,7 +290,7 @@ async function loadItems(){
   if(itemPage>pages&&itemTotal){itemPage=pages;return loadItems()}
   $('#itemsList').innerHTML=rows.map(x=>{
     const tags=JSON.parse(x.tags_json||'[]'),stage=itemStage(x);
-    const jobBadge=x.active_job?` <span class="badge wait"><span class="spin"></span>${x.active_job==='analyze'?'精读中':'归档中'}</span>`:'';
+    const jobBadge=x.active_job?` <span class="badge wait"><span class="spin"></span>${x.active_job==='analyze'?'精读中':x.active_job==='verify'?'等微信放行':'归档中'}</span>`:'';
     const chips=(x.collections||[]).map(id=>{const name=collectionName('library',id);return name?`<span class="collection-chip">${esc(name)}</span>`:''}).join('');
     const excluded=x.excluded_at?` <span class="badge error" title="${esc(x.exclusion_reason||'')}">${x.exclusion_reason&&x.exclusion_reason.startsWith('手动删除')?'已删除':'已过滤'}</span>`:'';
     const picked=itemPicked.has(x.id)?' checked':'';
@@ -462,7 +462,7 @@ async function showItem(id,silent){
   window.__currentItem=x;
   const progress=x.progress||null;
   const jobLine=x.active_job
-    ? `<div class="notice progress-note"><span class="spin"></span>${x.active_job==='analyze'?'正在调用云模型精读，完成后本页自动刷新…':'正在抓取正文、图片与原始快照…'}</div>`
+    ? `<div class="notice progress-note"><span class="spin"></span>${x.active_job==='analyze'?'正在调用云模型精读，完成后本页自动刷新…':x.active_job==='verify'?'微信要求人机验证，正文暂时抓不到；30 分钟后自动重试，链接和标题都已保留…':'正在抓取正文、图片与原始快照…'}</div>`
     : '';
   const liveLine=progress&&x.active_job?`<div class="notice progress-note"><span class="spin"></span>云模型正在工作：已推理 <b>${progress.reasoning||0}</b> 字、已写出 <b>${progress.content||0}</b> 字，用时 ${progress.elapsed||0} 秒。数字还在涨就说明没有卡住。</div>`:'';
   const deadLine=(!x.active_job&&x.last_job&&x.last_job.state==='DEAD')

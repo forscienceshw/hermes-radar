@@ -58,6 +58,20 @@ class FetchResponse:
         return json.loads(self.content.decode("utf-8-sig"))
 
 
+def _client_options() -> dict[str, Any]:
+    """把设置里的代理接进 httpx。
+
+    有些站点（微信公众号文章页尤其明显）会按 IP 段上风控，换出口是唯一有效的
+    解法，所以给用户一个能填代理的地方，而不是让他去改系统代理。
+    支持 http://host:port / socks5://user:pass@host:port。
+    """
+    try:
+        proxy = str((get_settings() or {}).get("http_proxy") or "").strip()
+    except Exception:                                # noqa: BLE001 - 设置读不到就别用代理
+        return {}
+    return {"proxy": proxy} if proxy else {}
+
+
 async def request(url: str, method: str = "GET", max_bytes: int = 25_000_000,
                   headers: dict[str, str] | None = None, json_body: Any = None,
                   form_body: dict[str, Any] | None = None, timeout: float | None = None,
@@ -66,7 +80,8 @@ async def request(url: str, method: str = "GET", max_bytes: int = 25_000_000,
     current_headers = {"User-Agent": USER_AGENT, **(headers or {})}
     original_host = urlsplit(current).hostname
     timeout = timeout or float(get_settings()["request_timeout_seconds"])
-    async with httpx.AsyncClient(follow_redirects=False, timeout=timeout) as client:
+    async with httpx.AsyncClient(follow_redirects=False, timeout=timeout,
+                                 **_client_options()) as client:
         for _ in range(max_redirects + 1):
             await asyncio.to_thread(validate_public_url, current)
             async with client.stream(method, current, headers=current_headers, json=json_body, data=form_body) as response:
@@ -122,7 +137,8 @@ async def download_file(url: str, dest, max_bytes: int = 100_000_000,
             current_headers["Range"] = f"bytes={size}-"
         timeout = httpx.Timeout(connect=30.0, read=read_timeout, write=60.0, pool=30.0)
         try:
-            async with httpx.AsyncClient(follow_redirects=False, timeout=timeout) as client:
+            async with httpx.AsyncClient(follow_redirects=False, timeout=timeout,
+                                         **_client_options()) as client:
                 for _ in range(6):
                     await asyncio.to_thread(validate_public_url, current)
                     async with client.stream("GET", current, headers=current_headers) as response:

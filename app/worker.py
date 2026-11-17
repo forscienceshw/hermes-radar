@@ -12,6 +12,7 @@ from .db import Database
 from .logging_config import configure_logging
 from .pipeline import JobRunner
 from .services.notify import QuietHours, merge_closed_batches
+from .services.archive import WechatNeedsVerification
 from .services.relevance import cleanup_existing_items, cleanup_marketing_items, dedupe_duplicate_items
 from .settings import get_settings
 from .utils import json_loads, now_iso, stable_json
@@ -129,6 +130,32 @@ class Worker:
                 # A scheduled wait must not consume the retry budget or the counter
                 # climbs into the hundreds while the job is simply waiting for 20:30.
                 self.db.reschedule_job(job["id"], run_at, reason=str(exc), reset_attempts=True)
+            except WechatNeedsVerification as exc:
+                # 验证页不是「文章坏了」，是这一刻被限流。普通重试次数是给网络抖动用的，
+                # 不能烧在这上面；但也不能无限等，所以自己数「第几轮」，三轮收尾。
+                previous = str(job.get("last_error") or "")
+                seen = 0
+                if previous.startswith("微信验证 #"):
+                    try:
+                        seen = int(previous[len("微信验证 #"):].split("：", 1)[0].strip())
+                    except ValueError:
+                        seen = 0
+                seen += 1
+                if item_id:
+                    self.db.clear_runtime(f"progress:{item_id}")
+                if seen > 3:
+                    self.db.retry_job(job, f"{type(exc).__name__}: {exc}", force_dead=True)
+                    if item_id:
+                        self.db.fail_item(
+                            item_id,
+                            "微信连续 3 轮人机验证拦截，正文还是没拿到；链接和标题已保留，"
+                            "风控放开后可以在资料库里重新归档",
+                            status="insufficient")
+                else:
+                    minutes = (30, 90, 180)[min(seen - 1, 2)]
+                    run_at = (datetime.now(timezone.utc) + timedelta(minutes=minutes)).isoformat(timespec="milliseconds")
+                    self.db.reschedule_job(job["id"], run_at, reason=f"微信验证 #{seen}：{exc}",
+                                           reset_attempts=True)
             except Exception as exc:
                 log.exception("任务失败 %s", job["id"])
                 text = f"{type(exc).__name__}: {exc}"
