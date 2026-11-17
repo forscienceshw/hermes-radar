@@ -681,6 +681,18 @@ def wechat_account_articles(account_pk: int, limit: int = 24, offset: int = 0, d
         return {**base, "error": "没能把网页上的号名对到微信内部编号：微信里可能没关注它，或者备注名和清单不一致"}
     if channel == "4.x":
         rows = wechat4_live.recent_for(gh_id, limit=min(60, max(1, limit)), days=days)
+        # 4.x 客户端不落盘公众号正文，升级前的历史全在 3.x 的 PublicMsg.db 里。
+        # 两路拼起来才是一个号完整的样子；否则面板上永远是"只有一两条"。
+        try:
+            from .services import wechat3_public
+            legacy = wechat3_public.recent_for(gh_id, limit=min(60, max(1, limit)), days=days)
+        except Exception:                               # noqa: BLE001
+            legacy = []
+        if legacy:
+            merged: dict[str, dict] = {}
+            for row in list(rows) + list(legacy):
+                merged.setdefault(row["canonical_url"], row)
+            rows = sorted(merged.values(), key=lambda item: item["create_time"], reverse=True)
         hint = wechat4_live.session_hint(gh_id)
         articles = [{
             "canonical_url": row["canonical_url"],
@@ -693,13 +705,15 @@ def wechat_account_articles(account_pk: int, limit: int = 24, offset: int = 0, d
             "message_id": row["local_id"],
         } for row in rows[offset:]]
         payload = {"items": articles, "total": len(rows),
+                   "legacy_filled": bool(legacy),
                    "has_more": len(rows) > offset + len(articles)}
         if not articles and hint:
             # 正文没落盘时，会话表里至少还有「最后一条推文的时间」，标题也常常还有
             title = (hint["title"] or "").strip()
             head = (f"微信在 {hint['at_display']} 收到过这个号的推送"
                     + (f"（「{title[:36]}」）" if title else "，标题已被清过"))
-            payload["note"] = head + "，但正文没保存到本地。通道是通的，卡在客户端落盘这一环。"
+            payload["note"] = head + ("，但正文没保存到本地。4.x 客户端只在打开订阅号时"
+                                      "去服务端拉一次，正文不会常驻磁盘。")
         elif hint.get("at") and rows and hint["at"] > rows[0]["create_time"] + 60:
             # 有正文，但更近的那条没存下来——同样得说清楚，别让人以为就这些
             title = (hint["title"] or "").strip()

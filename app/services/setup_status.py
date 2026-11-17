@@ -156,6 +156,18 @@ def _wechat_state() -> dict[str, Any]:
                        f"近 3 小时 {sess['recent']} 个号推过")
             if not sess["recent"] and float(sess["last_ago"]) >= quiet_hours:
                 diagnose["silent"] = round(float(sess["last_ago"]))
+        # 升级前的推文全在 3.x 的那个库里，4.x 客户端永远补不出来。单独报一句，
+        # 免得用户以为"一升级东西就没了"。
+        try:
+            from . import wechat3_public
+            history = wechat3_public.stats()
+        except Exception:                               # noqa: BLE001
+            history = {"ok": False}
+        if history.get("ok"):
+            import time as _h3
+            detail += (f"；升级前的 3.x 库还有 {history['total']} 条，最新到 "
+                       f"{_h3.strftime('%m-%d %H:%M', _h3.localtime(history['newest']))}")
+            diagnose["history"] = history
         if diagnose.get("error"):
             detail += f"（{diagnose['error']}）"
         return {"state": "ready", "version": "4.x", "channel": "4.x",
@@ -223,19 +235,19 @@ def snapshot() -> dict[str, Any]:
          "detail": (
              f"公众号会话最后一次动静是 {session.get('last_display', '—')}，之后 {silent} 小时"
              f"一条都没进来；同一时间私聊还在收（{session.get('chat_display', '—')}）。"
-             "这是电脑微信没在收公众号，不是雷达读不到。三处开关都查一遍："
-             "① 电脑微信 → 左下角设置 → 通知 → 打开「订阅号消息 / 公众号消息」；"
-             "② 手机微信 → 设置 → 新消息通知 → 确认「订阅号消息」是开的；"
-             "③ 电脑微信 → 帮助与反馈 → 右上小扳手 → 故障修复 →「订阅号消息」，"
-             "修完退出微信重新登录。"
+             "微信 4.x 不会主动把公众号推文存到本地，得让它去服务端拉一次。三个入口任选一个："
+             "① 电脑微信「通讯录 → 公众号」，随便点开一个号再返回"
+             "（这一步最稳，1714 个号都在这儿）；"
+             "② 聊天列表顶部搜索框输入「订阅号」，点那条「订阅号消息」再往下拉；"
+             "③ 左侧竖排图标里找书本/报纸形状的「订阅号」。"
+             "拉过一次之后雷达每 30 秒就能自动跟上，不用再点。"
              if silent else
              f"{wechat_detail}。微信已经 {stalled} 小时没往公众号库里写过东西了——"
-             "客户端自己没在收，不是雷达读不到。在电脑微信点开一次「订阅号消息」"
+             "客户端自己没在收，不是雷达读不到。照上面的入口点开一次「订阅号消息」"
              "并往下拉，再点这里的「重新检查」"
              if stalled else
-             (wechat_detail + "。微信升级后本地只留了最近几小时的公众号正文，"
-                              "在微信里点开一次「订阅号消息」让它从服务端拉一遍，"
-                              "这里就会涨上去") if thin else wechat_detail)},
+             (wechat_detail + "。微信 4.x 只在打开订阅号时去服务端拉，"
+                              "点开一次「订阅号消息」并往下拉，这里就会涨上去") if thin else wechat_detail)},
         {"id": "llm", "label": "大模型精读", "state": "ok" if llm["configured"] else "warn",
          "detail": "已配置" if llm["configured"] else ("未填 Key" if llm["needs_key"] else "未启用")},
         {"id": "notify", "label": "汇报渠道", "state": "ok" if notify["configured"] else "warn",

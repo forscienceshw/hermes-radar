@@ -585,6 +585,67 @@ def _wechat4_window(previous: dict[str, Any], config: dict[str, Any],
     return max(min(value, now - 60), now - catchup * 86400)
 
 
+def _wechat3_history_candidates(source: dict[str, Any], config: dict[str, Any],
+                                previous: dict[str, Any], allowed: set[str],
+                                excluded: set[str], names: dict[str, str],
+                                enforce_allowlist: bool) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """3.x 的 ``PublicMsg.db``：升级到 4.x 之后不再增长，但升级前的历史一条没丢。
+
+    4.x 只在"用户打开订阅号消息"时才拉一批，所以升级之后 ``biz_message_*``
+    可能长时间没有新内容 —— 这个通道就是拿来补上"升级之前那段时间"的。
+    它有自己的 ``localId`` 游标，不受 4.x 那套 ``last_create_time`` 影响。
+    """
+    from . import wechat3_public
+
+    state = previous.get("wechat3") if isinstance(previous.get("wechat3"), dict) else {}
+    try:
+        snap = wechat3_public.snapshot()
+    except Exception as exc:                             # noqa: BLE001
+        return [], {"available": False, "reason": f"{type(exc).__name__}: {exc}"}
+    if not snap:
+        return [], {"available": False,
+                    "reason": "没有 3.x 的 PublicMsg.db，或 wechat_db_key 已失效"}
+
+    max_rows = max(20, min(5000, int(config.get("max_rows_per_poll", 1000))))
+    after = int(state.get("local_id") or 0)
+    since: int | None = None
+    if not after:
+        # 第一次接上：按配置的天数回填，而不是从 2023 年一路灌下来。
+        days = max(1, min(365, int(config.get("initial_backfill_days", 7) or 7)))
+        since = int(time.time()) - days * 86400
+    try:
+        rows = wechat3_public.articles(since_ts=since, after_local_id=after,
+                                       limit=max_rows, snap=snap)
+    except Exception as exc:                             # noqa: BLE001
+        return [], {"available": False, "reason": f"{type(exc).__name__}: {exc}"}
+
+    newest = after
+    candidates: list[dict[str, Any]] = []
+    for item in rows:
+        talker = item["user_name"]
+        newest = max(newest, int(item["local_id"]))
+        if (enforce_allowlist and talker not in allowed) or talker in excluded:
+            continue
+        candidates.append({
+            "source_id": source["id"], "kind": "article",
+            "url": item["url"], "canonical_url": canonical_url(item["url"]),
+            "external_key": f"public3:{talker}:{item['local_id']}",
+            "title": item["title"] or item["url"],
+            "author": names.get(talker, item.get("account") or talker),
+            "published_at": epoch_iso(item["create_time"]),
+            "metadata": {"share_channel": "wechat_public_local", "wechat_version": "3.x-history",
+                         "wechat_account_id": talker,
+                         "public_message_id": item["local_id"],
+                         "description": item.get("digest", ""),
+                         "catalog_matched": talker in allowed},
+        })
+    return candidates, {"available": True, "local_id": newest,
+                        "scanned": len(rows), "kept": len(candidates),
+                        "backfill_days": (max(1, min(365, int(config.get("initial_backfill_days", 7) or 7)))
+                                          if since else None),
+                        "source": str(snap["source"]), "cached": snap["cached"]}
+
+
 def _wechat4_public_candidates(module, source: dict[str, Any], config: dict[str, Any],
                                previous: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     directory = module.oa_directory()
@@ -631,15 +692,24 @@ def _wechat4_public_candidates(module, source: dict[str, Any], config: dict[str,
                          "description": item["digest"],
                          "catalog_matched": talker in catalog_matched},
         })
+    # 升级前的历史走 3.x 的 PublicMsg.db：4.x 客户端不落盘公众号正文，
+    # 光等 biz_message_* 会一直空着，而那边的库一条没丢。
+    history, history_cursor = _wechat3_history_candidates(
+        source, config, previous, allowed, excluded, names, enforce_allowlist)
+    candidates.extend(history)
+
     cursor = {"initialized": True, "wechat_version": "4.x",
               "last_create_time": max(newest, int(previous.get("last_create_time") or 0)),
               "catalog_fingerprint": fingerprint,
               "tracked_accounts": len(effective),
               "last_read_at": now_iso(), "matched_links": len(candidates),
               "catalog_matched_accounts": len(catalog_matched),
-              "catalog_unmatched_names": unmatched, "warnings": []}
+              "catalog_unmatched_names": unmatched, "warnings": [],
+              "wechat3": history_cursor}
     if not effective:
         cursor["warnings"].append("还没有勾选要追踪的公众号，本批不采集任何推文")
+    if not history_cursor.get("available"):
+        cursor["warnings"].append(f"3.x 历史库不可用：{history_cursor.get('reason', '未知原因')}")
     return candidates, cursor
 
 
