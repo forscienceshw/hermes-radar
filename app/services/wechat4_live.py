@@ -1158,7 +1158,52 @@ def diagnose(days: int = 7, samples: int = 5) -> dict[str, Any]:
         "newest": time.strftime("%Y-%m-%d %H:%M", time.localtime(newest)) if newest else "",
         "shards": shards,
         "samples": picked,
+        "pushes": push_summary(days, cache=cache),
     }
+
+
+def push_summary(days: int = 7, cache: Path | None = None, samples: int = 3) -> dict[str, Any]:
+    """微信**收到**了多少公众号推送——以会话列表为准，和正文分开报。
+
+    微信 4.x 把会话列表（每个号最后一条的标题、时间、未读数）同步到本地，但正文
+    只留在最近打开过的那几个号里；升级重装后更是只剩最近几小时。所以"读到 0 篇"
+    有两种完全不同的原因：一种是雷达读错了通道或分片，另一种是微信自己就没存。
+    只看正文数量分辨不出来，两条一起报就一目了然。
+
+    只读 session.db（几 MB），不碰消息库，所以可以每次体检都跑。
+    """
+    cache = cache or DEFAULT_CACHE
+    path = cache / "session" / "session.db"
+    result: dict[str, Any] = {"accounts": 0, "latest": "", "latest_account": "", "samples": []}
+    if not path.is_file():
+        return result
+    since = int(time.time() - days * 86400)
+    names = account_names(cache)
+    hits: list[tuple[int, str, str]] = []
+    try:
+        con = _connect(path)
+        con.row_factory = sqlite3.Row
+        try:
+            for row in con.execute(
+                    'SELECT username, last_timestamp, summary FROM SessionTable '
+                    'WHERE username LIKE "gh_%"'):
+                stamp = int(row["last_timestamp"] or 0)
+                if stamp >= since:
+                    hits.append((stamp, str(row["username"]), str(row["summary"] or "")))
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return result
+    hits.sort(reverse=True)
+    result["accounts"] = len(hits)
+    if hits:
+        stamp, username, summary = hits[0]
+        result["latest"] = time.strftime("%m-%d %H:%M", time.localtime(stamp))
+        result["latest_account"] = names.get(username, username)
+        result["samples"] = [{"account": names.get(u, u), "title": s[:40],
+                              "at": time.strftime("%m-%d %H:%M", time.localtime(t))}
+                             for t, u, s in hits[:samples]]
+    return result
 
 
 def _mtime(path: Path) -> float:

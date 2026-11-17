@@ -112,6 +112,52 @@ class DiagnoseTests(unittest.TestCase):
         self.assertEqual(result["shards"], [])
 
 
+class PushSummaryTests(unittest.TestCase):
+    """会话列表和正文必须分开报，否则"读到 0 篇"分不清是谁的问题。"""
+
+    def _cache(self, root: Path) -> Path:
+        import sqlite3
+        cache = root / "wechat4"
+        (cache / "session").mkdir(parents=True)
+        (cache / "contact").mkdir(parents=True)
+        now = int(time.time())
+        con = sqlite3.connect(str(cache / "session" / "session.db"))
+        con.execute("CREATE TABLE SessionTable (username, last_timestamp, summary)")
+        con.executemany("INSERT INTO SessionTable VALUES (?,?,?)", [
+            ("gh_recent", now - 600, "刚推的一篇"),
+            ("gh_week", now - 3 * 86400, "三天前那篇"),
+            ("gh_old", now - 40 * 86400, "早过期了"),
+            ("wxid_friend", now - 60, "私聊不算公众号"),
+        ])
+        con.commit()
+        con.close()
+        con = sqlite3.connect(str(cache / "contact" / "contact.db"))
+        con.execute("CREATE TABLE contact (username, remark, nick_name, alias)")
+        con.executemany("INSERT INTO contact VALUES (?,?,?,?)", [
+            ("gh_recent", "", "生物谷", ""),
+            ("gh_week", "", "BioArt", ""),
+            ("gh_old", "", "老号", ""),
+        ])
+        con.commit()
+        con.close()
+        return cache
+
+    def test_counts_recent_pushes_and_names_them(self) -> None:
+        with TemporaryDirectory() as tmp:
+            cache = self._cache(Path(tmp))
+            result = live.push_summary(days=7, cache=cache)
+        # 只数 gh_，40 天前那个和私聊都不算
+        self.assertEqual(result["accounts"], 2)
+        self.assertEqual(result["latest_account"], "生物谷")
+        self.assertEqual([item["account"] for item in result["samples"]], ["生物谷", "BioArt"])
+
+    def test_missing_session_db_is_not_an_error(self) -> None:
+        with TemporaryDirectory() as tmp:
+            result = live.push_summary(days=7, cache=Path(tmp) / "nothing")
+        self.assertEqual(result["accounts"], 0)
+        self.assertEqual(result["samples"], [])
+
+
 class SpaceTests(unittest.TestCase):
     def test_on_c_only_matches_system_drive(self) -> None:
         from app.services import wechat_space

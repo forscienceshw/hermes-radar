@@ -128,6 +128,15 @@ def _wechat_state() -> dict[str, Any]:
             detail += f"，命中追踪名单 {diagnose['tracked_hits']} 篇"
         elif diagnose.get("newest"):
             detail += f"，最新 {diagnose['newest'][5:]}"
+        # 微信收到多少 vs 我们能读到多少。两个数差得远，说明是客户端没存正文
+        # （升级重装后 4.x 只导入了最近几小时），不是雷达没读到——必须写清楚，
+        # 否则用户只看到一个绿点却在资料库里找不到东西。
+        pushes = diagnose.get("pushes") or {}
+        if pushes.get("accounts"):
+            detail += (f"；同期微信里 {pushes['accounts']} 个号推过，"
+                       f"本地只留下了 {diagnose.get('articles', 0)} 篇正文")
+            if diagnose.get("articles", 0) < pushes["accounts"] // 4:
+                diagnose["thin"] = True
         if diagnose.get("error"):
             detail += f"（{diagnose['error']}）"
         return {"state": "ready", "version": "4.x", "channel": "4.x",
@@ -165,6 +174,9 @@ def snapshot() -> dict[str, Any]:
     accounts = _account_info()
 
     wechat_ok = wechat["state"] in {"ready", "offline"}
+    # 通道通、但微信本地只存了零星正文 → 这一项给黄灯而不是绿灯。绿灯会让人以为
+    # "都好了"，可资料库里就是没东西；黄灯配一句能照做的提示才有用。
+    thin = bool((wechat.get("diagnose") or {}).get("thin"))
     if wechat["state"] == "unsupported-4x":
         wechat_detail = "微信 4.x 尚未适配，暂时读不到它的数据库"
     elif wechat["state"] == "ready":
@@ -183,8 +195,11 @@ def snapshot() -> dict[str, Any]:
          "detail": f"127.0.0.1:{settings.get('port')} · 版本 {project_version()}"},
         {"id": "worker", "label": "后台处理进程", "state": "ok" if db.get("worker_alive") else "warn",
          "detail": "心跳正常" if db.get("worker_alive") else "没有心跳，抓取和精读会停住"},
-        {"id": "wechat", "label": "微信数据读取", "state": "ok" if wechat_ok else "warn",
-         "detail": wechat_detail},
+        {"id": "wechat", "label": "微信数据读取",
+         "state": "warn" if (thin or not wechat_ok) else "ok",
+         "detail": (wechat_detail + "。微信升级后本地只留了最近几小时的公众号正文，"
+                                  "在微信里点开一次「订阅号消息」让它从服务端拉一遍，"
+                                  "这里就会涨上去") if thin else wechat_detail},
         {"id": "llm", "label": "大模型精读", "state": "ok" if llm["configured"] else "warn",
          "detail": "已配置" if llm["configured"] else ("未填 Key" if llm["needs_key"] else "未启用")},
         {"id": "notify", "label": "汇报渠道", "state": "ok" if notify["configured"] else "warn",
