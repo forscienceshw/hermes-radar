@@ -111,7 +111,7 @@ def _trash_module():
     return module
 
 
-def sweep_trash() -> int:
+def sweep_trash(prefixes: list[str] | None = None) -> int:
     """把回收站里**本项目目录下**的记录彻底删掉，返回清掉的条数。
 
     为什么会有这些记录：应用删临时文件时，有一部分删除是 CPython / sqlite3 内部
@@ -119,12 +119,13 @@ def sweep_trash() -> int:
     会把它们塞进回收站，一天几十条。删的是我们自己刚造出来的文件，回收站留副本
     没有任何意义。
 
-    只按 `BASE_DIR` / `DATA_DIR` 前缀匹配——别的软件、用户自己的文件一条都不碰。
+    只按 `BASE_DIR` / `DATA_DIR`（或调用方显式给的前缀）匹配——别的软件、用户
+    自己的文件一条都不碰。
     """
     module = _trash_module()
     if module is None:
         return 0
-    prefixes = [str(BASE_DIR), str(DATA_DIR)]
+    prefixes = [str(item) for item in (prefixes or [BASE_DIR, DATA_DIR])]
     try:
         items = [item for item in module.entries()
                  if module._matches(item["original"], prefixes)]

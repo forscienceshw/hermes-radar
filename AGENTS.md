@@ -88,6 +88,9 @@ python radar.py save "一句话说清改了什么"     # 存
   （`purge.remove()` / `purge.unlink()`）。它直接调 `SHFileOperationW` 且不带
   `FOF_ALLOWUNDO`，不经过 Python 那层垫片。
 - 命令行里批量删构建产物、临时目录、测试残留，走 `python tools/trash.py wipe <路径>`。
+- 跑测试必须带 `-t .`：`python -m unittest discover -s tests -t .`。少了它，模块会
+  以顶层名导入，`tests/__init__.py` 那把"扫回收站"的钩子根本不执行，一趟全量
+  测试就往回收站塞四百多条 `test.db-shm`。
 - 收尾跑一次 `python radar.py tidy`：清 `.tmp`，再把回收站里属于本项目的条目直删。
 - 用户自己删的东西（桌面文件、录屏、网盘资料）不在此列，**不要**替他清。
 

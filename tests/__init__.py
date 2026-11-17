@@ -11,7 +11,11 @@
 """
 from __future__ import annotations
 
+import atexit
+import gc
 import tempfile
+import time
+from pathlib import Path
 
 try:
     from app.services import purge
@@ -29,3 +33,39 @@ if purge is not None and hasattr(tempfile.TemporaryDirectory, "_rmtree"):
         _original(name, ignore_errors=ignore_errors)
 
     tempfile.TemporaryDirectory._rmtree = staticmethod(_rmtree)
+
+
+# 上面那层只管得住 TemporaryDirectory。SQLite 自己在关闭连接时删 `-shm` /
+# `-journal` 走的是 CPython 的 `os.unlink`，垫片照样接管——一趟全量测试能留下
+# 四百多条。测试跑完统一扫一次，只认本项目前缀，别的软件一条不碰。
+_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _sweep_trash(rounds: int = 3) -> None:
+    """先把还没关闭的连接收掉，再扫。
+
+    sqlite3 的 `-shm` / `-journal` 是在连接对象被回收时才删的，而解释器退出时的
+    回收发生在 atexit 之后——不先 `gc.collect()` 一次，扫的是还没生成的条目。
+    剩下几条第下次进来再扫，净增量为零。
+    """
+    try:
+        from app.services import backup
+    except Exception:                                # noqa: BLE001
+        return
+    for index in range(max(1, rounds)):
+        try:
+            gc.collect()
+        except Exception:                            # noqa: BLE001
+            pass
+        try:
+            backup.sweep_trash(prefixes=[str(_ROOT)])
+        except Exception:                            # noqa: BLE001 - 清扫失败不许影响测试结果
+            pass
+        if index + 1 < rounds:
+            time.sleep(0.2)
+
+
+if purge is not None:
+    # 上一次跑剩下的一两条，这次进来先扫掉，免得越攒越多
+    _sweep_trash(rounds=1)
+    atexit.register(_sweep_trash)
