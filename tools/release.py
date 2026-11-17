@@ -186,7 +186,8 @@ def build() -> Path:
     say("③ 打安装包（PyInstaller，约两分钟）")
     builder = Path("E:/HermesRadarBuild/.venv/Scripts/python.exe")
     python = str(builder) if builder.is_file() else sys.executable
-    result = subprocess.run([python, "tools/build_exe.py", "--setup"], cwd=str(ROOT),
+    # 必须两个一起打：--setup 只是把已有的 Radar.exe 塞进安装包，dist/exe 被清空过就没有它。
+    result = subprocess.run([python, "tools/build_exe.py"], cwd=str(ROOT),
                             text=True, encoding="utf-8", errors="replace", capture_output=True)
     if result.returncode != 0:
         say((result.stdout or "")[-3000:])
