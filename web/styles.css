@@ -441,3 +441,11 @@ body.viewer-open{overflow:hidden}
    徽标、进度条、更新按钮都靠 hidden 控制显隐，漏了这条就会一直显示"有新版本"。
    这条必须放最后。 */
 [hidden]{display:none!important}
+
+/* 微信文件与 C 盘：一行一个键值，右侧给判定 */
+.space-row{display:grid;grid-template-columns:132px 1fr auto;gap:10px;align-items:baseline;padding:7px 0;border-bottom:1px solid #eef2f4;font-size:13px}
+.space-row:last-of-type{border-bottom:0}
+.space-row span{color:#697482}
+.space-row b{font-weight:500;color:#2f3a45;word-break:break-all}
+.space-row i{font-style:normal;color:#15966d;white-space:nowrap}
+.warn-text{margin:10px 0 0;padding:9px 12px;background:#fff8e6;border:1px solid #f0dcae;border-radius:7px;color:#7a5410;font-size:12.5px;line-height:1.6}

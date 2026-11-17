@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from ..paths import BASE_DIR, DATA_DIR
+from ..paths import BASE_DIR, DATA_DIR, TMP_DIR
 from ..settings import get_secret, set_secret
 from ..utils import canonical_url, epoch_iso, extract_urls, json_loads, now_iso, parse_time
 
@@ -42,7 +42,7 @@ def _scratch_dir(prefix: str):
     escapes the context manager entirely.  Losing a temp copy is harmless; failing
     to read the user's messages over it is not.
     """
-    path = Path(tempfile.mkdtemp(prefix=prefix, dir=ARCHIVE_DIR))
+    path = Path(tempfile.mkdtemp(prefix=prefix, dir=TMP_DIR))
     try:
         yield path
     finally:
@@ -456,12 +456,88 @@ def read_self_chat_links() -> list[dict[str, Any]]:
 # --------------------------------------------------------------------------- #
 # 3.x 那条路依赖 WeChat Files\Msg\*.db；4.x 的库在 xwechat_files\<账号>\db_storage，
 # 按会话分表、正文 zstd 压缩、加密也换了参数。两边只能各走各的，所以在入口处分派。
+def _wechat3_root() -> Path:
+    return Path.home() / "Documents" / "WeChat Files"
+
+
+def _mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
 def _wechat3_present() -> bool:
-    root = Path.home() / "Documents" / "WeChat Files"
+    """3.x 的数据目录还在。注意：升级到 4.x 之后它**仍然在**，不能拿它当"用 3.x"的证据。"""
+    root = _wechat3_root()
     try:
         return root.is_dir() and any(root.iterdir())
     except OSError:
         return False
+
+
+def _wechat3_freshness() -> float:
+    """3.x 公众号库最后一次被写入的时间；读不到就是 0。
+
+    3.x 的库在 `WeChat Files\\<wxid>\\Msg\\PublicMsg.db`，不是根目录下 ——
+    少一层 wxid 就会永远算出 0，进而把通道判定带偏。
+    """
+    root = _wechat3_root()
+    newest = 0.0
+    for database in root.glob("*/Msg/PublicMsg.db"):
+        newest = max(newest, _mtime(database), _mtime(database.with_name(database.name + "-wal")))
+    return newest
+
+
+def _wechat4_freshness() -> float:
+    try:
+        from . import wechat4_live
+    except Exception:                                # noqa: BLE001
+        return 0.0
+    cache = getattr(wechat4_live, "DEFAULT_CACHE", None)
+    if not cache:
+        return 0.0
+    newest = 0.0
+    for path in wechat4_live.message_dbs(cache, "message/biz_message_*.db"):
+        newest = max(newest, _mtime(path), _mtime(path.with_name(path.name + "-wal")))
+    return newest
+
+
+def local_channel() -> str:
+    """这台机器现在该读哪个版本的微信：`"4.x"` / `"3.x"` / `""`。
+
+    只看"目录在不在"会踩坑：升级到 4.x 之后，3.x 的 `Documents\\WeChat Files`
+    仍然在（本机还是一条指向别的盘的软链接），于是每次都被分派去 3.x，去读一份
+    再也不会更新的库 —— 体检显示"已就绪"，新推文却一篇都进不来。判断顺序因此改成：
+
+    1. 4.x 的 Weixin.exe 在跑 → 只能是 4.x（3.x 的读取器这时会直接拒绝）；
+    2. 只有一边有数据 → 那一边；
+    3. 两边都有 → 比公众号库的最后写入时间，谁新用谁。
+
+    调试/测试可以用 `RADAR_WECHAT_CHANNEL=3.x|4.x` 强制指定 —— 单元测试不该被
+    这台机器上装的是哪一代微信影响。
+    """
+    forced = str(os.environ.get("RADAR_WECHAT_CHANNEL") or "").strip().lower()
+    if forced in {"3.x", "4.x"}:
+        return forced
+    four_ok = False
+    four_running = False
+    try:
+        from . import wechat4_live
+        four_running = bool(wechat4_live.quick_status().get("running"))
+        four_ok = wechat4_live.available()
+    except Exception:                                # noqa: BLE001
+        four_ok = False
+    three_ok = _wechat3_present()
+    if four_running and four_ok:
+        return "4.x"
+    if four_ok and not three_ok:
+        return "4.x"
+    if three_ok and not four_ok:
+        return "3.x"
+    if not four_ok and not three_ok:
+        return ""
+    return "4.x" if _wechat4_freshness() >= _wechat3_freshness() else "3.x"
 
 
 def _wechat4():
@@ -487,16 +563,26 @@ def _wechat4_sync(module) -> dict[str, Any]:
             "storage": str(state.storage)}
 
 
-def _wechat4_since(previous: dict[str, Any], config: dict[str, Any]) -> int:
-    """增量窗口下界：上次读到的位置，没有就回填 initial_backfill_days 天。"""
-    value = previous.get("last_create_time")
-    if value:
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            pass
-    days = max(1, min(365, int(config.get("initial_backfill_days", 3) or 3)))
-    return int(time.time() - days * 86400)
+def _wechat4_window(previous: dict[str, Any], config: dict[str, Any],
+                    initial_days: int = 7, catchup_days: int = 30) -> int:
+    """增量窗口下界（unix 秒）。
+
+    平常就是"上次读到哪"，但两种例外要往回补：
+
+    * 没有游标（第一次跑，或刚从 3.x 换到 4.x）→ 回填 `initial_backfill_days` 天；
+    * 电脑关了很久 → 最多回补 `catchup_days` 天。这就是"微信关着/电脑没开期间
+      更新的推文，开机后一并抓回来"的那条路，同时也避免一上来把几年历史灌进库。
+    """
+    now = int(time.time())
+    initial = max(1, min(365, int(config.get("initial_backfill_days", initial_days) or initial_days)))
+    catchup = max(1, min(365, int(config.get("catchup_days", catchup_days) or catchup_days)))
+    try:
+        value = int(previous.get("last_create_time") or 0)
+    except (TypeError, ValueError):
+        value = 0
+    if not value:
+        return now - initial * 86400
+    return max(min(value, now - 60), now - catchup * 86400)
 
 
 def _wechat4_public_candidates(module, source: dict[str, Any], config: dict[str, Any],
@@ -513,9 +599,16 @@ def _wechat4_public_candidates(module, source: dict[str, Any], config: dict[str,
         if enforce_allowlist else []
     fingerprint = hashlib.sha1("|".join(effective).encode("utf-8")).hexdigest()[:16]
     days = max(1, min(365, int(config.get("initial_backfill_days", 7) or 7)))
-    since = int(previous.get("last_create_time") or 0)
-    if previous.get("catalog_fingerprint") != fingerprint or not since:
-        since = int(time.time() - days * 86400)
+    now = int(time.time())
+    if not previous.get("initialized") and config.get("start_at_now", True):
+        # 全新接上的来源（从没初始化过）默认从此刻开始记，不把陈年推文灌进来。
+        # 注意"从 3.x 换到 4.x"不算全新：游标里 initialized 已经为真，这是升级，
+        # 该补的那几天还得补。
+        since = now
+    elif previous.get("catalog_fingerprint") != fingerprint or not previous.get("last_create_time"):
+        since = now - days * 86400
+    else:
+        since = _wechat4_window(previous, config)
 
     articles = module.official_articles(since_ts=since)
     candidates: list[dict[str, Any]] = []
@@ -552,7 +645,7 @@ def _wechat4_public_candidates(module, source: dict[str, Any], config: dict[str,
 
 def _wechat4_self_candidates(module, source: dict[str, Any], config: dict[str, Any],
                              previous: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    since = _wechat4_since(previous, config)
+    since = _wechat4_window(previous, config, initial_days=3)
     items = module.self_links(since_ts=since)
     candidates: list[dict[str, Any]] = []
     newest = since
@@ -575,14 +668,17 @@ def _wechat4_self_candidates(module, source: dict[str, Any], config: dict[str, A
 
 async def poll_wechat_self(source: dict[str, Any], scope: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     config = json_loads(source.get("config_json"), {}) or {}
-    if not _wechat3_present():
+    previous = json_loads(source.get("cursor_json"), {}) or {}
+    if local_channel() == "4.x":
         module = _wechat4()
         if module is not None:
-            previous = json_loads(source.get("cursor_json"), {}) or {}
+            # 先刷新解密缓存再读：否则读到的还是上一次同步的旧快照，
+            # "微信关着的时候进来的消息"要等下一轮才看得到。
+            sync = _wechat4_sync(module)
             candidates, cursor = _wechat4_self_candidates(module, source, config, previous)
-            cursor["sync"] = _wechat4_sync(module)
+            cursor["sync"] = sync
             return _apply_history_policy(candidates, cursor, config, source["id"])
-    candidates, cursor = sync_self_chat(json_loads(source.get("cursor_json"), {}) or {},
+    candidates, cursor = sync_self_chat(previous,
                                         config.get("target_wxid", ""), config.get("target_name", ""))
     return _apply_history_policy(candidates, cursor, config, source["id"])
 
@@ -676,14 +772,17 @@ async def poll_wechat_public_local(source: dict[str, Any], scope: str) -> tuple[
     """Incrementally read selected official accounts from the current PC WeChat."""
     config = json_loads(source.get("config_json"), {}) or {}
     previous = json_loads(source.get("cursor_json"), {}) or {}
-    if not _wechat3_present():
+    if local_channel() == "4.x":
         module = _wechat4()
         if module is not None:
+            # 顺序不能反：refresh 把新写进库里的消息（含 WAL 里还没落盘的）解出来，
+            # 再读才看得到"微信关着那段时间"的推文。
+            sync = _wechat4_sync(module)
             try:
                 candidates, cursor = _wechat4_public_candidates(module, source, config, previous)
             except Exception as exc:                # noqa: BLE001
                 raise RuntimeError(f"微信 4.x 通道读取公众号失败：{exc}") from exc
-            cursor["sync"] = _wechat4_sync(module)
+            cursor["sync"] = sync
             return candidates, cursor
     _, root, key = _account_and_key()
     database = root / "Msg" / "PublicMsg.db"

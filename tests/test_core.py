@@ -30,8 +30,13 @@ class CoreTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(dir=_temp_root())
         self.db = Database(Path(self.temp.name) / "test.db")
+        # 这些用例测的是 3.x 那条路。通道判定会读本机装的是哪一代微信，
+        # 不锁住的话，在装了 4.x 的机器上跑就全跑偏了。
+        self.channel_guard = patch.dict(os.environ, {"RADAR_WECHAT_CHANNEL": "3.x"})
+        self.channel_guard.start()
 
     def tearDown(self):
+        self.channel_guard.stop()
         try:
             self.temp.cleanup()
         except BaseException:            # noqa: BLE001 - the shim raises SystemExit, not Exception

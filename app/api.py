@@ -750,6 +750,61 @@ def wechat_exclude_presets() -> dict[str, Any]:
     return wechat_panel.preset_payload()
 
 
+@app.get("/api/wechat/space")
+def wechat_space_status() -> dict[str, Any]:
+    """微信把文件放哪了、C 盘被占了多少。只读。"""
+    from .services import wechat_space
+    return wechat_space.snapshot()
+
+
+@app.post("/api/wechat/space/fix")
+def wechat_space_fix() -> dict[str, Any]:
+    """补上"就算配置被重置、数据也落不到 C 盘"的那条软链接。"""
+    from .services import wechat_space
+    return wechat_space.ensure()
+
+
+@app.post("/api/wechat/space/clean")
+def wechat_space_clean(data: dict[str, Any] | None = None) -> dict[str, Any]:
+    """回收微信的安装包缓存和旧日志。默认 dry-run，要先看一眼再真删。"""
+    from .services import wechat_space
+    dry_run = True if not data else bool(data.get("apply") is not True)
+    return wechat_space.clean(dry_run=dry_run)
+
+
+@app.get("/api/wechat/diagnostics")
+def wechat_diagnostics(days: int = 7) -> dict[str, Any]:
+    """排障：通道判定、分片读取情况、采集源最后一条错误。"""
+    from .services import wechat4_live
+    from .services.wechat_self_archive import local_channel
+
+    channel = local_channel()
+    payload: dict[str, Any] = {"channel": channel}
+    try:
+        payload["four_x"] = wechat4_live.diagnose(days=max(1, min(90, days)))
+    except Exception as exc:                            # noqa: BLE001
+        payload["four_x"] = {"error": f"{type(exc).__name__}: {exc}"}
+    rows = db.query("SELECT id,name,type,enabled,last_success_at,last_error,cursor_json "
+                    "FROM sources WHERE type IN ('wechat_public_local','wechat_local')")
+    payload["sources"] = [{key: row[key] for key in
+                           ("id", "name", "type", "enabled", "last_success_at", "last_error")}
+                          for row in rows]
+    return payload
+
+
+@app.get("/api/backup")
+def backup_status() -> dict[str, Any]:
+    from .services import backup
+    return backup.status()
+
+
+@app.post("/api/backup/run")
+def backup_run() -> dict[str, Any]:
+    from .services import backup
+    return backup.run(force=True)
+
+
+
 @app.post("/api/wechat/accounts/bulk")
 def bulk_wechat_accounts(data: WeChatAccountBulkInput) -> dict[str, Any]:
     ids = list(dict.fromkeys(int(x) for x in data.ids))

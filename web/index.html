@@ -328,6 +328,18 @@ B站 UP 主：也可使用你自建的 RSSHub 地址，kind 设为 video。</pre
     <div class="panel"><h2>公众号与论文</h2><div class="form-grid two"><label>DataXAPI Key（可选，留空保持不变）<input id="dataxKey" type="password" autocomplete="off"><small id="dataxKeyStatus"></small></label><label>学术 API 联系邮箱<input id="paperEmail" type="email" placeholder="用于 Crossref / Unpaywall 礼貌调用"></label></div></div>
     <h2 class="group-title">高级与诊断</h2>
     <div class="panel"><h2>原文删除识别自检</h2><p class="muted">拿资料库里已经确认被删除的文章、一篇正常文章、一个必然 404 的地址各探测一次，直接告诉你这套判断到底管不管用。也可以在任意条目详情页点「检查原文」单独验证。</p><div class="actions"><button id="goneSelfCheck" type="button">运行自检</button><span id="goneSelfCheckInfo" class="muted"></span></div><div id="goneSelfCheckResult"></div></div>
+    <div class="panel" id="wechatSpacePanel">
+      <h2>微信文件与 C 盘</h2>
+      <p class="muted">微信 4.x 把存储位置写在 <code>%APPDATA%\Tencent\xwechat\config\*.ini</code> 里，升级或重装可能被重置；一重置，聊天文件就回到 C 盘的「文档」下面。这里会盯着它，并在文档目录补一条指向外置盘的兜底链接。</p>
+      <div id="wechatSpaceBody" class="muted">正在检查…</div>
+      <div class="actions">
+        <button id="wechatSpaceRefresh" type="button">重新检查</button>
+        <button id="wechatSpaceFix" type="button">补兜底链接</button>
+        <button id="wechatSpaceClean" type="button">回收安装包缓存</button>
+        <span id="wechatSpaceResult" class="muted"></span>
+      </div>
+    </div>
+
     <div class="panel"><h2>企业微信「微信客服」收件口</h2><p class="muted">用于接收你从微信转发到客服会话的文章链接。企业 ID 和客服账号 ID 在「采集来源」的 wecom_kf 配置中填写；这里只保存专用 Secret。</p><label>微信客服 Secret（留空保持不变）<input id="wecomKfSecret" type="password" autocomplete="off"><small id="wecomKfSecretStatus"></small></label><p class="muted">电脑关机期间的消息可在最近 3 天内于下次启动时补拉；开机后每 30 秒检查一次。</p></div>
     <div class="panel"><h2>B站无字幕视频</h2><div class="form-grid three"><label>本地语音识别<select id="asrEnabled"><option value="false">关闭，仅归档简介</option><option value="true">启用 faster-whisper</option></select></label><label>模型<input id="asrModel" placeholder="small / medium / large-v3"></label><label>最长视频（分钟）<input id="asrDuration" type="number" min="1"></label></div><p class="muted">启用前需在当前 E 盘 Python 环境安装 faster-whisper；模型与音频也只写入 E 盘。</p></div>
     <div class="sticky-save"><span id="settingsResult"></span><button type="submit" class="primary">保存全部设置</button></div>

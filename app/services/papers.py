@@ -14,6 +14,7 @@ from ..db import Database
 from ..net import download_file, get_json
 from ..settings import get_settings
 from ..storage import atomic_write, paper_folder, store_blob_file
+from . import purge
 from ..utils import extract_dois, json_loads, now_iso, stable_json
 
 # 标题相似度低于这个值就当没找到——宁可留着「未发现论文」，也不能挂错一篇。
@@ -253,7 +254,7 @@ async def resolve_and_download(db: Database, paper_id: str) -> None:
         try:
             part_path = folder / "paper.pdf.part"
             if part_path.exists() and part_path.stat().st_size > max_bytes:
-                part_path.unlink()
+                purge.unlink(part_path)
             await download_file(pdf_url, part_path, max_bytes=max_bytes,
                                 headers={"Accept": "application/pdf,*/*;q=0.5",
                                          "Referer": landing_candidates[0] if landing_candidates else f"https://doi.org/{doi}"},

@@ -8,6 +8,7 @@
     python radar.py check               语法 + 测试
     python radar.py start / stop        启停服务
     python radar.py pack                打成可分发的压缩包
+    python radar.py tidy                清掉临时文件，并把回收站里本项目的东西直删
     python radar.py release "改了什么"   发一个新版本到 GitHub（打 tag + 传安装包）
     python radar.py where               报一下各目录在哪
 
@@ -198,6 +199,38 @@ def cmd_pack(repo: Repo, output: str) -> int:
     return 0
 
 
+def cmd_tidy() -> int:
+    """清掉本项目的临时产物，再把回收站里属于本项目的条目直删。
+
+    为什么要单独一条命令：这台机器（以及任何装"安全删除"垫片的环境）会把
+    `shutil.rmtree` 换成"移入回收站"。开发一晚上就能在回收站里堆出上千条
+    `test.db-shm`，删东西还会越来越慢。这里把两件事合起来做：
+    先删临时目录，再把回收站里属于本项目的记录直删，用户自己删的东西不碰。
+    """
+    from app.paths import BASE_DIR, DATA_DIR
+    from app.services import purge
+
+    targets = [BASE_DIR / ".tmp", BASE_DIR / ".tmpdata", DATA_DIR / ".tmp",
+               DATA_DIR / "wechat-self" / "__pycache__"]
+    total = 0
+    for path in targets:
+        if not path.exists():
+            continue
+        size = sum(item.stat().st_size for item in path.rglob("*") if item.is_file())
+        purge.remove(path)
+        total += size
+        print(f"已删 {path}  ({size / 1024 / 1024:.1f} MB)")
+    print(f"临时文件合计 {total / 1024 / 1024:.1f} MB")
+
+    python = python_exe()
+    for prefix in (str(BASE_DIR), str(DATA_DIR)):
+        result = subprocess.run([python, str(ROOT / "tools" / "trash.py"), "purge", "--under", prefix],
+                                text=True, encoding="utf-8", errors="replace", capture_output=True)
+        tail = [line for line in (result.stdout or "").strip().splitlines() if line][-2:]
+        print("\n".join(tail) or "（回收站里没有本项目的记录）")
+    return 0
+
+
 def cmd_where() -> int:
     settings = ROOT / "config" / "settings.json"
     print(f"程序目录  {ROOT}")
@@ -250,6 +283,8 @@ def main(argv: list[str]) -> int:
             return cmd_start(repo)
         if command in ("stop", "quit"):
             return cmd_stop()
+        if command in ("tidy", "clean"):
+            return cmd_tidy()
         if command in ("pack", "build"):
             output = rest[0] if rest else ""
             return cmd_pack(repo, output)

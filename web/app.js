@@ -818,3 +818,55 @@ loadHealth();loadEvents();loadProgress().catch(()=>{});loadCredits().catch(()=>{
   setTimeout(refresh,9000);
   window.refreshUpdateState=refresh;
 })();
+
+/* ---------- 微信文件与 C 盘 ----------
+   微信 4.x 的存储位置在 %APPDATA%\Tencent\xwechat\config\*.ini 里，升级后可能被
+   重置成默认值，一重置就往 C 盘的「文档」下灌。这里只做三件事：看、补一条兜底
+   软链接、回收安装包缓存。不碰聊天记录。 */
+(function(){
+  const body=$('#wechatSpaceBody'),result=$('#wechatSpaceResult');
+  if(!body)return;
+  const gb=n=>(n?`${(n/1024/1024/1024).toFixed(1)} GB`:'0 B');
+  function paint(s){
+    if(!s||s.ok===false){body.textContent='检查失败：'+((s&&s.error)||'拿不到状态');return}
+    const f=s.four_x||{},t=s.three_x||{},sz=s.sizes||{};
+    const rows=[
+      ['微信 4.x 存储', f.root||'（没找到）', f.root?(f.on_c?'在 C 盘 ⚠':'在外置盘 ✓'):''],
+      ['4.x 配置', f.ini||'（没有 ini，按扫描结果推断）', ''],
+      ['文档兜底链接', f.link_target?`${f.link} → ${f.link_target}`:`${f.link}（还没建）`, f.link_target?'✓':'⚠'],
+      ['旧版 3.x', t.link_target?`${t.link} → ${t.link_target}`:t.link, t.on_c?'在 C 盘 ⚠':'✓'],
+      ['C 盘上的微信占用', `4.x ${gb(sz.xwechat)} · 3.x ${gb(sz.wechat3)} · 其它腾讯 ${gb(sz.local_tencent)}`, `剩余 ${gb(s.free_c)}`],
+      ['可回收', gb(s.cleanable), '安装包缓存 + 7 天前日志'],
+    ];
+    body.innerHTML=rows.map(function(r){
+      return `<div class="space-row"><span>${r[0]}</span><b>${r[1]}</b><i>${r[2]||''}</i></div>`;
+    }).join('')+(s.warnings&&s.warnings.length?`<p class="warn-text">${s.warnings.join('；')}</p>`:'');
+  }
+  async function load(){
+    try{paint(await api('/api/wechat/space'))}catch(e){body.textContent='检查失败：'+e.message}
+  }
+  const refreshBtn=$('#wechatSpaceRefresh'),fixBtn=$('#wechatSpaceFix'),cleanBtn=$('#wechatSpaceClean');
+  if(refreshBtn)refreshBtn.onclick=load;
+  if(fixBtn)fixBtn.onclick=async()=>{
+    result.textContent='正在补…';
+    try{
+      const r=await api('/api/wechat/space/fix',{method:'POST',body:{}});
+      const parts=[].concat(r.actions||[],r.errors||[]);
+      result.textContent=parts.length?parts.join('；'):'已经是对的，不用改';
+      if(r.snapshot)paint(r.snapshot);
+    }catch(e){result.textContent='失败：'+e.message}
+  };
+  if(cleanBtn)cleanBtn.onclick=async()=>{
+    result.textContent='正在统计…';
+    try{
+      const dry=await api('/api/wechat/space/clean',{method:'POST',body:{}});
+      const mb=(dry.freed/1024/1024).toFixed(0);
+      if(!dry.freed){result.textContent='没有可回收的东西';return}
+      if(!confirm(`可以回收 ${mb} MB（微信的安装包缓存 + 7 天前的日志）。现在删掉吗？`)){result.textContent='';return}
+      const done=await api('/api/wechat/space/clean',{method:'POST',body:{apply:true}});
+      result.textContent=`已回收 ${(done.freed/1024/1024).toFixed(0)} MB`;
+      load();
+    }catch(e){result.textContent='失败：'+e.message}
+  };
+  load();
+})();

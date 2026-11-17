@@ -28,8 +28,13 @@ BLOB_DIR = DATA_DIR / "blobs"
 DOCUMENT_DIR = DATA_DIR / "documents"
 EXPORT_DIR = DATA_DIR / "exports"
 DB_PATH = DATA_DIR / "radar.db"
+# 临时目录单独放：微信同步这类操作会造出几百兆的库副本，落在 data/ 下会和
+# 归档、备份混在一起，清理时也更容易被当成用户资料。
+TMP_DIR = DATA_DIR / ".tmp"
+BACKUP_DIR = DATA_DIR / "backups"
 SETTINGS_PATH = CONFIG_DIR / "settings.json"
 SECRETS_PATH = CONFIG_DIR / "secrets.dpapi.json"
 
-for directory in (DATA_DIR, CONFIG_DIR, LOG_DIR, BLOB_DIR, DOCUMENT_DIR, EXPORT_DIR):
+for directory in (DATA_DIR, CONFIG_DIR, LOG_DIR, BLOB_DIR, DOCUMENT_DIR, EXPORT_DIR,
+                  TMP_DIR, BACKUP_DIR):
     directory.mkdir(parents=True, exist_ok=True)

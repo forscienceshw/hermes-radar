@@ -27,6 +27,7 @@ from typing import Any, Callable
 import httpx
 
 from .paths import BASE_DIR, DATA_DIR
+from .services import purge
 from .settings import get_settings
 
 REPOSITORY = "forscienceshw/hermes-radar"
@@ -274,7 +275,7 @@ def download(url: str, version: str, expected_sha: str = "", timeout: float = 60
         if expected_sha:
             actual = _sha256(partial)
             if actual != expected_sha:
-                partial.unlink(missing_ok=True)
+                purge.unlink(partial)
                 raise RuntimeError(f"安装包校验不通过（期望 {expected_sha[:12]}… 实际 {actual[:12]}…）")
         partial.replace(target)
         _set_progress(state="done", percent=100, finished_at=time.time())

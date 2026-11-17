@@ -7,6 +7,7 @@ from urllib.parse import urljoin, urlsplit
 
 import httpx
 
+from .services import purge
 from .settings import get_settings
 
 USER_AGENT = "HermesResearchRadar/0.1 (+local personal research archive)"
@@ -176,7 +177,7 @@ async def download_file(url: str, dest, max_bytes: int = 100_000_000,
                         with dest.open("rb") as probe:
                             head = probe.read(5)
                         if head != b"%PDF-" and dest.suffix.lower() == ".part":
-                            dest.unlink(missing_ok=True)
+                            purge.unlink(dest)
                             raise ValueError("链接未返回 PDF 文件")
                         if total and size < total:
                             raise httpx.ReadError(f"连接提前结束：{size}/{total} 字节")

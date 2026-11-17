@@ -92,6 +92,24 @@ class Worker:
                 log.exception("Worker 心跳失败")
             await asyncio.sleep(3)
 
+    async def backup_loop(self) -> None:
+        """每天给资料库拍一张快照，顺便让它成为"误删也能找回"的兜底。"""
+        from .services import backup
+
+        while not self.stop_event.is_set():
+            try:
+                result = backup.run()
+                if result.get("created"):
+                    log.info("资料库快照：%s（%.1f MB）", result["created"],
+                             result.get("size", 0) / 1024 / 1024)
+            except Exception:                       # noqa: BLE001 - 备份失败不该拖垮主流程
+                log.exception("资料库快照失败")
+            try:
+                await asyncio.wait_for(self.stop_event.wait(), timeout=6 * 3600)
+                return
+            except asyncio.TimeoutError:
+                continue
+
     async def jsonl_watcher(self) -> None:
         """JSONL is a local tail, not a poll job: avoid thousands of queue rows per day."""
         while not self.stop_event.is_set():
@@ -204,7 +222,7 @@ class Worker:
         log.info("Worker 启动 owner=%s recovered=%s", self.owner, recovered)
         concurrency = max(1, min(8, int(get_settings()["worker_concurrency"])))
         tasks = [asyncio.create_task(self.scheduler()), asyncio.create_task(self.heartbeat()),
-                 asyncio.create_task(self.jsonl_watcher())]
+                 asyncio.create_task(self.jsonl_watcher()), asyncio.create_task(self.backup_loop())]
         tasks += [asyncio.create_task(self.loop(i)) for i in range(concurrency)]
         await self.stop_event.wait()
         for task in tasks:

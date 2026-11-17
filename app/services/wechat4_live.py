@@ -725,42 +725,62 @@ def account_names(cache: Path) -> dict[str, str]:
     return names
 
 
+def _shard_order(path: Path) -> int:
+    match = re.search(r"_(\d+)\.db$", path.name)
+    return int(match.group(1)) if match else 0
+
+
+def message_dbs(cache: Path, db_rel: str) -> list[Path]:
+    """把 `message/biz_message_*.db` 这类通配展开成分片列表，新的在前。
+
+    微信 4.x 按写入顺序把消息切成 `biz_message_0.db`、`_1.db`……越新的数据在编号
+    越小的分片里。只认 `_0` 会漏掉绝大部分历史：本机实测 `_0` 只有 32 条（7 天），
+    `_1`~`_4` 里还有 1100 多条。所以凡是读消息的地方都必须走这个函数。
+    """
+    if any(char in db_rel for char in "*?["):
+        paths = [path for path in cache.glob(db_rel) if path.is_file()]
+        return sorted(paths, key=_shard_order)
+    path = cache / db_rel
+    return [path] if path.is_file() else []
+
+
 def iter_recent(cache: Path, db_rel: str, limit: int = 500,
                 since: int | None = None) -> Iterator[tuple[str, sqlite3.Row]]:
-    """遍历某个库所有会话表里最近的消息，产出 (user_name, row)。"""
-    path = cache / db_rel
-    if not path.is_file():
-        return
-    con = _connect(path)
-    con.row_factory = sqlite3.Row
-    try:
-        mapping: dict[str, str] = {}
+    """遍历某个库（可分片）所有会话表里最近的消息，产出 (user_name, row)。
+
+    `db_rel` 可以带通配符，例如 `message/biz_message_*.db`。
+    """
+    for path in message_dbs(cache, db_rel):
+        con = _connect(path)
+        con.row_factory = sqlite3.Row
         try:
-            for username, in con.execute("SELECT user_name FROM Name2Id"):
-                if username:
-                    mapping[md5_table(username)] = username
-        except sqlite3.Error:
-            pass
-        tables = [r[0] for r in con.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Msg_%'")]
-        for table in tables:
-            username = mapping.get(table)
-            if not username:
-                continue
-            sql = f'SELECT * FROM "{table}"'
-            params: list[Any] = []
-            if since:
-                sql += " WHERE create_time >= ?"
-                params.append(int(since))
-            sql += " ORDER BY create_time DESC LIMIT ?"
-            params.append(int(limit))
+            mapping: dict[str, str] = {}
             try:
-                for row in con.execute(sql, params):
-                    yield username, row
+                for username, in con.execute("SELECT user_name FROM Name2Id"):
+                    if username:
+                        mapping[md5_table(username)] = username
             except sqlite3.Error:
-                continue
-    finally:
-        con.close()
+                pass
+            tables = [r[0] for r in con.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Msg_%'")]
+            for table in tables:
+                username = mapping.get(table)
+                if not username:
+                    continue
+                sql = f'SELECT * FROM "{table}"'
+                params: list[Any] = []
+                if since:
+                    sql += " WHERE create_time >= ?"
+                    params.append(int(since))
+                sql += " ORDER BY create_time DESC LIMIT ?"
+                params.append(int(limit))
+                try:
+                    for row in con.execute(sql, params):
+                        yield username, row
+                except sqlite3.Error:
+                    continue
+        finally:
+            con.close()
 
 
 @dataclass
@@ -794,7 +814,7 @@ def collect_articles(cache: Path | None = None, days: int = 7,
     out: list[Article] = []
     seen: set[str] = set()
 
-    for username, row in iter_recent(cache, "message/biz_message_0.db", limit=400, since=since):
+    for username, row in iter_recent(cache, "message/biz_message_*.db", limit=400, since=since):
         if base_type(row["local_type"]) != 49:
             continue
         text = message_text(row)
@@ -809,7 +829,7 @@ def collect_articles(cache: Path | None = None, days: int = 7,
                            article["digest"], "official"))
 
     if want_self:
-        for username, row in iter_recent(cache, "message/message_0.db", limit=400,
+        for username, row in iter_recent(cache, "message/message_*.db", limit=400,
                                          since=since):
             if base_type(row["local_type"]) != 49:
                 continue
@@ -850,7 +870,7 @@ def collect_links(cache: Path | None = None, days: int = 7,
     me = _self_username(cache)
     out: list[Article] = []
     seen: set[str] = set()
-    for db_rel in ("message/message_0.db", "message/biz_message_0.db"):
+    for db_rel in ("message/message_*.db", "message/biz_message_*.db"):
         for username, row in iter_recent(cache, db_rel, limit=400, since=since):
             text = message_text(row)
             if not text or "mp.weixin.qq.com" not in text:
@@ -860,7 +880,7 @@ def collect_links(cache: Path | None = None, days: int = 7,
                 continue
             seen.add(article["canonical"])
             via = "self" if (username == me or username in SELF_SESSIONS) else (
-                "official" if db_rel.endswith("biz_message_0.db") else "chat")
+                "official" if "biz_message" in db_rel else "chat")
             out.append(Article(int(row["create_time"] or 0), names.get(username, username),
                                username, article["title"], article["url"],
                                article["digest"], via))
@@ -989,7 +1009,7 @@ def official_articles(since_ts: int | None = None, per_account: int = 300,
     names = account_names(cache)
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for username, row in iter_recent(cache, "message/biz_message_0.db",
+    for username, row in iter_recent(cache, "message/biz_message_*.db",
                                      limit=per_account, since=since_ts):
         if base_type(row["local_type"]) != 49:
             continue
@@ -1020,7 +1040,7 @@ def self_links(since_ts: int | None = None, per_chat: int = 300,
     me = _self_username(cache)
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for username, row in iter_recent(cache, "message/message_0.db",
+    for username, row in iter_recent(cache, "message/message_*.db",
                                      limit=per_chat, since=since_ts):
         if base_type(row["local_type"]) != 49:
             continue
@@ -1076,6 +1096,76 @@ def _newest_in(path: Path) -> int:
     finally:
         con.close()
     return newest
+
+
+def diagnose(days: int = 7, samples: int = 5) -> dict[str, Any]:
+    """体检/排障用：4.x 通道现在到底能读到多少东西。
+
+    只读解密缓存，不碰微信进程，也不触发重新解密。分片逐个统计，这样"只读了
+    `_0` 一片"这类问题一眼就能看出来。
+    """
+    status = quick_status()
+    cache = DEFAULT_CACHE
+    since = int(time.time() - days * 86400)
+    shards: list[dict[str, Any]] = []
+    newest = 0
+    total = 0
+    picked: list[dict[str, Any]] = []
+    for path in message_dbs(cache, "message/biz_message_*.db"):
+        count = 0
+        shard_newest = 0
+        try:
+            con = _connect(path)
+            con.row_factory = sqlite3.Row
+        except sqlite3.Error:
+            shards.append({"name": path.name, "articles": 0, "error": True})
+            continue
+        try:
+            for (table,) in con.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Msg_%'"):
+                try:
+                    rows = con.execute(
+                        f'SELECT * FROM "{table}" WHERE create_time >= ? ORDER BY create_time DESC',
+                        (since,)).fetchall()
+                except sqlite3.Error:
+                    continue
+                for row in rows:
+                    if base_type(row["local_type"]) != 49:
+                        continue
+                    article = article_of(message_text(row))
+                    if not article:
+                        continue
+                    count += 1
+                    shard_newest = max(shard_newest, int(row["create_time"] or 0))
+                    if len(picked) < samples:
+                        picked.append({"title": article["title"],
+                                       "at": time.strftime("%m-%d %H:%M", time.localtime(row["create_time"]))})
+        finally:
+            con.close()
+        total += count
+        newest = max(newest, shard_newest)
+        shards.append({"name": path.name, "articles": count,
+                       "newest": time.strftime("%m-%d %H:%M", time.localtime(shard_newest)) if shard_newest else ""})
+    return {
+        "channel": "4.x",
+        "running": bool(status.get("running")),
+        "storages": status.get("storages") or [],
+        "databases": int(status.get("databases") or 0),
+        "cache": str(cache),
+        "cache_at": time.strftime("%m-%d %H:%M", time.localtime(_mtime(cache))) if cache.exists() else "",
+        "days": days,
+        "articles": total,
+        "newest": time.strftime("%Y-%m-%d %H:%M", time.localtime(newest)) if newest else "",
+        "shards": shards,
+        "samples": picked,
+    }
+
+
+def _mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
 
 
 # --------------------------------------------------------------------------- #

@@ -93,12 +93,73 @@ def _notify_state(settings: dict[str, Any], secrets: dict[str, Any]) -> dict[str
     }
 
 
+def _wechat_state() -> dict[str, Any]:
+    """体检里的"微信数据读取"。
+
+    只看进程名会骗人：微信 4.x 起来了、`Weixin.exe` 也在，3.x 的探针照样会报
+    "就绪"，但真正能读到的库根本不是那一个。所以这里以 4.x 通道为准，并且**真的
+    数一遍近 7 天读到多少篇文章**，读不到就如实写 0，而不是给个绿点。
+    """
+    try:
+        from . import wechat4_live
+        status = wechat4_live.quick_status()
+    except Exception:                                   # noqa: BLE001
+        status = {"running": False, "storages": [], "databases": 0}
+    if status.get("storages"):
+        try:
+            diagnose = wechat4_live.diagnose(days=7)
+        except Exception as exc:                        # noqa: BLE001
+            diagnose = {"articles": 0, "newest": "", "shards": [],
+                        "error": f"{type(exc).__name__}: {exc}"[:200]}
+        # 读到多少是一回事，其中多少来自你勾选的号是另一回事。只报前者会让人
+        # 以为"读到了但没入库"，只报后者在没勾号时又永远是 0。
+        try:
+            import time as _time
+            from .wechat_self_archive import _public_account_filter
+            directory = wechat4_live.oa_directory()
+            allowed, _, _ = _public_account_filter({"use_catalog": True}, directory)
+            recent = wechat4_live.official_articles(since_ts=int(_time.time()) - 7 * 86400)
+            diagnose["total"] = len(recent)
+            diagnose["tracked_hits"] = len([item for item in recent if item["user_name"] in allowed])
+        except Exception:                               # noqa: BLE001
+            pass
+        detail = f"微信 4.x · 近 7 天读到 {diagnose.get('articles', 0)} 篇"
+        if "tracked_hits" in diagnose:
+            detail += f"，命中追踪名单 {diagnose['tracked_hits']} 篇"
+        elif diagnose.get("newest"):
+            detail += f"，最新 {diagnose['newest'][5:]}"
+        if diagnose.get("error"):
+            detail += f"（{diagnose['error']}）"
+        return {"state": "ready", "version": "4.x", "channel": "4.x",
+                "detail": detail, "diagnose": diagnose,
+                "databases": int(status.get("databases") or 0)}
+    legacy = wechat_probe.status()
+    return {**legacy, "channel": legacy.get("family") or "3.x"}
+
+
+def _space_state() -> dict[str, Any]:
+    try:
+        from . import wechat_space
+        return wechat_space.snapshot()
+    except Exception as exc:                            # noqa: BLE001
+        return {"ok": False, "warnings": [f"{type(exc).__name__}: {exc}"], "sizes": {}}
+
+
+def _backup_state() -> dict[str, Any]:
+    try:
+        from . import backup
+        return backup.status()
+    except Exception as exc:                            # noqa: BLE001
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
 def snapshot() -> dict[str, Any]:
     settings = get_settings()
     secrets = secret_status()
     llm = _llm_state(settings, secrets)
     notify = _notify_state(settings, secrets)
-    wechat = wechat_probe.status()
+    wechat = _wechat_state()
+    space = _space_state()
     auto = autostart.status()
     db = _db_info()
     accounts = _account_info()
@@ -107,7 +168,7 @@ def snapshot() -> dict[str, Any]:
     if wechat["state"] == "unsupported-4x":
         wechat_detail = "微信 4.x 尚未适配，暂时读不到它的数据库"
     elif wechat["state"] == "ready":
-        wechat_detail = f"微信 {wechat['version']} 已就绪"
+        wechat_detail = wechat.get("detail") or f"微信 {wechat['version']} 已就绪"
     elif wechat["state"] == "offline":
         wechat_detail = "上次的账号与密钥还在，可以直接读离线目录"
     elif wechat["state"] == "need-login":
@@ -131,6 +192,10 @@ def snapshot() -> dict[str, Any]:
                    ("已保存发送地址" if notify["webhook_saved"] else "缺少发送地址")},
         {"id": "accounts", "label": "公众号名单", "state": "ok" if accounts["enabled"] else "warn",
          "detail": f"{accounts['enabled']} 个号在追更" if accounts["enabled"] else "还没有启用任何公众号"},
+        {"id": "space", "label": "微信文件没有堆在 C 盘",
+         "state": "ok" if not (space.get("warnings") or []) else "warn",
+         "detail": ("；".join(space.get("warnings") or [])
+                    or f"C 盘剩余 {space['free_c'] / 1024 ** 3:.0f} GB，微信数据在外置目录")},
         {"id": "autostart", "label": "开机自启", "state": "ok" if auto["enabled"] else "off",
          "detail": ("旧版启动文件夹方式，建议换成注册表" if auto["mode"] == "legacy_shortcut"
                     else ("已开启" if auto["enabled"] else "关闭（可随时打开）"))},
@@ -154,6 +219,8 @@ def snapshot() -> dict[str, Any]:
         "host": settings.get("host"),
         "db": db,
         "wechat": wechat,
+        "space": space,
+        "backup": _backup_state(),
         "llm": llm,
         "notify": notify,
         "accounts": accounts,

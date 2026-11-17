@@ -13,6 +13,7 @@ from bs4 import BeautifulSoup
 from ..net import request
 from ..settings import get_settings
 from ..storage import atomic_write, item_directory, store_blob
+from . import purge
 from ..utils import clean_image_alt, now_iso, safe_name
 
 
@@ -605,7 +606,7 @@ def drop_archived_images(db: Any, item_id: str, indexes: list[int], note: str = 
                         (item_id, f"%{digest}%"))
         if shared and int(shared["c"]) == 0:
             try:
-                path.unlink()
+                purge.unlink(path)
             except OSError:
                 pass
     return len(removed)

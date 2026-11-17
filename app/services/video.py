@@ -7,6 +7,7 @@ from urllib.parse import urlencode
 from ..net import get_json, request
 from ..settings import get_settings
 from ..storage import atomic_write, item_directory, store_blob
+from . import purge
 from ..utils import epoch_iso, extract_bvid, now_iso
 from .archive import _clean_text, _reader_html
 
@@ -74,7 +75,7 @@ async def _local_asr(url: str, folder: Path, duration: int) -> tuple[str, str]:
     segment_list = await __import__("asyncio").to_thread(transcribe)
     text = "\n".join(f"[{_timestamp(s.start)}] {s.text.strip()}" for s in segment_list)
     if not settings["keep_audio"]:
-        audio_files[0].unlink()
+        purge.unlink(audio_files[0])
     return _clean_text(text), "local_faster_whisper"
 
 
