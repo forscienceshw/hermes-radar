@@ -115,6 +115,33 @@ python radar.py pack
 
 它会检查工作区是否干净；有未保存改动时会警告 —— 那种包里的代码和任何历史版本都对不上。
 
+## 发版：用户说"导出为新版本"就跑这一条
+
+```bash
+python radar.py release "这一版改了什么"
+```
+
+它把测试、版本号、tag、安装包、GitHub Release、`version.json` 串成一条链，不用手工操作。
+发之前必须已经在 `main` 上、工作区干净 —— 这两条它自己会拦。
+
+几条不能碰的红线：
+
+- **`version.json` 是客户端唯一认的版本清单**，只能由 `release.py` 写。手改它会让各机器
+  的更新提示和实际安装包对不上（sha256 校验会直接拒装）。
+- **tag 推上去就别删**。已经有人装了就会有人回滚到那个版本。真要作废，发一个新版本，
+  用 `min_version` 强制升级，而不是删历史。
+- **`VERSION` 是版本号的唯一来源**。`app/__init__.py` 已经从它读 `__version__` 了，
+  不要再往代码里写死版本号。
+- 发完必须验证一次：`curl -s https://raw.githubusercontent.com/forscienceshw/hermes-radar/main/version.json`
+  能拿到新版本号，且 `assets[0].size` 和本地安装包一致。
+
+安装包覆盖安装的三个必须：
+
+1. 同目录顶替，绝不起第二个文件夹；
+2. `data/`、`config/settings.json`、`config/secrets*.json`、`.venv` 一个都不许动；
+3. 上一版有、这一版没有的文件要删干净（靠 `install.json` 旁边的 `.payload-manifest.json`），
+   否则用户的目录里会越积越多没人用的死文件。
+
 ## 两个入口，两种打包
 
 程序有两层入口，别搞混：

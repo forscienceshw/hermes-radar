@@ -126,6 +126,37 @@ python tools/build_exe.py --launcher # 只重打 Radar.exe
 产物在 `dist/exe/`。`Radar.exe` 只做"拉起 supervisor、开浏览器、停服务"，
 依赖住在安装目录的 `.venv` 里，所以改代码不用重打 exe；`RadarSetup.exe` 才是要发给别人的那个。
 
+### 发一个新版本（各机器自动更新）
+
+一句话：
+
+```bash
+python radar.py release "这一版改了什么"
+```
+
+它按顺序做：跑测试 → 版本号 +1（`--bump minor` / `--version 1.2.0` 可以改法）→
+提交并打 tag → 打安装包 → 建 GitHub Release 传上去 → 回写 `version.json`。
+
+仓库是 <https://github.com/forscienceshw/hermes-radar>，公开库，装过的机器不需要任何凭据
+就能读版本号、下载安装包。
+
+客户端那边：每次启动 20 秒后后台查一次（同一天只查一次），发现新版本就在顶栏显示
+「新版本 x.y.z 可更新」。点它跳到 设置 → 参数设置 → 版本与更新，可以手动检查、
+下载（带 sha256 校验）、然后一键重启并安装。
+
+装的过程是原地顶替：
+- 只替换程序文件，`data/`、`config/settings.json`、`config/secrets*.json`、`.venv` 全保留；
+- 上一版装过、这一版不再有的文件，按安装清单精确删掉，不留残渣；
+- `requirements.txt` 没变就跳过那 80 MB 的依赖安装，几秒装完；
+- 装完自动把新版本拉起来，桌面和开始菜单的快捷方式指向同一处，不会多出一份。
+
+网络查不到更新时软件照常跑，只是不提示；也可以在项目页手动下安装包双击覆盖。
+坏了想退回去：装回旧版本的安装包即可，`data/` 不会被碰。
+
+更新检查的三个源（谁也拦不住的时候才认输）：GitHub API 的 latest release、
+jsDelivr CDN、raw.githubusercontent.com。国内直连 GitHub 不稳的话，在
+`config/settings.json` 里把 `update_mirror` 填成 `https://ghproxy.net/` 之类的前缀。
+
 ### 只搬程序，不搬资料
 
 ```bash
