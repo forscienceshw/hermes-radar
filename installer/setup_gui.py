@@ -94,29 +94,40 @@ def read_record(target: Path) -> dict:
 # 升级：停旧实例、精确清理旧文件
 # --------------------------------------------------------------------------- #
 def _instance_processes(target: Path) -> list:
-    """找出这个安装目录里的进程。只认 cwd/exe/cmdline 命中该目录的，
-    不能按进程名扫 —— 同一台机器上可能还有开发实例在跑。"""
+    """找出这个安装目录里的进程。
+
+    只认"程序本体"：可执行文件落在安装目录下（Radar.exe、.venv 里的 python），
+    或者进程名是 Radar/python 且工作目录就在安装目录里（supervisor 是这么起的）。
+
+    故意不匹配命令行 —— 早先版本用 cmdline 包含路径来判断，结果把正在执行安装
+    命令的那个 shell 也算了进去，安装器随后把父进程杀掉，自己跟着被 SIGTERM。
+    同一台机器上还可能有开发实例在跑，也不能按进程名一刀切。
+    """
     try:
         import psutil
     except ImportError:
         return []
-    marker = str(target).casefold().replace("\\", "/")
+    marker = str(target).casefold().replace("\\", "/").rstrip("/")
+    allowed = {"radar.exe", "python.exe", "pythonw.exe"}
     found = []
-    for proc in psutil.process_iter(["pid", "name", "cwd", "cmdline"]):
+    for proc in psutil.process_iter(["pid", "name", "cwd"]):
         if proc.pid == os.getpid():
+            continue
+        if (proc.info.get("name") or "").lower() not in allowed:
+            continue
+        try:
+            executable = str(proc.exe() or "").casefold().replace("\\", "/")
+        except (psutil.Error, OSError):
+            executable = ""
+        if executable.startswith(marker):
+            found.append(proc)
             continue
         try:
             cwd = str(proc.info.get("cwd") or "").casefold().replace("\\", "/")
-            cmdline = " ".join(proc.info.get("cmdline") or []).casefold().replace("\\", "/")
-            exe = ""
-            try:
-                exe = str(proc.exe() or "").casefold().replace("\\", "/")
-            except (psutil.Error, OSError):
-                pass
-            if marker in cwd or marker in cmdline or marker in exe:
-                found.append(proc)
         except (psutil.Error, OSError):
-            continue
+            cwd = ""
+        if cwd == marker or cwd.startswith(marker + "/"):
+            found.append(proc)
     return found
 
 

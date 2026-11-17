@@ -122,8 +122,13 @@ def preflight(branch_ok: bool) -> tuple[str, list[str]]:
             "\n  ".join(f"{state} {path}" for state, path in pending[:10]))
 
     say("② 跑测试")
-    result = subprocess.run([sys.executable, "-m", "pytest", "tests", "-q"], cwd=str(ROOT),
-                            text=True, encoding="utf-8", errors="replace", capture_output=True)
+    # 用安装目录自己的虚拟环境跑：PATH 里的 python 往往没装 httpx/fastapi，
+    # 一跑就是一片 ImportError，看着像代码坏了。
+    venv_python = ROOT / ".venv" / "Scripts" / "python.exe"
+    python = str(venv_python) if venv_python.is_file() else sys.executable
+    result = subprocess.run([python, "-m", "unittest", "discover", "-s", "tests", "-t", "."],
+                            cwd=str(ROOT), text=True, encoding="utf-8", errors="replace",
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     tail = (result.stdout or "").strip().splitlines()[-6:]
     say("  " + "\n  ".join(tail) if tail else "  （没有输出）")
     if result.returncode != 0:
