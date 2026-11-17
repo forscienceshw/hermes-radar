@@ -88,6 +88,11 @@ python radar.py save "一句话说清改了什么"     # 存
   （`purge.remove()` / `purge.unlink()`）。它直接调 `SHFileOperationW` 且不带
   `FOF_ALLOWUNDO`，不经过 Python 那层垫片。
 - 命令行里批量删构建产物、临时目录、测试残留，走 `python tools/trash.py wipe <路径>`。
+- **`wipe` 删的是你给的那个路径本身，不是"回收站里该路径的条目"。** 清条目用
+  `purge --under <前缀>`。2026-11-18 把 `wipe E:/HermesResearchRadar/app` 当清条目用，
+  删掉的是生产目录的 `app/`，api 与 worker 每 4 秒崩一次。现在 `wipe` 会拒绝任何受
+  git 跟踪的路径（守卫在 `tools/trash.py::_git_tracked`，测试 `tests/test_trash_guard.py`），
+  真要从仓库里删文件请用 `git rm`；`--force` 是明确的硬删。
 - 跑测试必须带 `-t .`：`python -m unittest discover -s tests -t .`。少了它，模块会
   以顶层名导入，`tests/__init__.py` 那把"扫回收站"的钩子根本不执行，一趟全量
   测试就往回收站塞四百多条 `test.db-shm`。
