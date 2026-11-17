@@ -55,6 +55,27 @@ def _win_delete(paths: list[Path]) -> bool:
     return result == 0 and not struct.fAnyOperationsAborted
 
 
+def _win_erase(path: Path) -> bool:
+    """Win32 逐个抹掉：先子后父，符号链接只删链接本身。
+
+    为什么不在这里调 `shutil.rmtree`：它已经被垫片换成了"移入回收站"，用它兜底
+    等于把前面省下来的功夫又还回去——删一棵被占用的临时树时，剩下的那部分照样会
+    在回收站里留一条。这里直接走 `DeleteFileW` / `RemoveDirectoryW`，谁也拦不住。
+    """
+    kernel32 = ctypes.windll.kernel32
+    if path.is_symlink():
+        return bool(kernel32.DeleteFileW(str(path)))
+    if path.is_dir():
+        try:
+            children = list(path.iterdir())
+        except OSError:
+            children = []
+        for child in children:
+            _win_erase(child)
+        return bool(kernel32.RemoveDirectoryW(str(path)))
+    return bool(kernel32.DeleteFileW(str(path)))
+
+
 def remove(*paths: str | Path) -> dict[str, list[str]]:
     """永久删除文件或目录。返回还剩下来的路径，方便调用方判断成败。"""
     targets = [Path(path).expanduser().absolute() for path in paths]
@@ -65,15 +86,19 @@ def remove(*paths: str | Path) -> dict[str, list[str]]:
     if os.name == "nt":
         # 软链接本身要删掉，不要跟进去把目标盘的内容端了
         _win_delete(targets)
-        left = [str(path) for path in targets if path.exists() or path.is_symlink()]
+        left = [path for path in targets if path.exists() or path.is_symlink()]
         if not left:
             return {"failed": []}
         # 被占用、权限不足之类的漏网之鱼再逐个试一次
-        targets = [Path(item) for item in left]
+        for path in left:
+            _win_erase(path)
+        left = [str(path) for path in left if path.exists() or path.is_symlink()]
+        return {"failed": left}
+
     failed: list[str] = []
     for path in targets:
         try:
-            if path.is_dir() and not path.is_symlink():
+            if path.is_dir():
                 shutil.rmtree(path, ignore_errors=False)
             else:
                 path.unlink()
