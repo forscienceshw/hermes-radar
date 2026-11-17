@@ -695,10 +695,17 @@ def wechat_account_articles(account_pk: int, limit: int = 24, offset: int = 0, d
         payload = {"items": articles, "total": len(rows),
                    "has_more": len(rows) > offset + len(articles)}
         if not articles and hint:
-            # 正文没落盘时，会话表里至少还有「最后一条推文的标题和时间」。
-            payload["note"] = (f"微信收到了这条推送，但没把正文存到本地："
-                               f"{hint['at_display']}「{hint['title'][:40]}」。"
-                               f"这说明公众号通道是通的，卡在客户端保存这一环。")
+            # 正文没落盘时，会话表里至少还有「最后一条推文的时间」，标题也常常还有
+            title = (hint["title"] or "").strip()
+            head = (f"微信在 {hint['at_display']} 收到过这个号的推送"
+                    + (f"（「{title[:36]}」）" if title else "，标题已被清过"))
+            payload["note"] = head + "，但正文没保存到本地。通道是通的，卡在客户端落盘这一环。"
+        elif hint.get("at") and rows and hint["at"] > rows[0]["create_time"] + 60:
+            # 有正文，但更近的那条没存下来——同样得说清楚，别让人以为就这些
+            title = (hint["title"] or "").strip()
+            payload["note"] = (f"更近的一条（{hint['at_display']}"
+                               + (f"「{title[:36]}」" if title else "") +
+                               "）微信没把正文存下来，所以列表里没有它。")
     else:
         try:
             payload = wechat_public.recent_articles(gh_id, limit=limit, offset=offset, days=days)
