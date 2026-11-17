@@ -485,6 +485,10 @@ class SyncState:
 
 DEFAULT_CACHE = DATA_DIR / "wechat4"
 
+# 4.x 的「订阅号」聚合会话名。它们的 summary 存着最新一条推文的标题、
+# last_msg_sender 存着发它的号，是 4.x 里唯一稳定带内容的公众号线索。
+HOLDER_SESSIONS = ("brandsessionholder", "brandservicesessionholder")
+
 
 def load_key_cache(path: Path) -> dict[str, str]:
     try:
@@ -1133,29 +1137,46 @@ def session_activity(hours: int = 3, cache: Path | None = None) -> dict[str, Any
         return {}
     try:
         now = int(time.time())
+        # 4.x 把订阅号的「最新一条」记在两个聚合会话里（brandsessionholder /
+        # brandservicesessionholder），单个 gh_ 会话的 summary 反而多半是空的。
+        # 漏掉这两个就会把"通道还在收"误判成"客户端不收公众号"。
+        holders = tuple(HOLDER_SESSIONS)
+        marks = ",".join("?" * len(holders))
+        # 老结构没有这三列，按实际列取，避免为了诊断把整个体检打挂
+        present = {row[1] for row in con.execute("PRAGMA table_info(SessionTable)")}
+        picked = [name for name in ("last_msg_sender", "last_sender_display_name",
+                                    "last_msg_locald_id") if name in present]
         last = con.execute(
-            "SELECT username, last_timestamp, summary FROM SessionTable "
-            "WHERE username LIKE 'gh_%' ORDER BY last_timestamp DESC LIMIT 1").fetchone()
+            "SELECT " + ", ".join(["username", "last_timestamp", "summary"] + picked)
+            + f" FROM SessionTable WHERE username LIKE 'gh_%' OR username IN ({marks}) "
+            "ORDER BY last_timestamp DESC LIMIT 1", holders).fetchone()
         recent = int(con.execute(
-            "SELECT count(*) FROM SessionTable WHERE username LIKE 'gh_%' AND last_timestamp>=?",
-            (now - hours * 3600,)).fetchone()[0])
+            "SELECT count(*) FROM SessionTable WHERE (username LIKE 'gh_%' "
+            f"OR username IN ({marks})) AND last_timestamp>=?",
+            (*holders, now - hours * 3600)).fetchone()[0])
         chats = con.execute(
             "SELECT max(last_timestamp) FROM SessionTable "
-            "WHERE username NOT LIKE 'gh_%'").fetchone()[0]
+            f"WHERE username NOT LIKE 'gh_%' AND username NOT IN ({marks})",
+            holders).fetchone()[0]
         total = int(con.execute(
             "SELECT count(*) FROM SessionTable WHERE username LIKE 'gh_%'").fetchone()[0])
     except sqlite3.Error:
         return {}
     finally:
         con.close()
-    at = int(last[1] or 0) if last else 0
+    row = dict(zip(["username", "last_timestamp", "summary"] + picked, last)) if last else {}
+    at = int(row.get("last_timestamp") or 0)
     return {
         "accounts": total,
         "recent": recent,
         "last_at": at,
         "last_display": time.strftime("%m-%d %H:%M", time.localtime(at)) if at else "",
         "last_ago": round((time.time() - at) / 3600, 1) if at else None,
-        "last_title": (last[2] or "").strip() if last else "",
+        "last_title": (row.get("summary") or "").strip(),
+        "last_sender": (row.get("last_msg_sender") or ""),
+        "last_sender_name": (row.get("last_sender_display_name") or "").strip(),
+        # local_id=0 意味着这条推送只进了会话列表，正文没落盘——微信的已知行为
+        "stored": bool(row.get("last_msg_locald_id") or 0),
         "chat_at": int(chats or 0),
         "chat_display": (time.strftime("%m-%d %H:%M", time.localtime(int(chats)))
                          if chats else ""),
@@ -1344,6 +1365,31 @@ def biz_last_write(storage: Path | None = None) -> dict[str, Any]:
         "ago": round((time.time() - newest) / 3600, 1),
         "file": where,
     }
+
+
+def biz_fingerprint(storage: Path | None = None) -> tuple[tuple[str, int, int], ...]:
+    """公众号库的写入指纹：文件名 + 大小 + 修改时间（纳秒）。
+
+    4.x 平时不把公众号正文落盘，只有在你打开「订阅号」那一刻才把攒着的消息
+    一起写进 ``biz_message_*.db``。指纹一变就说明刚刚写了，worker 拿它当触发
+    信号立刻补采一次——这样"手动点开订阅号"就是全部动作，剩下的自动完成。
+    """
+    storages = [storage] if storage else (db_storages() or [])
+    marks: dict[str, tuple[str, int, int]] = {}
+    for root in storages:
+        folder = Path(root) / "message"
+        if not folder.is_dir():
+            continue
+        # 只看主库和 -wal：-shm 每次打开会话都会被改写，-*.material 是修复留档，
+        # 拿它们当信号会天天误报"刚写了公众号"。
+        for pattern in ("biz_message_*.db", "biz_message_*.db-wal"):
+            for path in sorted(folder.glob(pattern)):
+                try:
+                    stat = path.stat()
+                except OSError:
+                    continue
+                marks[str(path.resolve())] = (path.name, stat.st_size, stat.st_mtime_ns)
+    return tuple(marks[key] for key in sorted(marks))
 
 
 def push_summary(days: int = 7, cache: Path | None = None, samples: int = 3) -> dict[str, Any]:

@@ -224,6 +224,92 @@ class SessionActivityTests(unittest.TestCase):
             self.assertEqual(live.gh_for_name("不存在的号", cache=cache), "")
 
 
+class HolderSessionTests(unittest.TestCase):
+    """订阅号聚合会话是 4.x 唯一带标题的线索，漏掉它就会误判成"通道停了"。"""
+
+    def _cache(self, root: Path, holder_at: int, gh_at: int, local_id: int) -> Path:
+        import sqlite3
+        cache = root / "wechat4"
+        (cache / "session").mkdir(parents=True)
+        con = sqlite3.connect(str(cache / "session" / "session.db"))
+        con.execute("CREATE TABLE SessionTable (username, last_timestamp, unread_count, "
+                    "summary, last_msg_type, last_msg_sender, last_sender_display_name, "
+                    "last_msg_locald_id)")
+        con.executemany("INSERT INTO SessionTable VALUES (?,?,?,?,?,?,?,?)", [
+            ("brandsessionholder", holder_at, 2,
+             "一天三篇 Cell！任兵团队绘制大脑调控地图", 49, "gh_bio", "BioGOGO", local_id),
+            ("brandservicesessionholder", gh_at - 7200, 0, "知云开了个班", 49,
+             "gh_zhuyun", "知云文献阅读", 2),
+            ("gh_zhuyun", gh_at, 1, "", 49, "", "", 2),
+            ("wxid_friend", gh_at - 60, 0, "私聊", 1, "", "", 1),
+        ])
+        con.commit()
+        con.close()
+        return cache
+
+    def test_holder_counts_as_activity_and_reports_sender(self) -> None:
+        now = int(time.time())
+        with TemporaryDirectory() as tmp:
+            cache = self._cache(Path(tmp), holder_at=now - 600, gh_at=now - 4 * 3600,
+                                local_id=0)
+            result = live.session_activity(hours=3, cache=cache)
+        # gh_ 都停在 4 小时前，但聚合会话 10 分钟前刚动过 —— 这就是"通道还活着"
+        self.assertEqual(result["recent"], 1)
+        self.assertAlmostEqual(result["last_ago"], 0.2, delta=0.1)
+        self.assertIn("任兵", result["last_title"])
+        self.assertEqual(result["last_sender_name"], "BioGOGO")
+        self.assertEqual(result["last_sender"], "gh_bio")
+        self.assertFalse(result["stored"])             # local_id=0 → 正文没落盘
+
+    def test_stored_true_when_local_id_present(self) -> None:
+        now = int(time.time())
+        with TemporaryDirectory() as tmp:
+            cache = self._cache(Path(tmp), holder_at=now - 600, gh_at=now - 60, local_id=7)
+            self.assertTrue(live.session_activity(hours=3, cache=cache)["stored"])
+
+    def test_holder_does_not_pollute_chat_time(self) -> None:
+        """私聊时间必须只看真会话，不能把订阅号聚合算成"私聊还在收"。"""
+        now = int(time.time())
+        with TemporaryDirectory() as tmp:
+            cache = self._cache(Path(tmp), holder_at=now - 60, gh_at=now - 3600,
+                                local_id=0)
+            result = live.session_activity(hours=3, cache=cache)
+        self.assertLess(result["chat_at"], result["last_at"])
+
+
+class FingerprintTests(unittest.TestCase):
+    """worker 靠这个指纹判断"微信刚写了公众号"，误报会白跑一轮。"""
+
+    def test_ignores_shm_and_dedupes(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            folder = root / "message"
+            folder.mkdir()
+            for name in ("biz_message_0.db", "biz_message_0.db-wal",
+                         "biz_message_0.db-shm", "biz_message_0.db-first.material",
+                         "message_0.db"):
+                (folder / name).write_bytes(b"x" * 10)
+            marks = live.biz_fingerprint(storage=root)
+        names = [m[0] for m in marks]
+        self.assertEqual(names, ["biz_message_0.db", "biz_message_0.db-wal"])
+
+    def test_grows_when_a_write_happens(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            folder = root / "message"
+            folder.mkdir()
+            target = folder / "biz_message_1.db"
+            target.write_bytes(b"a" * 10)
+            before = live.biz_fingerprint(storage=root)
+            target.write_bytes(b"a" * 40)
+            after = live.biz_fingerprint(storage=root)
+        self.assertNotEqual(before, after)
+
+    def test_missing_folder_is_empty(self) -> None:
+        with TemporaryDirectory() as tmp:
+            self.assertEqual(live.biz_fingerprint(storage=Path(tmp)), ())
+
+
 class SpaceTests(unittest.TestCase):
     def test_on_c_only_matches_system_drive(self) -> None:
         from app.services import wechat_space

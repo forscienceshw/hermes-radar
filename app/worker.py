@@ -128,6 +128,31 @@ class Worker:
                 log.exception("分享桥监听失败")
             await asyncio.sleep(2)
 
+    async def wechat_watcher(self) -> None:
+        """微信 4.x 平时不把公众号正文落盘，只在打开「订阅号」时一起写出来。
+
+        所以"定时轮询"很可能一直读到 0 篇。这里盯住 `biz_message_*.db` 的大小和
+        修改时间：用户点开一次订阅号，指纹就变，立刻补采一轮，不用等下一个轮询
+        周期，也不会把用户的操作变成"点了没反应"。
+        """
+        from .services import wechat4_live
+
+        last = None
+        while not self.stop_event.is_set():
+            try:
+                marks = wechat4_live.biz_fingerprint()
+                if marks and last is not None and marks != last:
+                    sources = self.db.query(
+                        "SELECT * FROM sources WHERE type='wechat_public_local' AND enabled=1")
+                    for source in sources:
+                        log.info("微信刚写入了公众号消息，立即补采 %s", source["name"])
+                        await self.runner._poll({"id": f"wechat-watch:{source['id']}"},
+                                                {"source_id": source["id"]})
+                last = marks
+            except Exception:                       # noqa: BLE001 - 监听失败不该拖垮主流程
+                log.exception("公众号落盘监听失败")
+            await asyncio.sleep(60)
+
     async def loop(self, number: int) -> None:
         while not self.stop_event.is_set():
             try:
@@ -237,7 +262,8 @@ class Worker:
         log.info("Worker 启动 owner=%s recovered=%s", self.owner, recovered)
         concurrency = max(1, min(8, int(get_settings()["worker_concurrency"])))
         tasks = [asyncio.create_task(self.scheduler()), asyncio.create_task(self.heartbeat()),
-                 asyncio.create_task(self.jsonl_watcher()), asyncio.create_task(self.backup_loop())]
+                 asyncio.create_task(self.jsonl_watcher()), asyncio.create_task(self.backup_loop()),
+                 asyncio.create_task(self.wechat_watcher())]
         tasks += [asyncio.create_task(self.loop(i)) for i in range(concurrency)]
         await self.stop_event.wait()
         for task in tasks:

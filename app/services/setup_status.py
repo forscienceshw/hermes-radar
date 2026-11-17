@@ -133,8 +133,8 @@ def _wechat_state() -> dict[str, Any]:
         # 否则用户只看到一个绿点却在资料库里找不到东西。
         pushes = diagnose.get("pushes") or {}
         if pushes.get("accounts"):
-            detail += (f"；同期微信里 {pushes['accounts']} 个号推过，"
-                       f"本地只留下了 {diagnose.get('articles', 0)} 篇正文")
+            detail += (f"；会话列表里近 7 天带更新时间的号 {pushes['accounts']} 个，"
+                       f"本地只留下 {diagnose.get('articles', 0)} 篇正文")
             if diagnose.get("articles", 0) < pushes["accounts"] // 4:
                 diagnose["thin"] = True
         # 公众号库写不动了——这才是"读不到新推文"的真凶。库里的条数和最后写入
@@ -146,14 +146,23 @@ def _wechat_state() -> dict[str, Any]:
         if biz.get("ago") is not None:
             detail += (f"；公众号库共 {diagnose.get('biz_rows', 0)} 条，"
                        f"最后写入 {biz['at'][5:]}")
-            # 深夜公众号本来就少，白天两小时没动静才算真停了
-            if float(biz["ago"]) >= quiet_hours:
+            # 只有"库里没写 + 会话也没动静"才算真停了。4.x 平时不落盘正文，
+            # 光看库文件时间会把"通道好好的"误判成"停了"。
+            if float(biz["ago"]) >= quiet_hours and not sess.get("recent"):
                 diagnose["stalled"] = round(float(biz["ago"]))
         # 会话表比库文件更能说明问题：私聊一直在动、公众号会话一条不动，就是
-        # 客户端根本没在收公众号推送（4.x 升级后把通知开关回退了），不是读错库。
+        # 客户端根本没在收公众号推送，不是读错库。
         if sess.get("last_ago") is not None:
             detail += (f"；公众号会话最后动静 {sess['last_display']}，"
                        f"近 3 小时 {sess['recent']} 个号推过")
+            title = (sess.get("last_title") or "").strip()
+            if title:
+                who = sess.get("last_sender_name") or sess.get("last_sender") or ""
+                detail += (f"；最新一条来自 {who}：《{title[:22]}》" if who
+                           else f"；最新一条《{title[:22]}》")
+                if not sess.get("stored"):
+                    detail += "只进了会话列表，正文没落盘"
+                    diagnose["not_stored"] = True
             if not sess["recent"] and float(sess["last_ago"]) >= quiet_hours:
                 diagnose["silent"] = round(float(sess["last_ago"]))
         # 升级前的推文全在 3.x 的那个库里，4.x 客户端永远补不出来。单独报一句，
@@ -225,29 +234,44 @@ def snapshot() -> dict[str, Any]:
     else:
         wechat_detail = wechat.get("hint") or "没找到微信"
 
+    not_stored = bool(diagnose.get("not_stored"))
+    entry = ("① 电脑微信「通讯录 → 公众号」，随便点开一个号再返回（最稳）；"
+             "② 聊天列表搜索框输入「订阅号」，点进去往下拉；"
+             "③ 左侧竖排图标里书本/报纸形状的「订阅号」。")
+    if not wechat_ok:
+        wechat_hint = wechat_detail
+    elif silent:
+        wechat_hint = (
+            f"公众号会话最后一次动静是 {session.get('last_display', '—')}，之后 {silent} 小时"
+            f"一条都没进来；同一时间私聊还在收（{session.get('chat_display', '—')}）。"
+            "微信 4.x 不会主动把公众号推文存到本地，得让它去服务端拉一次。三个入口任选一个："
+            + entry + "拉过一次之后雷达会自动跟上，不用再点。")
+    elif not_stored:
+        who = session.get("last_sender_name") or session.get("last_sender") or ""
+        title = (session.get("last_title") or "").strip()
+        wechat_hint = (
+            f"通道是通的：{session.get('last_display', '—')} 还收到"
+            f"{(who + ' 的') if who else ''}《{title[:20]}》，但它只进了会话列表，"
+            "正文没写进本地库——4.x 平时就是这样，只有打开一次「订阅号」才会把攒着的消息"
+            "一起落盘。落盘后雷达 60 秒内自动补采，不用手动刷新。入口任选一个：" + entry)
+    elif stalled:
+        wechat_hint = (
+            f"{wechat_detail}。微信已经 {stalled} 小时没往公众号库里写过东西了——"
+            "客户端自己没在收，不是雷达读不到。照上面的入口点开一次「订阅号消息」并往下拉。")
+    elif thin:
+        wechat_hint = (wechat_detail + "。微信 4.x 只在打开订阅号时去服务端拉，"
+                                       "点开一次「订阅号消息」并往下拉，这里就会涨上去")
+    else:
+        wechat_hint = wechat_detail
+
     checks = [
         {"id": "service", "label": "服务在本机运行", "state": "ok" if db.get("ok") else "error",
          "detail": f"127.0.0.1:{settings.get('port')} · 版本 {project_version()}"},
         {"id": "worker", "label": "后台处理进程", "state": "ok" if db.get("worker_alive") else "warn",
          "detail": "心跳正常" if db.get("worker_alive") else "没有心跳，抓取和精读会停住"},
         {"id": "wechat", "label": "微信数据读取",
-         "state": "warn" if (thin or stalled or silent or not wechat_ok) else "ok",
-         "detail": (
-             f"公众号会话最后一次动静是 {session.get('last_display', '—')}，之后 {silent} 小时"
-             f"一条都没进来；同一时间私聊还在收（{session.get('chat_display', '—')}）。"
-             "微信 4.x 不会主动把公众号推文存到本地，得让它去服务端拉一次。三个入口任选一个："
-             "① 电脑微信「通讯录 → 公众号」，随便点开一个号再返回"
-             "（这一步最稳，1714 个号都在这儿）；"
-             "② 聊天列表顶部搜索框输入「订阅号」，点那条「订阅号消息」再往下拉；"
-             "③ 左侧竖排图标里找书本/报纸形状的「订阅号」。"
-             "拉过一次之后雷达每 30 秒就能自动跟上，不用再点。"
-             if silent else
-             f"{wechat_detail}。微信已经 {stalled} 小时没往公众号库里写过东西了——"
-             "客户端自己没在收，不是雷达读不到。照上面的入口点开一次「订阅号消息」"
-             "并往下拉，再点这里的「重新检查」"
-             if stalled else
-             (wechat_detail + "。微信 4.x 只在打开订阅号时去服务端拉，"
-                              "点开一次「订阅号消息」并往下拉，这里就会涨上去") if thin else wechat_detail)},
+         "state": "warn" if (thin or stalled or silent or not_stored or not wechat_ok) else "ok",
+         "detail": wechat_hint},
         {"id": "llm", "label": "大模型精读", "state": "ok" if llm["configured"] else "warn",
          "detail": "已配置" if llm["configured"] else ("未填 Key" if llm["needs_key"] else "未启用")},
         {"id": "notify", "label": "汇报渠道", "state": "ok" if notify["configured"] else "warn",
