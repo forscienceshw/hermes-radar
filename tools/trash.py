@@ -17,6 +17,11 @@ sitecustomize + safe-bin 包装器），`shutil.rmtree` / `rm -rf` 全被转成"
     python tools/trash.py check                   # 查仓库内残留临时目录
 
 `--under` 只删匹配前缀的条目，用户自己删的东西不碰。
+
+**`wipe` 删的是你给的那个路径本身，不是"回收站里该路径的条目"。**
+清条目要用 `purge --under`。2026-11-18 把 `wipe E:/HermesResearchRadar/app`
+当清条目用，直接删掉了生产目录的 app/，服务瞬间起不来；现在 wipe 会拒绝
+任何受 git 跟踪的路径（真要从仓库里删文件请用 git rm）。
 """
 
 from __future__ import annotations
@@ -26,6 +31,7 @@ import collections
 import os
 import shutil
 import struct
+import subprocess
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -175,12 +181,36 @@ def cmd_purge(args: argparse.Namespace) -> int:
     return 0
 
 
+def _git_tracked(path: str) -> bool:
+    """路径（或目录里任何一个文件）受 git 跟踪，就不许 wipe。
+
+    这是给 2026-11-18 那次事故留的守卫：`wipe E:/HermesResearchRadar/app`
+    被当成"清回收站里该前缀的条目"，把生产目录的 app/ 整个删了，
+    api 与 worker 立刻起不来。清条目归 purge，删除仓库文件归 git rm。
+    """
+    root = Path(__file__).resolve().parents[1]
+    try:
+        rel = Path(path).resolve().relative_to(root)
+    except (ValueError, OSError):
+        return False
+    try:
+        done = subprocess.run(["git", "-C", str(root), "ls-files", "--", str(rel)],
+                              capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return bool(done.stdout.strip())
+
+
 def cmd_wipe(args: argparse.Namespace) -> int:
     total = 0
     done: list[str] = []
     for raw in args.paths:
         path = os.path.expanduser(raw)
         if not os.path.exists(path):
+            continue
+        if not args.force and _git_tracked(path):
+            print(f"  拒绝：{path} 受 git 跟踪（真要删仓库文件请用 git rm，"
+                  f"确需硬删加 --force）")
             continue
         if _delete_path(path):
             total += 1
@@ -227,6 +257,7 @@ def main(argv: list[str]) -> int:
     p_wipe = sub.add_parser("wipe", help="直删给定路径")
     p_wipe.add_argument("paths", nargs="+")
     p_wipe.add_argument("--keep-trash", action="store_true", help="不在删完后自动清回收站记录")
+    p_wipe.add_argument("--force", action="store_true", help="连 git 跟踪的路径也删（危险）")
     p_wipe.set_defaults(func=cmd_wipe)
 
     p_check = sub.add_parser("check", help="检查仓库内残留")
