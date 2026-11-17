@@ -1159,6 +1159,60 @@ def diagnose(days: int = 7, samples: int = 5) -> dict[str, Any]:
         "shards": shards,
         "samples": picked,
         "pushes": push_summary(days, cache=cache),
+        "biz_rows": biz_rows(cache),
+        "biz_write": biz_last_write(),
+    }
+
+
+def biz_rows(cache: Path | None = None) -> int:
+    """公众号消息库里一共存了多少条消息（不分分片、不分类型）。
+
+    这个数字是"微信本地到底有没有公众号内容"的硬指标。几百条＝基本是空的，
+    几万条才是正常用了几个月的样子。
+    """
+    cache = cache or DEFAULT_CACHE
+    total = 0
+    for path in message_dbs(cache, "message/biz_message_*.db"):
+        try:
+            con = _connect(path)
+        except (OSError, sqlite3.Error):
+            continue
+        try:
+            for (table,) in con.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Msg_%'"):
+                try:
+                    total += con.execute(f'SELECT count(*) FROM "{table}"').fetchone()[0]
+                except sqlite3.Error:
+                    continue
+        finally:
+            con.close()
+    return total
+
+
+def biz_last_write(storage: Path | None = None) -> dict[str, Any]:
+    """微信最后一次往公众号库里写字是什么时候。
+
+    4.x 的公众号正文只落在 `message/biz_message_*.db`，库文件（或它的 -wal）
+    的修改时间就是"客户端最近一次收公众号"的时刻。这个时间停住了，说明微信
+    自己没在收，再怎么改读取代码也没用——体检要靠它把这两种情况分开。
+    """
+    storages = [storage] if storage else (db_storages() or [])
+    newest = 0.0
+    where = ""
+    for root in storages:
+        folder = Path(root) / "message"
+        if not folder.is_dir():
+            continue
+        for path in list(folder.glob("biz_message_*.db")) + list(folder.glob("biz_message_*.db-wal")):
+            stamp = _mtime(path)
+            if stamp > newest:
+                newest, where = stamp, path.name
+    if not newest:
+        return {"at": "", "ago": None, "file": ""}
+    return {
+        "at": time.strftime("%Y-%m-%d %H:%M", time.localtime(newest)),
+        "ago": round((time.time() - newest) / 3600, 1),
+        "file": where,
     }
 
 

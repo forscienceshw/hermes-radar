@@ -137,6 +137,16 @@ def _wechat_state() -> dict[str, Any]:
                        f"本地只留下了 {diagnose.get('articles', 0)} 篇正文")
             if diagnose.get("articles", 0) < pushes["accounts"] // 4:
                 diagnose["thin"] = True
+        # 公众号库写不动了——这才是"读不到新推文"的真凶。库里的条数和最后写入
+        # 时间都摆出来，用户一眼能看出是微信自己没存，而不是雷达没读。
+        biz = diagnose.get("biz_write") or {}
+        if biz.get("ago") is not None:
+            detail += (f"；公众号库共 {diagnose.get('biz_rows', 0)} 条，"
+                       f"最后写入 {biz['at'][5:]}")
+            # 深夜公众号本来就少，白天两小时没动静才算真停了
+            quiet_hours = 10 if _time.localtime().tm_hour in (0, 1, 2, 3, 4, 5, 6, 7, 23) else 2
+            if float(biz["ago"]) >= quiet_hours:
+                diagnose["stalled"] = round(float(biz["ago"]))
         if diagnose.get("error"):
             detail += f"（{diagnose['error']}）"
         return {"state": "ready", "version": "4.x", "channel": "4.x",
@@ -176,7 +186,9 @@ def snapshot() -> dict[str, Any]:
     wechat_ok = wechat["state"] in {"ready", "offline"}
     # 通道通、但微信本地只存了零星正文 → 这一项给黄灯而不是绿灯。绿灯会让人以为
     # "都好了"，可资料库里就是没东西；黄灯配一句能照做的提示才有用。
-    thin = bool((wechat.get("diagnose") or {}).get("thin"))
+    diagnose = wechat.get("diagnose") or {}
+    thin = bool(diagnose.get("thin"))
+    stalled = diagnose.get("stalled")
     if wechat["state"] == "unsupported-4x":
         wechat_detail = "微信 4.x 尚未适配，暂时读不到它的数据库"
     elif wechat["state"] == "ready":
@@ -196,10 +208,15 @@ def snapshot() -> dict[str, Any]:
         {"id": "worker", "label": "后台处理进程", "state": "ok" if db.get("worker_alive") else "warn",
          "detail": "心跳正常" if db.get("worker_alive") else "没有心跳，抓取和精读会停住"},
         {"id": "wechat", "label": "微信数据读取",
-         "state": "warn" if (thin or not wechat_ok) else "ok",
-         "detail": (wechat_detail + "。微信升级后本地只留了最近几小时的公众号正文，"
-                                  "在微信里点开一次「订阅号消息」让它从服务端拉一遍，"
-                                  "这里就会涨上去") if thin else wechat_detail},
+         "state": "warn" if (thin or stalled or not wechat_ok) else "ok",
+         "detail": (
+             f"{wechat_detail}。微信已经 {stalled} 小时没往公众号库里写过东西了——"
+             "客户端自己没在收，不是雷达读不到。在电脑微信点开一次「订阅号消息」"
+             "并往下拉，再点这里的「重新检查」"
+             if stalled else
+             (wechat_detail + "。微信升级后本地只留了最近几小时的公众号正文，"
+                              "在微信里点开一次「订阅号消息」让它从服务端拉一遍，"
+                              "这里就会涨上去") if thin else wechat_detail)},
         {"id": "llm", "label": "大模型精读", "state": "ok" if llm["configured"] else "warn",
          "detail": "已配置" if llm["configured"] else ("未填 Key" if llm["needs_key"] else "未启用")},
         {"id": "notify", "label": "汇报渠道", "state": "ok" if notify["configured"] else "warn",

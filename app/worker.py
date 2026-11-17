@@ -220,6 +220,15 @@ class Worker:
         pruned_batches = self.db.prune_notification_history()
         if pruned_batches:
             log.info("已清理 %s 条过期汇报记录", pruned_batches)
+        # 上一次退出时 sqlite 会顺手删掉 radar.db-shm，本机的安全删除垫片会把它
+        # 塞进回收站；启动时先扫一遍，这些自己造的文件不该在回收站里过夜。
+        try:
+            from .services import backup as _backup
+            swept = _backup.sweep_trash()
+            if swept:
+                log.info("回收站里本项目的 %s 条记录已彻底清掉", swept)
+        except Exception:                           # noqa: BLE001 - 清扫失败不影响启动
+            log.exception("回收站清扫失败")
         closed_before = self.db.one("""SELECT COUNT(*) c FROM notification_batches
             WHERE state='CLOSED' AND priority='normal'""")["c"]
         merged_batch = merge_closed_batches(self.db)
