@@ -870,3 +870,26 @@ loadHealth();loadEvents();loadProgress().catch(()=>{});loadCredits().catch(()=>{
   };
   load();
 })();
+
+/* ---------- 资料库备份 ---------- */
+(function(){
+  const info=$('#backupInfo'),button=$('#backupRun');
+  if(!info)return;
+  const mb=n=>(n?`${(n/1024/1024).toFixed(0)} MB`:'0');
+  function paint(s){
+    if(!s||s.error){info.textContent='读不到备份状态：'+((s&&s.error)||'');return}
+    info.textContent=s.count
+      ? `${s.count} 份每日快照，最新 ${s.latest_at}（${mb(s.latest_size)}）`+(s.manual?`；另有 ${s.manual} 份手动留底`:'')
+      : '还没有每日快照，点右边按钮补一份';
+  }
+  async function load(){try{paint(await api('/api/backup'))}catch(e){info.textContent='读不到备份状态：'+e.message}}
+  if(button)button.onclick=async()=>{
+    button.disabled=true;info.textContent='正在备份（库大的话要一两秒）…';
+    try{const r=await api('/api/backup/run',{method:'POST',body:{}});
+      info.textContent=r.ok?`已生成 ${mb(r.size)} 的快照`:'备份失败：'+(r.error||'');
+      if(r.ok)load();
+    }catch(e){info.textContent='备份失败：'+e.message}
+    finally{button.disabled=false}
+  };
+  load();
+})();

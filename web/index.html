@@ -339,6 +339,14 @@ B站 UP 主：也可使用你自建的 RSSHub 地址，kind 设为 video。</pre
         <span id="wechatSpaceResult" class="muted"></span>
       </div>
     </div>
+    <div class="panel" id="backupPanel">
+      <h2>资料库备份</h2>
+      <p class="muted">每天自动给数据库拍一张快照，保留最近 7 份，放在 <code>data/backups</code>。要动目录、要清理之前，先在这里补一份。</p>
+      <div class="actions">
+        <button id="backupRun" type="button">立即备份</button>
+        <span id="backupInfo" class="muted">正在读…</span>
+      </div>
+    </div>
 
     <div class="panel"><h2>企业微信「微信客服」收件口</h2><p class="muted">用于接收你从微信转发到客服会话的文章链接。企业 ID 和客服账号 ID 在「采集来源」的 wecom_kf 配置中填写；这里只保存专用 Secret。</p><label>微信客服 Secret（留空保持不变）<input id="wecomKfSecret" type="password" autocomplete="off"><small id="wecomKfSecretStatus"></small></label><p class="muted">电脑关机期间的消息可在最近 3 天内于下次启动时补拉；开机后每 30 秒检查一次。</p></div>
     <div class="panel"><h2>B站无字幕视频</h2><div class="form-grid three"><label>本地语音识别<select id="asrEnabled"><option value="false">关闭，仅归档简介</option><option value="true">启用 faster-whisper</option></select></label><label>模型<input id="asrModel" placeholder="small / medium / large-v3"></label><label>最长视频（分钟）<input id="asrDuration" type="number" min="1"></label></div><p class="muted">启用前需在当前 E 盘 Python 环境安装 faster-whisper；模型与音频也只写入 E 盘。</p></div>

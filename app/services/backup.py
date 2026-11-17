@@ -9,6 +9,7 @@ API 不锁库，采集和精读照跑，所以这个成本很低。
 """
 from __future__ import annotations
 
+import re
 import sqlite3
 import time
 from pathlib import Path
@@ -20,6 +21,9 @@ from . import purge
 BACKUP_DIR = DATA_DIR / "backups"
 BACKUP_KEEP = 7
 BACKUP_PREFIX = "radar-"
+# 只认"每日快照"这一种命名。`radar-before-*` 是出事前手动留的底，
+# 属于"重要文件"，永远不进滚动删除的范围。
+DAILY = re.compile(r"^radar-\d{8}\.db$")
 
 
 def _stamp() -> str:
@@ -27,9 +31,11 @@ def _stamp() -> str:
 
 
 def backups() -> list[Path]:
+    """每日快照，按时间从旧到新。"""
     if not BACKUP_DIR.is_dir():
         return []
-    return sorted(BACKUP_DIR.glob(f"{BACKUP_PREFIX}*.db"))
+    items = [path for path in BACKUP_DIR.glob(f"{BACKUP_PREFIX}*.db") if DAILY.match(path.name)]
+    return sorted(items, key=lambda path: path.stat().st_mtime)
 
 
 def run(force: bool = False) -> dict[str, Any]:
@@ -43,16 +49,27 @@ def run(force: bool = False) -> dict[str, Any]:
 
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     temp = target.with_suffix(".db.part")
+    if temp.exists():                                   # 上次失败留下的半成品
+        purge.unlink(temp)
+    source = dest = None
     try:
-        with sqlite3.connect(str(DB_PATH)) as source, sqlite3.connect(str(temp)) as dest:
-            source.backup(dest)
-        temp.replace(target)
+        # 一定要显式 close：`with sqlite3.connect(...)` 只提交事务、不关连接，
+        # 连接还开着的时候 Windows 不允许 rename，快照会永远停在 .part。
+        source = sqlite3.connect(str(DB_PATH))
+        dest = sqlite3.connect(str(temp))
+        source.backup(dest)
     except Exception as exc:                            # noqa: BLE001 - 备份失败不该拖垮主流程
-        try:
-            temp.unlink(missing_ok=True)
-        except OSError:
-            pass
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}", "created": ""}
+    finally:
+        if dest is not None:
+            dest.close()
+        if source is not None:
+            source.close()
+    try:
+        temp.replace(target)
+    except OSError as exc:
+        purge.unlink(temp)
+        return {"ok": False, "error": f"重命名失败：{exc}", "created": ""}
 
     removed = 0
     for old in backups()[:-BACKUP_KEEP]:
@@ -68,9 +85,12 @@ def run(force: bool = False) -> dict[str, Any]:
 def status() -> dict[str, Any]:
     items = backups()
     latest = items[-1] if items else None
+    manual = len([p for p in BACKUP_DIR.glob(f"{BACKUP_PREFIX}*.db") if not DAILY.match(p.name)]) \
+        if BACKUP_DIR.is_dir() else 0
     return {
         "dir": str(BACKUP_DIR),
         "count": len(items),
+        "manual": manual,
         "latest": str(latest) if latest else "",
         "latest_size": latest.stat().st_size if latest else 0,
         "latest_at": time.strftime("%Y-%m-%d %H:%M", time.localtime(latest.stat().st_mtime)) if latest else "",
