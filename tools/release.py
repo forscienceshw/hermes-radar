@@ -105,7 +105,7 @@ def tag_exists(name: str) -> bool:
 # --------------------------------------------------------------------------- #
 # 各步骤
 # --------------------------------------------------------------------------- #
-def preflight(branch_ok: bool) -> tuple[str, list[str]]:
+def preflight(branch_ok: bool, run_tests: bool = True) -> str:
     say("① 检查工作区")
     repo = Repo(ROOT)
     if not repo.has_commits():
@@ -121,6 +121,10 @@ def preflight(branch_ok: bool) -> tuple[str, list[str]]:
         die("还有没提交的改动，先 radar.py save \"说明\"：\n  " +
             "\n  ".join(f"{state} {path}" for state, path in pending[:10]))
 
+    if not run_tests:
+        say("② 跳过测试（--skip-tests）")
+        return branch
+
     say("② 跑测试")
     # 用安装目录自己的虚拟环境跑：PATH 里的 python 往往没装 httpx/fastapi，
     # 一跑就是一片 ImportError，看着像代码坏了。
@@ -129,11 +133,17 @@ def preflight(branch_ok: bool) -> tuple[str, list[str]]:
     result = subprocess.run([python, "-m", "unittest", "discover", "-s", "tests", "-t", "."],
                             cwd=str(ROOT), text=True, encoding="utf-8", errors="replace",
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    tail = (result.stdout or "").strip().splitlines()[-6:]
-    say("  " + "\n  ".join(tail) if tail else "  （没有输出）")
+    lines = (result.stdout or "").strip().splitlines()
     if result.returncode != 0:
-        die("测试没过，不发布。")
-    return branch, pending
+        # 别只甩最后几行：失败用例的名字才是能动手的东西。
+        bad = [line for line in lines if line.startswith(("ERROR:", "FAIL:"))]
+        if bad:
+            say("  这些没过：")
+            say("  " + "\n  ".join(bad[:12]))
+        say("  " + "\n  ".join(lines[-6:]))
+        die("测试没过，不发布。查清楚再发，或者确认是环境抖动后加 --skip-tests。")
+    say("  " + "\n  ".join(lines[-4:]))
+    return branch
 
 
 def set_version(version: str) -> None:
@@ -282,6 +292,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--version", default="", help="指定版本号，跳过自动 bump")
     parser.add_argument("--dry-run", action="store_true", help="只检查不发布")
     parser.add_argument("--skip-build", action="store_true", help="复用 dist/exe 里的旧产物")
+    parser.add_argument("--skip-tests", action="store_true", help="跳过测试（只在确认是环境抖动时用）")
     parser.add_argument("--no-push", action="store_true", help="不推 git（只发 Release）")
     parser.add_argument("--any-branch", action="store_true", help="允许从非 main 分支发布")
     parser.add_argument("--push-proxy", default="", help="git push 用的代理")
@@ -290,7 +301,7 @@ def main(argv: list[str]) -> int:
     say("=" * 60)
     say("发布 Hermes 科研雷达")
     say("=" * 60)
-    preflight(branch_ok=not args.any_branch)
+    preflight(branch_ok=not args.any_branch, run_tests=not args.skip_tests)
 
     current = project_version()
     version = args.version or bump(current, args.bump)
