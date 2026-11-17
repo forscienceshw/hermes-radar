@@ -251,7 +251,8 @@ def snapshot() -> dict[str, Any]:
         title = (session.get("last_title") or "").strip()
         wechat_hint = (
             f"通道是通的：{session.get('last_display', '—')} 还收到"
-            f"{(who + ' 的') if who else ''}《{title[:20]}》，但它只进了会话列表，"
+            + (f" {who} 的" if who else "")
+            + f"《{title[:20]}》，但它只进了会话列表，"
             "正文没写进本地库——4.x 平时就是这样，只有打开一次「订阅号」才会把攒着的消息"
             "一起落盘。落盘后雷达 60 秒内自动补采，不用手动刷新。入口任选一个：" + entry)
     elif stalled:
