@@ -436,3 +436,8 @@ body.viewer-open{overflow:hidden}
 .update-bar{flex:1;min-width:120px;height:8px;border-radius:5px;background:#e9edf0;overflow:hidden}
 .update-bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#15966d,#126e67);transition:width .3s ease}
 .update-notes{margin-top:13px;background:#f7f9fa;border:1px solid #e8edf0;border-radius:8px;padding:12px 14px;white-space:pre-wrap;font-size:13px;line-height:1.7;color:#3d4a57;max-height:260px;overflow:auto}
+
+/* hidden 属性会被上面的 display:inline-flex / flex 覆盖掉（同优先级，类选择器赢）。
+   徽标、进度条、更新按钮都靠 hidden 控制显隐，漏了这条就会一直显示"有新版本"。
+   这条必须放最后。 */
+[hidden]{display:none!important}
