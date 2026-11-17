@@ -927,6 +927,12 @@ def silent_install(args: list[str]) -> int:
             pass
         options.desktop_shortcut = bool(record.get("desktop_shortcut", True))
         options.autostart = bool(record.get("autostart", True))
+    else:
+        # 手里这个目录不是安装包装出来的（比如从 git 拉下来手工跑的），
+        # 静默更新时就别顺手往桌面塞快捷方式、也别偷偷加开机自启 ——
+        # 用户没要求过的东西，一次都不该出现。
+        options.desktop_shortcut = False
+        options.autostart = False
 
     # 第二遍：命令行显式给的覆盖掉上面的推断
     for arg in args:
