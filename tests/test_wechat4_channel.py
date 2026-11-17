@@ -158,6 +158,72 @@ class PushSummaryTests(unittest.TestCase):
         self.assertEqual(result["samples"], [])
 
 
+class SessionActivityTests(unittest.TestCase):
+    """会话表是唯一能证明「客户端还在不在收公众号」的地方，必须钉住。"""
+
+    def _cache(self, root: Path, last_gh: int, last_chat: int) -> Path:
+        import sqlite3
+        cache = root / "wechat4"
+        (cache / "session").mkdir(parents=True)
+        (cache / "contact").mkdir(parents=True)
+        con = sqlite3.connect(str(cache / "session" / "session.db"))
+        con.execute("CREATE TABLE SessionTable (username, last_timestamp, unread_count, "
+                    "summary, last_msg_type)")
+        con.executemany("INSERT INTO SessionTable VALUES (?,?,?,?,?)", [
+            ("gh_zhuyun", last_gh, 2, "知云那篇推文", 49),
+            ("gh_bio", last_gh - 3600, 1, "另一家的推文", 49),
+            ("gh_old", last_gh - 40 * 86400, 1, "很久以前", 49),
+            ("wxid_friend", last_chat, 0, "私聊", 1),
+        ])
+        con.commit()
+        con.close()
+        con = sqlite3.connect(str(cache / "contact" / "contact.db"))
+        con.execute("CREATE TABLE contact (username, remark, nick_name, alias)")
+        con.executemany("INSERT INTO contact VALUES (?,?,?,?)", [
+            ("gh_zhuyun", "", "知云文献阅读", ""),
+            ("gh_bio", "", "文献速递", ""),
+            ("gh_old", "", "老号", ""),
+        ])
+        con.commit()
+        con.close()
+        return cache
+
+    def test_counts_only_gh_and_reports_gap(self) -> None:
+        now = int(time.time())
+        with TemporaryDirectory() as tmp:
+            cache = self._cache(Path(tmp), last_gh=now - 4 * 3600, last_chat=now - 60)
+            result = live.session_activity(hours=3, cache=cache)
+        self.assertEqual(result["accounts"], 3)
+        self.assertEqual(result["recent"], 0)          # 4 小时前那次不在 3 小时窗口里
+        self.assertAlmostEqual(result["last_ago"], 4.0, delta=0.2)
+        self.assertEqual(result["last_display"], time.strftime(
+            "%m-%d %H:%M", time.localtime(now - 4 * 3600)))
+        # 私聊还在收 → 证明客户端活着，只是没在收公众号
+        self.assertGreater(result["chat_at"], result["last_at"])
+
+    def test_missing_session_db_is_empty_not_crash(self) -> None:
+        with TemporaryDirectory() as tmp:
+            self.assertEqual(live.session_activity(cache=Path(tmp) / "nope"), {})
+            self.assertEqual(live.session_hint("gh_x", cache=Path(tmp) / "nope"), {})
+
+    def test_hint_keeps_title_when_body_missing(self) -> None:
+        now = int(time.time())
+        with TemporaryDirectory() as tmp:
+            cache = self._cache(Path(tmp), last_gh=now - 600, last_chat=now - 60)
+            hint = live.session_hint("gh_zhuyun", cache=cache)
+        self.assertEqual(hint["title"], "知云那篇推文")
+        self.assertEqual(hint["unread"], 2)
+        self.assertEqual(hint["last_type"], 49)
+
+    def test_name_to_gh_must_be_unique(self) -> None:
+        with TemporaryDirectory() as tmp:
+            cache = self._cache(Path(tmp), last_gh=1, last_chat=1)
+            self.assertEqual(live.gh_for_name("知云文献阅读", cache=cache), "gh_zhuyun")
+            # 「文献」同时命中「知云文献阅读」，不唯一就不能瞎认
+            self.assertEqual(live.gh_for_name("文献", cache=cache), "")
+            self.assertEqual(live.gh_for_name("不存在的号", cache=cache), "")
+
+
 class SpaceTests(unittest.TestCase):
     def test_on_c_only_matches_system_drive(self) -> None:
         from app.services import wechat_space

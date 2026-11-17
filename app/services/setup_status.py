@@ -140,13 +140,22 @@ def _wechat_state() -> dict[str, Any]:
         # 公众号库写不动了——这才是"读不到新推文"的真凶。库里的条数和最后写入
         # 时间都摆出来，用户一眼能看出是微信自己没存，而不是雷达没读。
         biz = diagnose.get("biz_write") or {}
+        sess = diagnose.get("session") or {}
+        # 凌晨 2~6 点公众号本来就少，其余时段两小时没动静就算异常
+        quiet_hours = 10 if _time.localtime().tm_hour in (2, 3, 4, 5, 6) else 2
         if biz.get("ago") is not None:
             detail += (f"；公众号库共 {diagnose.get('biz_rows', 0)} 条，"
                        f"最后写入 {biz['at'][5:]}")
             # 深夜公众号本来就少，白天两小时没动静才算真停了
-            quiet_hours = 10 if _time.localtime().tm_hour in (0, 1, 2, 3, 4, 5, 6, 7, 23) else 2
             if float(biz["ago"]) >= quiet_hours:
                 diagnose["stalled"] = round(float(biz["ago"]))
+        # 会话表比库文件更能说明问题：私聊一直在动、公众号会话一条不动，就是
+        # 客户端根本没在收公众号推送（4.x 升级后把通知开关回退了），不是读错库。
+        if sess.get("last_ago") is not None:
+            detail += (f"；公众号会话最后动静 {sess['last_display']}，"
+                       f"近 3 小时 {sess['recent']} 个号推过")
+            if not sess["recent"] and float(sess["last_ago"]) >= quiet_hours:
+                diagnose["silent"] = round(float(sess["last_ago"]))
         if diagnose.get("error"):
             detail += f"（{diagnose['error']}）"
         return {"state": "ready", "version": "4.x", "channel": "4.x",
@@ -189,6 +198,8 @@ def snapshot() -> dict[str, Any]:
     diagnose = wechat.get("diagnose") or {}
     thin = bool(diagnose.get("thin"))
     stalled = diagnose.get("stalled")
+    silent = diagnose.get("silent")
+    session = diagnose.get("session") or {}
     if wechat["state"] == "unsupported-4x":
         wechat_detail = "微信 4.x 尚未适配，暂时读不到它的数据库"
     elif wechat["state"] == "ready":
@@ -208,8 +219,16 @@ def snapshot() -> dict[str, Any]:
         {"id": "worker", "label": "后台处理进程", "state": "ok" if db.get("worker_alive") else "warn",
          "detail": "心跳正常" if db.get("worker_alive") else "没有心跳，抓取和精读会停住"},
         {"id": "wechat", "label": "微信数据读取",
-         "state": "warn" if (thin or stalled or not wechat_ok) else "ok",
+         "state": "warn" if (thin or stalled or silent or not wechat_ok) else "ok",
          "detail": (
+             f"公众号会话最后一次动静是 {session.get('last_display', '—')}，之后 {silent} 小时"
+             f"一条都没进来；同一时间私聊还在收（{session.get('chat_display', '—')}）。"
+             "这是电脑微信没在收公众号，不是雷达读不到。三处开关都查一遍："
+             "① 电脑微信 → 左下角设置 → 通知 → 打开「订阅号消息 / 公众号消息」；"
+             "② 手机微信 → 设置 → 新消息通知 → 确认「订阅号消息」是开的；"
+             "③ 电脑微信 → 帮助与反馈 → 右上小扳手 → 故障修复 →「订阅号消息」，"
+             "修完退出微信重新登录。"
+             if silent else
              f"{wechat_detail}。微信已经 {stalled} 小时没往公众号库里写过东西了——"
              "客户端自己没在收，不是雷达读不到。在电脑微信点开一次「订阅号消息」"
              "并往下拉，再点这里的「重新检查」"

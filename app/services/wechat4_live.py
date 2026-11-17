@@ -1032,6 +1032,135 @@ def official_articles(since_ts: int | None = None, per_account: int = 300,
     return out
 
 
+def recent_for(username: str, limit: int = 24, days: int = 365,
+               cache: Path | None = None) -> list[dict[str, Any]]:
+    """某一个公众号在本机的文章卡片（4.x 版）。
+
+    3.x 是 ``PublicMsg`` 一张表按 ``TalkerId`` 查；4.x 是按账号分表存在
+    ``biz_message_*`` 里，只能逐条比 ``user_name``。
+    """
+    cache = cache or DEFAULT_CACHE
+    since = int(time.time() - max(1, int(days)) * 86400) if days else None
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for name, row in iter_recent(cache, "message/biz_message_*.db",
+                                 limit=5000, since=since):
+        if name != username:
+            continue
+        if base_type(row["local_type"]) != 49:
+            continue
+        article = article_of(message_text(row))
+        if not article or article["canonical"] in seen:
+            continue
+        seen.add(article["canonical"])
+        out.append({
+            "create_time": int(row["create_time"] or 0),
+            "local_id": int(row["local_id"] or 0),
+            "title": article["title"],
+            "url": article["url"],
+            "canonical_url": article["canonical"],
+            "digest": article["digest"],
+            "visits": article.get("visits") or "",
+        })
+    out.sort(key=lambda item: item["create_time"], reverse=True)
+    return out[:max(1, int(limit))]
+
+
+def session_hint(username: str, cache: Path | None = None) -> dict[str, Any]:
+    """会话表里这个号「最后一条推送」的标题和时间。
+
+    4.x 升级后有段时间正文不再落盘，但会话表的摘要一直是最新的——所以哪怕
+    一篇文章都读不出来，也能告诉用户「客户端收到了什么、最后一次是几点」。
+    """
+    path = (cache or DEFAULT_CACHE) / "session" / "session.db"
+    if not path.is_file():
+        return {}
+    try:
+        con = _connect(path)
+    except sqlite3.Error:
+        return {}
+    try:
+        row = con.execute(
+            "SELECT last_timestamp, unread_count, summary, last_msg_type "
+            "FROM SessionTable WHERE username=?", (username,)).fetchone()
+    except sqlite3.Error:
+        return {}
+    finally:
+        con.close()
+    if not row:
+        return {}
+    at = int(row[0] or 0)
+    return {
+        "at": at,
+        "at_display": time.strftime("%Y-%m-%d %H:%M", time.localtime(at)) if at else "",
+        "title": (row[2] or "").strip(),
+        "unread": int(row[1] or 0),
+        "last_type": int(row[3] or 0),
+    }
+
+
+def gh_for_name(name: str, cache: Path | None = None) -> str:
+    """把面板里的号名对到 gh_ 编号。精确优先，放宽成包含时必须唯一命中。"""
+    names = account_names(cache or DEFAULT_CACHE)
+    target = (name or "").strip()
+    if not target:
+        return ""
+    for username, label in names.items():
+        if username.startswith("gh_") and label.strip() == target:
+            return username
+    exact = [u for u, label in names.items()
+             if u.startswith("gh_") and label.strip().lower() == target.lower()]
+    if len(exact) == 1:
+        return exact[0]
+    loose = [u for u, label in names.items()
+             if u.startswith("gh_") and target in (label or "")]
+    return loose[0] if len(loose) == 1 else ""
+
+
+def session_activity(hours: int = 3, cache: Path | None = None) -> dict[str, Any]:
+    """公众号会话最近有没有动静。
+
+    这一项比「库文件最后写入时间」更能说明问题：私聊在收、公众号会话一条不动，
+    就是客户端根本没在收公众号推送，而不是我们读错了库。
+    """
+    cache = cache or DEFAULT_CACHE
+    path = cache / "session" / "session.db"
+    if not path.is_file():
+        return {}
+    try:
+        con = _connect(path)
+    except sqlite3.Error:
+        return {}
+    try:
+        now = int(time.time())
+        last = con.execute(
+            "SELECT username, last_timestamp, summary FROM SessionTable "
+            "WHERE username LIKE 'gh_%' ORDER BY last_timestamp DESC LIMIT 1").fetchone()
+        recent = int(con.execute(
+            "SELECT count(*) FROM SessionTable WHERE username LIKE 'gh_%' AND last_timestamp>=?",
+            (now - hours * 3600,)).fetchone()[0])
+        chats = con.execute(
+            "SELECT max(last_timestamp) FROM SessionTable "
+            "WHERE username NOT LIKE 'gh_%'").fetchone()[0]
+        total = int(con.execute(
+            "SELECT count(*) FROM SessionTable WHERE username LIKE 'gh_%'").fetchone()[0])
+    except sqlite3.Error:
+        return {}
+    finally:
+        con.close()
+    at = int(last[1] or 0) if last else 0
+    return {
+        "accounts": total,
+        "recent": recent,
+        "last_at": at,
+        "last_display": time.strftime("%m-%d %H:%M", time.localtime(at)) if at else "",
+        "last_ago": round((time.time() - at) / 3600, 1) if at else None,
+        "last_title": (last[2] or "").strip() if last else "",
+        "chat_at": int(chats or 0),
+        "chat_display": (time.strftime("%m-%d %H:%M", time.localtime(int(chats)))
+                         if chats else ""),
+    }
+
 def self_links(since_ts: int | None = None, per_chat: int = 300,
                cache: Path | None = None) -> list[dict[str, Any]]:
     """自己给自己（含文件传输助手）转发的文章卡片。"""
@@ -1161,6 +1290,7 @@ def diagnose(days: int = 7, samples: int = 5) -> dict[str, Any]:
         "pushes": push_summary(days, cache=cache),
         "biz_rows": biz_rows(cache),
         "biz_write": biz_last_write(),
+        "session": session_activity(cache=cache),
     }
 
 

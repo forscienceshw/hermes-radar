@@ -8,7 +8,7 @@ import sys
 import threading
 import uuid
 from contextlib import asynccontextmanager
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -660,8 +660,14 @@ def wechat_account_articles(account_pk: int, limit: int = 24, offset: int = 0, d
     account = db.one("SELECT * FROM wechat_accounts WHERE id=?", (account_pk,))
     if not account:
         raise HTTPException(404, "公众号不存在")
-    from .services import filters
-    gh_id = wechat_public.gh_id_for(account["name"], account.get("account_id") or "")
+    from .services import filters, wechat4_live, wechat_self_archive
+    channel = wechat_self_archive.local_channel()
+    gh_id = (account.get("account_id") or "").strip()
+    if channel == "4.x" and not gh_id:
+        # 4.x 的号名要从它自己的通讯录里对，3.x 那份是冻结的旧库
+        gh_id = wechat4_live.gh_for_name(account["name"])
+    if not gh_id:
+        gh_id = wechat_public.gh_id_for(account["name"], gh_id)
     if gh_id and (account.get("account_id") or "") != gh_id:
         # 顺手把编号补上：本机监测和面板都靠它对号。
         db.execute("UPDATE wechat_accounts SET account_id=?,updated_at=? WHERE id=?",
@@ -673,10 +679,31 @@ def wechat_account_articles(account_pk: int, limit: int = 24, offset: int = 0, d
             "total": 0, "offset": offset, "limit": limit, "has_more": False, "items": []}
     if not gh_id:
         return {**base, "error": "没能把网页上的号名对到微信内部编号：微信里可能没关注它，或者备注名和清单不一致"}
-    try:
-        payload = wechat_public.recent_articles(gh_id, limit=limit, offset=offset, days=days)
-    except wechat_public.PublicMsgUnavailable as exc:
-        return {**base, "error": str(exc)}
+    if channel == "4.x":
+        rows = wechat4_live.recent_for(gh_id, limit=min(60, max(1, limit)), days=days)
+        hint = wechat4_live.session_hint(gh_id)
+        articles = [{
+            "canonical_url": row["canonical_url"],
+            "url": row["url"],
+            "title": row["title"] or "(无标题)",
+            "summary": (row["digest"] or "")[:160],
+            "cover": "",
+            "published_at": datetime.fromtimestamp(row["create_time"], timezone.utc)
+                                     .isoformat(timespec="seconds") if row["create_time"] else "",
+            "message_id": row["local_id"],
+        } for row in rows[offset:]]
+        payload = {"items": articles, "total": len(rows),
+                   "has_more": len(rows) > offset + len(articles)}
+        if not articles and hint:
+            # 正文没落盘时，会话表里至少还有「最后一条推文的标题和时间」。
+            payload["note"] = (f"微信收到了这条推送，但没把正文存到本地："
+                               f"{hint['at_display']}「{hint['title'][:40]}」。"
+                               f"这说明公众号通道是通的，卡在客户端保存这一环。")
+    else:
+        try:
+            payload = wechat_public.recent_articles(gh_id, limit=limit, offset=offset, days=days)
+        except wechat_public.PublicMsgUnavailable as exc:
+            return {**base, "error": str(exc)}
     articles = payload.get("items") or []
     canonicals = [item["canonical_url"] for item in articles]
     marks = wechat_panel.marks_for(db, canonicals)
