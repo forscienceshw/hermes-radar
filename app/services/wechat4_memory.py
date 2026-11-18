@@ -46,7 +46,11 @@ CARD_RE = re.compile(
 # 号信息：{"…","showName":"纳米孔测序圈子","sourceUsername":"gh_b454d3a6ed68",…}
 ACC_RE = re.compile(
     rb'"showName":"((?:[^"\\]|\\.)*)","sourceUsername":"(gh_[0-9a-z]+)"')
-URL_RE = re.compile(rb"https?://mp\.weixin\.qq\.com/s[^\s\"'<>\\\x00]{10,400}")
+# 只收可打印字符：进程堆里 URL 常常紧挨着二进制字段，以前放过 \x02 这类
+# 控制字符，结果归档时 httpx 直接抛 "Invalid non-printable ASCII character"，
+# 条目被记成失败。正则截断在控制字符处，剩下的前缀仍是能打开的链接
+# （__biz + mid + idx + sn 齐了就够，尾部 chksm 掉了不影响）。
+URL_RE = re.compile(rb"https?://mp\.weixin\.qq\.com/s[^\x00-\x20\"'<>\\\x7f]{10,400}")
 MID_IN_URL = re.compile(r"[?&]mid=(\d+)")
 
 READ_CHUNK = 8 << 20          # 单次最多读 8 MB

@@ -217,3 +217,21 @@ RadarSetup.exe /S --dir=E:\RadarInstallTest --port=8899 --no-autostart --no-desk
 - 内存里的卡片是「每个号一条最新」，不是全部历史。同批多条靠 URL 池兜底，
   别指望卡片给全。
 - 体检里 `memory.available` 为真时微信项直接给绿灯，不要再教用户去点订阅号。
+
+## 额度用尽 ≠ 这篇读坏了（2026-11-18 起）
+
+`_check_daily_limit` 以前抛普通 `RuntimeError`，worker 按普通失败处理：重试四次后
+`fail_item` 把条目写成 `error`。当天额度一满，剩下的真文章全被判死，第二天额度
+恢复了也没人再读——一天之内 230 条真文章这样没了。
+
+现在的分工是死的：
+
+- 额度检查抛 `DailyLimitReached`，带 `retry_at`（本地次日零点 + 0~15 分钟错峰）。
+- worker 单独 catch：`reschedule_job(..., reset_attempts=True)`，**不扣重试次数、
+  不改条目状态、不记 item_error**。顺延是排队，不是失败。
+- `ensure_daily_budget()` 放在 analyze 任务最前面，没额度就不抓正文、不分诊图片，
+  整单直接顺延。别把它挪到 LLM 调用前——那就又白抓一遍正文了。
+- 启动时 `requeue_limit_blocked()` 只捞 `error` 文本里提到保险丝/额度的条目，
+  别的错因不动。捞回后状态回到 `discovered`，第二天额度归零时自然排队。
+- 别用 `RuntimeError` 表达"今天排不上"。凡是"等一等就好"的情况，都要有自己的
+  异常类型 + 顺延，不能走失败重试这条路。

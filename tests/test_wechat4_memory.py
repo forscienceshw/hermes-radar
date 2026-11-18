@@ -47,6 +47,16 @@ class CardRegexTest(unittest.TestCase):
         self.assertIsNotNone(m)
         self.assertFalse(m.group(3).decode().startswith("gh_"))
 
+    def test_url_stops_at_control_bytes(self):
+        """堆里的 URL 后面常跟二进制字段；带上 \\x02 会让 httpx 直接拒发。"""
+        raw = (b"https://mp.weixin.qq.com/s?__biz=MzE5&mid=2247485001&idx=1&sn=abc123"
+               b"\x02\x00\x00rest")
+        m = mem.URL_RE.search(raw)
+        self.assertIsNotNone(m)
+        url = m.group(0).decode()
+        self.assertNotIn("\x02", url)
+        self.assertEqual(mem.MID_IN_URL.search(url).group(1), "2247485001")
+
 
 class _FakeScan:
     def __init__(self, cards):
