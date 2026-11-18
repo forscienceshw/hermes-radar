@@ -6,6 +6,9 @@
   "default_poll_seconds": 300,
   "request_timeout_seconds": 35,
   "max_html_mb": 25,
+  "http_proxy": "",
+  "auto_update_check": true,
+  "update_mirror": "",
   "max_images_per_article": 12,
   "max_image_mb": 6,
   "image_triage_enabled": true,
@@ -66,7 +69,7 @@
     "long_material_strategy": "head_tail",
     "max_ideas": 8,
     "max_images": 6,
-    "daily_call_limit": 1200,
+    "daily_call_limit": 5000,
     "chat_context_tokens": 0,
     "accounts": []
   },
@@ -76,7 +79,8 @@
     "max_pdf_mb": 100,
     "max_per_item": 10,
     "extract_text": true,
-    "download_references": false
+    "download_references": false,
+    "title_lookup": true
   },
   "notifications": {
     "enabled": true,
@@ -116,6 +120,7 @@
   },
   "analysis": {
     "custom_reading_prompt": "",
-    "prompt_version": "research-reader-v2"
+    "prompt_version": "research-reader-v2",
+    "concurrency": 4
   }
 }
