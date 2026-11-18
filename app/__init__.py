@@ -17,3 +17,9 @@ def _read_version() -> str:
 
 
 __version__ = _read_version()
+
+# 删除垫片是解释器启动时打的补丁，只能在这里装回原始函数 —— 详见 app/native_delete.py
+from .native_delete import restore_native_deletes as _restore_native_deletes  # noqa: E402
+
+_restore_native_deletes()
+del _restore_native_deletes

@@ -2,12 +2,12 @@
 
 这台机器给 python 挂了"删除即入回收站"的垫片（`sitecustomize` 把 `os.remove` /
 `shutil.rmtree` / `Path.unlink` 换成了移入回收站）。测试每跑一遍，`TemporaryDirectory`
-里的临时库和 SQLite 的 `-shm` 就会在回收站里堆出两三百条，删得比不删还慢，用户看到
-的是"回收站里全是垃圾"。
+里的临时库和 SQLite 的 `-shm` 就在回收站里堆出两三百条，删得比不删还慢。
 
-临时目录里全是我们自己刚造出来的东西，直接抹掉就对了。所以在导入测试包时把
-`TemporaryDirectory` 的清理换成 `app/services/purge.py`（一次 `SHFileOperationW`，
-不带 `FOF_ALLOWUNDO`），从源头断掉。
+**根本解法在 `app/native_delete.py`**：导入 app 包时把垫片换掉的删除函数装回原始
+版本，整个进程（包括服务）从此真删除。这里再补一层：`TemporaryDirectory` 的清理
+换成 `app/services/purge.py`（一次 `SHFileOperationW`，不带 `FOF_ALLOWUNDO`），
+比逐个 unlink 快。
 """
 from __future__ import annotations
 
@@ -21,6 +21,13 @@ try:
     from app.services import purge
 except Exception:                                    # noqa: BLE001 - 没装依赖时照常跑测试
     purge = None
+
+# 根本解法在 app/native_delete.py：导入 app 包时就把垫片换掉的删除函数装回原始版本，
+# 所以测试进程里的 `os.remove` / `shutil.rmtree` 已经是真删除了。这里只补一层：
+# `TemporaryDirectory` 的清理换成一次 `SHFileOperationW`，比逐个 unlink 快。
+from app.native_delete import restore_native_deletes as _restore_native_deletes  # noqa: E402
+
+_RESTORED = _restore_native_deletes()
 
 
 if purge is not None and hasattr(tempfile.TemporaryDirectory, "_rmtree"):
