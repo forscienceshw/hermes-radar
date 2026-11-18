@@ -7,6 +7,7 @@ and the answer stays consistent between steps.
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -60,6 +61,23 @@ def _account_info() -> dict[str, Any]:
     except Exception:
         return {"total": 0, "enabled": 0}
     return {"total": int(row.get("total") or 0), "enabled": int(row.get("enabled") or 0)}
+
+
+def _memory_channel_state() -> dict[str, Any]:
+    """4.x 订阅号的内存通道最近一轮的战况（游标里留的痕）。"""
+    from ..db import Database
+    from ..paths import DB_PATH
+    try:
+        row = Database(DB_PATH).one(
+            "SELECT cursor_json FROM sources WHERE type='wechat_public_local'") or {}
+    except Exception:
+        return {}
+    try:
+        cursor = json.loads(row.get("cursor_json") or "{}")
+    except (TypeError, ValueError):
+        return {}
+    state = cursor.get("memory") if isinstance(cursor.get("memory"), dict) else {}
+    return state or {}
 
 
 def _llm_state(settings: dict[str, Any], secrets: dict[str, Any]) -> dict[str, Any]:
@@ -217,9 +235,13 @@ def snapshot() -> dict[str, Any]:
     # 通道通、但微信本地只存了零星正文 → 这一项给黄灯而不是绿灯。绿灯会让人以为
     # "都好了"，可资料库里就是没东西；黄灯配一句能照做的提示才有用。
     diagnose = wechat.get("diagnose") or {}
-    thin = bool(diagnose.get("thin"))
-    stalled = diagnose.get("stalled")
-    silent = diagnose.get("silent")
+    memory = _memory_channel_state()
+    # 内存通道通了以后，「本地库只有零星正文」不再是问题：订阅号本来就不落库，
+    # 推送列表是从微信进程内存里直接读的，不需要点开任何推文。
+    memory_ok = bool(memory.get("available")) and not memory.get("reason")
+    thin = bool(diagnose.get("thin")) and not memory_ok
+    stalled = diagnose.get("stalled") if not memory_ok else None
+    silent = diagnose.get("silent") if not memory_ok else None
     session = diagnose.get("session") or {}
     if wechat["state"] == "unsupported-4x":
         wechat_detail = "微信 4.x 尚未适配，暂时读不到它的数据库"
@@ -240,6 +262,16 @@ def snapshot() -> dict[str, Any]:
              "③ 左侧竖排图标里书本/报纸形状的「订阅号」。")
     if not wechat_ok:
         wechat_hint = wechat_detail
+    elif memory_ok:
+        kept = int(memory.get("kept") or 0)
+        scanned = int(memory.get("scanned") or 0)
+        accounts_n = int(memory.get("accounts") or 0)
+        pending = int(memory.get("pending_url") or 0)
+        wechat_hint = (
+            f"微信 {wechat.get('version') or '4.x'} 已就绪。订阅号走内存通道：刚读到 {scanned} 个号的最新推送"
+            f"（{accounts_n} 个号名已识别），本轮新增 {kept} 条"
+            + (f"，另有 {pending} 条还在等链接" if pending else "")
+            + "；不用点开任何推文，每 30 秒自动扫一遍。")
     elif silent:
         wechat_hint = (
             f"公众号会话最后一次动静是 {session.get('last_display', '—')}，之后 {silent} 小时"
@@ -271,7 +303,8 @@ def snapshot() -> dict[str, Any]:
         {"id": "worker", "label": "后台处理进程", "state": "ok" if db.get("worker_alive") else "warn",
          "detail": "心跳正常" if db.get("worker_alive") else "没有心跳，抓取和精读会停住"},
         {"id": "wechat", "label": "微信数据读取",
-         "state": "warn" if (thin or stalled or silent or not_stored or not wechat_ok) else "ok",
+         "state": "warn" if (not wechat_ok or (not memory_ok and (thin or stalled or silent or not_stored)))
+                  else "ok",
          "detail": wechat_hint},
         {"id": "llm", "label": "大模型精读", "state": "ok" if llm["configured"] else "warn",
          "detail": "已配置" if llm["configured"] else ("未填 Key" if llm["needs_key"] else "未启用")},
