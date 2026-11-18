@@ -516,15 +516,23 @@ class Database:
         self.execute("UPDATE items SET status=?,error=? WHERE id=?", (status, message[:4000], item_id))
         self.add_event("item_error", message, item_id)
 
-    def claim_job(self, owner: str, lease_seconds: int = 1800) -> dict[str, Any] | None:
+    def claim_job(self, owner: str, lease_seconds: int = 1800,
+                  exclude_kinds: tuple[str, ...] = ()) -> dict[str, Any] | None:
         # A cloud reading can legitimately run for several minutes; the lease must outlast it.
         timestamp = now_iso()
         lease = utcnow().timestamp() + lease_seconds
         from datetime import datetime, timezone
         lease_iso = datetime.fromtimestamp(lease, timezone.utc).isoformat(timespec="milliseconds")
+        # exclude_kinds 让「精读已经排满」时把槽位让给轮询/归档，而不是干等着。
+        # 没有它的话，prio 更靠前的精读任务会把后面的任务全堵住。
+        skip = ""
+        extra: tuple[Any, ...] = ()
+        if exclude_kinds:
+            skip = f" AND kind NOT IN ({','.join('?' * len(exclude_kinds))})"
+            extra = tuple(exclude_kinds)
         with self.transaction() as conn:
-            row = conn.execute("""SELECT * FROM jobs WHERE state IN ('READY','RETRY_WAIT') AND run_at<=?
-                ORDER BY priority,run_at LIMIT 1""", (timestamp,)).fetchone()
+            row = conn.execute(f"""SELECT * FROM jobs WHERE state IN ('READY','RETRY_WAIT') AND run_at<=?
+                {skip} ORDER BY priority,run_at LIMIT 1""", (timestamp, *extra)).fetchone()
             if not row:
                 return None
             updated = conn.execute("""UPDATE jobs SET state='LEASED',owner=?,lease_until=?,attempts=attempts+1,

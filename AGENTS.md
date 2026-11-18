@@ -235,3 +235,17 @@ RadarSetup.exe /S --dir=E:\RadarInstallTest --port=8899 --no-autostart --no-desk
   别的错因不动。捞回后状态回到 `discovered`，第二天额度归零时自然排队。
 - 别用 `RuntimeError` 表达"今天排不上"。凡是"等一等就好"的情况，都要有自己的
   异常类型 + 顺延，不能走失败重试这条路。
+
+## 精读并发：只放精读，不堵轮询（2026-11-18 起）
+
+- 设置项 `analysis.concurrency`（面板「同时精读几篇」），默认 3，范围 1–8，
+  改完 5 秒内生效，不需要重启。精读全是网络等待，串行就是自己把自己拖慢。
+- **只限制 `analyze_item`**：`Worker._skip_kinds()` 在精读排满时返回
+  `("analyze_item",)`，`claim_job(exclude_kinds=...)` 照常领轮询/归档。
+  否则把并发设成 1，30 秒扫号就会被一篇长文堵到十几分钟。
+- 总协程数 = `max(worker_concurrency, 精读上限 + 1)`，上限 12。`settings_watch`
+  按需补协程（**只增不减**，不取消正在跑的任务），所以调高上限马上多出槽位。
+- `budget_watch` 每 30 秒看一次额度：大于 0 就把因额度顺延、`run_at` 在未来的任务
+  分批（40 个）放回 READY。否则用户把上限从 1200 调到 5000，队列还要干等到零点。
+- 计数用 `self._analyze_running`。asyncio 单线程，增减之间没有 await，不用加锁。
+- 并发不是越高越好：云模型端会限流，且每篇都要下载正文和图片，8 以上收益接近 0。

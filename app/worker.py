@@ -60,6 +60,32 @@ class Worker:
         self.runner = JobRunner(self.db)
         self.owner = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
         self.stop_event = asyncio.Event()
+        # 精读是网络等待型任务，几篇一起跑才有意义。这个上限只限制 analyze_item，
+        # 轮询/归档照常走，不会被精读堵住。
+        self.analysis_limit = self._read_analysis_limit()
+        self._analyze_running = 0
+        self.loop_tasks: list[asyncio.Task] = []
+        self.tasks: list[asyncio.Task] = []
+
+    @staticmethod
+    def _read_analysis_limit() -> int:
+        raw = (get_settings().get("analysis") or {}).get("concurrency", 3)
+        try:
+            return max(1, min(8, int(raw)))
+        except (TypeError, ValueError):
+            return 3
+
+    def _desired_loops(self) -> int:
+        """总协程数要盖住「精读上限 + 干杂活的槽位」，否则并到不了设定的篇数。"""
+        try:
+            base = max(1, min(8, int(get_settings()["worker_concurrency"])))
+        except (TypeError, ValueError):
+            base = 3
+        return max(base, min(12, self.analysis_limit + 1))
+
+    def _skip_kinds(self) -> tuple[str, ...]:
+        """精读排满就只跳过精读，轮询/归档不受影响。"""
+        return ("analyze_item",) if self._analyze_running >= self.analysis_limit else ()
 
     def stop(self, *args) -> None:
         self.stop_event.set()
@@ -154,10 +180,49 @@ class Worker:
                 log.exception("公众号落盘监听失败")
             await asyncio.sleep(60)
 
-    async def loop(self, number: int) -> None:
+    async def settings_watch(self) -> None:
+        """设置页改了「同时精读几篇」要立刻生效，不能等重启。"""
         while not self.stop_event.is_set():
             try:
-                job = self.db.claim_job(self.owner)
+                self.analysis_limit = self._read_analysis_limit()
+                self._ensure_loops(self._desired_loops())
+            except Exception:
+                log.exception("读取并发设置失败")
+            try:
+                await asyncio.wait_for(self.stop_event.wait(), timeout=5)
+                return
+            except asyncio.TimeoutError:
+                continue
+
+    async def budget_watch(self) -> None:
+        """额度被调高时，把顺延到明天的那批任务提前放回来。"""
+        while not self.stop_event.is_set():
+            try:
+                from .services.analyzer import resume_budget_parked
+                freed = resume_budget_parked(self.db)
+                if freed:
+                    log.info("额度还有余量，把 %s 个顺延的精读任务提前放回来", freed)
+            except Exception:                       # noqa: BLE001 - 看门狗不该拖垮主流程
+                log.exception("恢复顺延任务失败")
+            try:
+                await asyncio.wait_for(self.stop_event.wait(), timeout=30)
+                return
+            except asyncio.TimeoutError:
+                continue
+
+    def _ensure_loops(self, wanted: int) -> None:
+        """按需补协程；只增不减，避免半路取消正在跑的任务。"""
+        while len(self.loop_tasks) < wanted:
+            self.loop_tasks.append(asyncio.create_task(self.loop(len(self.loop_tasks))))
+            self.tasks.append(self.loop_tasks[-1])
+            log.info("并发槽位增加到 %s 个（精读上限 %s）", len(self.loop_tasks), self.analysis_limit)
+
+    async def loop(self, number: int) -> None:
+        while not self.stop_event.is_set():
+            # 精读已经排满时把这一轮让给轮询/归档，而不是干等着精读腾位置。
+            skip = self._skip_kinds()
+            try:
+                job = self.db.claim_job(self.owner, exclude_kinds=skip)
             except Exception:
                 log.exception("领取任务失败")
                 await asyncio.sleep(2)
@@ -168,6 +233,9 @@ class Worker:
             log.info("执行 %s %s attempt=%s", job["kind"], job["id"], job["attempts"])
             payload = json_loads(job["payload_json"], {}) or {}
             item_id = payload.get("item_id")
+            counting = job["kind"] == "analyze_item"
+            if counting:
+                self._analyze_running += 1
             try:
                 await self.runner.handle(job)
                 self.db.complete_job(job["id"])
@@ -229,6 +297,9 @@ class Worker:
                     if job["kind"] == "deliver_batch" and payload.get("batch_id"):
                         self.db.execute("UPDATE notification_batches SET last_error=? WHERE id=?",
                                         (str(exc)[:4000], payload["batch_id"]))
+            finally:
+                if counting:
+                    self._analyze_running -= 1
             await asyncio.sleep(0)
 
     async def run(self) -> None:
@@ -270,16 +341,18 @@ class Worker:
         merged_batch = merge_closed_batches(self.db)
         if merged_batch and closed_before > 1:
             log.info("汇报批次已合并为 %s，队列中只保留一条发送任务", merged_batch)
-        log.info("Worker 启动 owner=%s recovered=%s", self.owner, recovered)
-        concurrency = max(1, min(8, int(get_settings()["worker_concurrency"])))
-        tasks = [asyncio.create_task(self.scheduler()), asyncio.create_task(self.heartbeat()),
-                 asyncio.create_task(self.jsonl_watcher()), asyncio.create_task(self.backup_loop()),
-                 asyncio.create_task(self.wechat_watcher())]
-        tasks += [asyncio.create_task(self.loop(i)) for i in range(concurrency)]
+        log.info("Worker 启动 owner=%s recovered=%s 精读上限=%s",
+                 self.owner, recovered, self.analysis_limit)
+        self.tasks = [asyncio.create_task(self.scheduler()), asyncio.create_task(self.heartbeat()),
+                      asyncio.create_task(self.jsonl_watcher()), asyncio.create_task(self.backup_loop()),
+                      asyncio.create_task(self.wechat_watcher()),
+                      asyncio.create_task(self.settings_watch()),
+                      asyncio.create_task(self.budget_watch())]
+        self._ensure_loops(self._desired_loops())
         await self.stop_event.wait()
-        for task in tasks:
+        for task in self.tasks:
             task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.gather(*self.tasks, return_exceptions=True)
 
 
 def main() -> None:

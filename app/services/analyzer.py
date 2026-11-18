@@ -483,6 +483,33 @@ def _check_daily_limit(db: Database) -> None:
 
 
 LIMIT_BLOCKED_MARK = "额度已用完"
+PARKED_MARK = "精读额度已用完"
+
+
+def daily_budget_left(db: Database) -> int:
+    """今天还剩几次本地精读额度。"""
+    limit = int(get_settings()["llm"]["daily_call_limit"])
+    row = db.one("SELECT value FROM runtime WHERE key=?", ("llm_calls:" + local_date(),))
+    return max(0, limit - (int(row["value"]) if row else 0))
+
+
+def resume_budget_parked(db: Database, batch: int = 40) -> int:
+    """额度被调高后，把顺延到明天的任务提前放回来。
+
+    否则用户上午把上限从 1200 调到 5000，队列还是干等到零点才动——设置改了
+    却看不到任何变化，和没改一样。每次只放一批，让队列平滑地铺开，不要一次
+    把几百条全推成 READY 去撞服务端限流。
+    """
+    if daily_budget_left(db) <= 0:
+        return 0
+    rows = db.query("""SELECT id FROM jobs WHERE kind='analyze_item' AND state='RETRY_WAIT'
+        AND run_at>? AND (last_error LIKE ? OR last_error LIKE '%保险丝%')
+        ORDER BY run_at LIMIT ?""", (now_iso(), f"%{PARKED_MARK}%", batch))
+    stamp = now_iso()
+    for row in rows:
+        db.execute("UPDATE jobs SET state='READY',run_at=?,last_error=NULL,updated_at=? WHERE id=?",
+                   (stamp, stamp, row["id"]))
+    return len(rows)
 
 
 def requeue_limit_blocked(db: Database) -> int:

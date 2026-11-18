@@ -98,6 +98,9 @@ DEFAULTS: dict[str, Any] = {
     "analysis": {
         "custom_reading_prompt": "",
         "prompt_version": "research-reader-v2",
+        # 同时有几篇在精读。精读是网络等待型任务（httpx 异步），并发比串行快得多；
+        # 上限受云模型端限流和本机带宽约束，8 已经够用，再高收益很小。
+        "concurrency": 3,
     },
 }
 
