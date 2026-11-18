@@ -58,6 +58,52 @@ class CardRegexTest(unittest.TestCase):
         self.assertEqual(mem.MID_IN_URL.search(url).group(1), "2247485001")
 
 
+class TwoShapeExtractionTest(unittest.TestCase):
+    """盒子里有两种 JSON 形态，缺一种就会漏掉一半以上推送。
+
+    A 形态（uniqueId + Title）有 gh 和标题但没有链接；B 形态（detailInfo +
+    ContentUrl + showName）有链接但没有 Title。只按 A 的整对象正则去匹配，
+    本机实测一次只有 84 张卡片、31 条带链接；两形态按 mid 合并后是 225 / 190。
+    """
+
+    def test_unique_id_pairs_gh_with_mid(self):
+        raw = (b'{"AppMsgId":2247487245,"DateTime":1794968546,"weight":200,'
+               b'"uniqueId":"gh_b454d3a6ed68@2247487245","localId":1,"Title":"x"}')
+        m = mem.UNIQ_RE.search(raw)
+        self.assertIsNotNone(m)
+        self.assertEqual(m.group(1), b"gh_b454d3a6ed68")
+        self.assertEqual(m.group(2), b"2247487245")
+
+    def test_title_window_stops_before_next_element(self):
+        raw = (b'"AppMsgId":111111,"DateTime":1794968546,"isPreview":false,'
+               b'"detailInfo":{"AudioDuRation":0},"Title":"\u7b2c\u4e00\u6761"}'
+               b'{"AppMsgId":222222,"DateTime":1794968550,"Title":"\u7b2c\u4e8c\u6761"}')
+        heads = list(mem.HEAD_RE.finditer(raw))
+        self.assertEqual(len(heads), 2)
+        win0 = raw[heads[0].start():heads[1].start()]
+        self.assertEqual(mem._decode_json_string(mem.TITLE_RE.search(win0).group(1)), "第一条")
+        win1 = raw[heads[1].start():]
+        self.assertEqual(mem._decode_json_string(mem.TITLE_RE.search(win1).group(1)), "第二条")
+
+    def test_assemble_merges_by_mid_and_keeps_partial(self):
+        gh_of = {"100": "gh_a", "200": "gh_b", "300": "gh_c"}
+        ts_of = {"100": 1794968546, "200": 1794968600, "300": 0}
+        title_of = {"100": "有标题也有链接", "200": "只有标题"}
+        mid_url = {"100": "https://mp.weixin.qq.com/s?__biz=A&mid=100&idx=1&sn=x",
+                   "300": "https://mp.weixin.qq.com/s?__biz=C&mid=300&idx=1&sn=y"}
+        cards = mem._assemble_cards(gh_of, ts_of, title_of, mid_url)
+        self.assertEqual([c["mid"] for c in cards], ["200", "100", "300"], "必须按时间倒序")
+        by_mid = {c["mid"]: c for c in cards}
+        self.assertEqual(by_mid["100"]["url"], mid_url["100"])
+        self.assertTrue(by_mid["100"]["canonical_url"])
+        self.assertEqual(by_mid["200"]["url"], "", "只有标题也要先收下，等下一轮补链接")
+        self.assertEqual(by_mid["300"]["title"], "", "只有链接也要收，标题可以后补")
+
+    def test_assemble_drops_cards_with_nothing(self):
+        cards = mem._assemble_cards({"400": "gh_d"}, {"400": 1794968546}, {}, {})
+        self.assertEqual(cards, [], "既没标题又没链接的空壳不该进队列")
+
+
 class _FakeScan:
     def __init__(self, cards):
         self.cards = cards

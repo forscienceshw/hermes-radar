@@ -172,6 +172,34 @@ def lexical_score(text: str, keywords: list[str], excluded: list[str] | None = N
     return score
 
 
+# 「批量归档」的暂停开关，存在 runtime 表里。API 置位，JobRunner 每个条目之间读一次；
+# 手动再次点「归档全部」会清掉它。放在这里是因为 api 和 pipeline 都 import utils，
+# 而 pipeline 不能反向 import api（会成环）。
+ARCHIVE_PAUSE_KEY = "archive_batch_paused"
+
+# 公众号名比对时要折叠的 OCR 易混字符：小写 L / 数字 1 / 竖线 都会被认成大写 I，
+# 数字 0 会被认成字母 O。公众号库里的名字有一批是 OCR 出来的（``Al-Protein
+# Design`` 其实是 ``AI-Protein Design``，``ScienceAl`` 是 ``ScienceAI``），
+# 不折叠就永远对不上 gh 编号，那些号也就永远进不了追踪名单。
+_OCR_CONFUSABLES = {"l": "i", "1": "i", "|": "i", "0": "o"}
+_OCR_DROP = ".-_·—–()（）[]【】:：/、,"
+
+
+def name_match_key(value: Any) -> str:
+    """公众号名比对键：NFKC + 去空白 + 去分隔符 + 折叠 OCR 易混字符。
+
+    只能当**退一步**的匹配用：先精确、再包含、最后才用它。因为它把 ``l`` 折成
+    ``i`` 之后，「Cell」和「Ceii」会撞在一起，所以调用方必须要求唯一命中。
+    """
+    text = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    text = "".join(text.split())
+    for ch in _OCR_DROP:
+        text = text.replace(ch, "")
+    for bad, good in _OCR_CONFUSABLES.items():
+        text = text.replace(bad, good)
+    return text
+
+
 def local_date() -> str:
     return datetime.now().astimezone().date().isoformat()
 

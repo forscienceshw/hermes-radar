@@ -11,9 +11,46 @@ from .services.notify import deliver_batch, flush_open_batches
 from .services.papers import process_item_papers
 from .services.relevance import assess_candidate, detect_marketing
 from .services.filters import load_rules, match as match_rules
-from .utils import now_iso, redact_secrets, stable_json
+from .utils import ARCHIVE_PAUSE_KEY, now_iso, redact_secrets, stable_json
 
 log = logging.getLogger(__name__)
+
+
+def start_archive_batch(db: Database) -> dict[str, Any]:
+    """手动开始「归档全部仅索引条目」。这一步同时是「继续」：先撤掉暂停标记。"""
+    remaining = db.one("SELECT COUNT(*) c FROM items WHERE status='discovered' AND excluded_at IS NULL")["c"]
+    if not remaining:
+        return {"queued": False, "remaining": 0}
+    db.clear_runtime(ARCHIVE_PAUSE_KEY)
+    running = db.one("""SELECT id FROM jobs WHERE kind='archive_history_batch'
+        AND state IN ('READY','RETRY_WAIT','LEASED')""")
+    if running:
+        return {"queued": True, "already_running": True, "remaining": remaining, "llm_calls": 0}
+    db.enqueue_job("archive_history_batch", {"version": 1, "batch_size": 8},
+                   dedupe_key=f"history-archive-start:all:{uuid.uuid4()}", priority=200, max_attempts=3)
+    return {"queued": True, "remaining": remaining, "llm_calls": 0}
+
+
+def stop_archive_batch(db: Database) -> dict[str, Any]:
+    """叫停批量归档：撤销排队中的批次，并让正在跑的那一批做完当前这条就收手。
+
+    不硬杀正在执行的协程——它可能正卡在一次 HTTP 下载里，硬杀会把条目留在半截
+    状态。所以走「标记 + 排空」：置暂停标记 → 取消还没被领走的批次任务 → 正在跑
+    的那一批在条目之间检查标记，做完手上这条就退出，不再续排。
+
+    放在这里而不是直接写进 API，是因为它是纯数据库操作，测试不该为了调它去
+    import 整个 FastAPI 应用。
+    """
+    db.set_runtime(ARCHIVE_PAUSE_KEY, now_iso())
+    cancelled = db.execute("""UPDATE jobs SET state='CANCELLED', updated_at=?
+        WHERE kind='archive_history_batch' AND state IN ('READY','RETRY_WAIT')""",
+        (now_iso(),))
+    alive = db.one("""SELECT COUNT(*) c FROM jobs WHERE kind='archive_history_batch' AND state='LEASED'""")["c"]
+    remaining = db.one("""SELECT COUNT(*) c FROM items WHERE status='discovered' AND excluded_at IS NULL""")["c"]
+    db.add_event("archive_paused",
+                 f"已暂停批量归档：撤销 {cancelled} 个排队批次，正在执行的一批会在当前这条结束后停下；"
+                 f"还剩 {remaining} 条未归档")
+    return {"paused": True, "cancelled": cancelled, "running_batches": alive, "remaining": remaining}
 
 
 class JobRunner:
@@ -189,6 +226,15 @@ class JobRunner:
     async def _archive_history_batch(self, payload: dict[str, Any]) -> None:
         source_id = payload.get("source_id")
         batch_size = max(1, min(20, int(payload.get("batch_size", 8))))
+
+        def paused() -> bool:
+            return bool(self.db.get_runtime(ARCHIVE_PAUSE_KEY))
+
+        # 暂停期间被重新排进来的批次直接收手，不要白跑一轮再退出。
+        if paused():
+            log.info("批量归档已暂停，跳过本批次")
+            return
+
         if source_id:
             rows = self.db.query("""SELECT id FROM items WHERE source_id=? AND status='discovered' AND excluded_at IS NULL
                 ORDER BY COALESCE(published_at,discovered_at),id LIMIT ?""", (source_id, batch_size))
@@ -197,6 +243,10 @@ class JobRunner:
                 ORDER BY COALESCE(published_at,discovered_at),id LIMIT ?""", (batch_size,))
         completed = errors = 0
         for row in rows:
+            # 用户按了停止：手上这条可能正卡在下载里，等它做完，下一条不再领。
+            if paused():
+                log.info("批量归档已暂停，做完当前条目后停止")
+                break
             try:
                 await self._archive(row["id"], archive_only=True)
                 completed += 1
@@ -208,6 +258,10 @@ class JobRunner:
                                     (source_id,))["c"]
         else:
             remaining = self.db.one("SELECT COUNT(*) c FROM items WHERE status='discovered' AND excluded_at IS NULL")["c"]
+        if paused():
+            self.db.add_event("history_archive_progress",
+                              f"历史全文归档已暂停：本批完成 {completed}，失败 {errors}，剩余 {remaining}", source_id=source_id)
+            return
         self.db.add_event("history_archive_progress",
                           f"历史全文归档：本批完成 {completed}，失败 {errors}，剩余 {remaining}；未调用云精读", source_id=source_id)
         if remaining:

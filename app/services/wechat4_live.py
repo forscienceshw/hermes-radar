@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Any, Iterable, Iterator
 
 from ..paths import DATA_DIR
+from ..utils import name_match_key
 
 # --------------------------------------------------------------------------- #
 # 常量
@@ -388,7 +389,11 @@ def decrypt_database(db_path: Path, out_path: Path, key_hex: str,
             total = header_pages
     total = max(total, 1)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(out_path, "wb") as handle:
+    # 先写临时文件再原子替换：以前是 open(out_path,"wb") 就地覆盖，别的进程
+    # （面板、体检、另一个 worker 协程）正好在读时就会读到半截文件，报
+    # "database disk image is malformed"，看起来像库坏了，其实只是写了一半。
+    tmp_path = out_path.with_name(out_path.name + ".tmp")
+    with open(tmp_path, "wb") as handle:
         for pgno in range(1, total + 1):
             page = overrides.get(pgno)
             if page is None:
@@ -399,6 +404,17 @@ def decrypt_database(db_path: Path, out_path: Path, key_hex: str,
                     chunk = raw[start:start + PAGE_SZ].ljust(PAGE_SZ, b"\x00")
                     page = _decrypt_page(key, chunk, pgno)
             handle.write(page)
+    # Windows 不允许替换被别的进程打开的文件；占着就先等，实在不行才退回就地覆盖。
+    for attempt in range(4):
+        try:
+            os.replace(tmp_path, out_path)
+            break
+        except OSError:
+            if attempt == 3:
+                shutil.copyfile(tmp_path, out_path)
+                tmp_path.unlink(missing_ok=True)
+            else:
+                time.sleep(0.2)
     return {"ok": True, "pages": total, "wal_pages": len(overrides)}
 
 
@@ -1104,7 +1120,12 @@ def session_hint(username: str, cache: Path | None = None) -> dict[str, Any]:
 
 
 def gh_for_name(name: str, cache: Path | None = None) -> str:
-    """把面板里的号名对到 gh_ 编号。精确优先，放宽成包含时必须唯一命中。"""
+    """把面板里的号名对到 gh_ 编号。精确优先，放宽成包含时必须唯一命中。
+
+    最后还有一层 OCR 折叠：库里有些名字是从截图/表格里认出来的，「Al-Protein
+    Design」其实是「AI-Protein Design」。这层只在前面全对不上时才用，且必须
+    唯一命中——折叠会把 l 折成 i，撞车时宁可不认。
+    """
     names = account_names(cache or DEFAULT_CACHE)
     target = (name or "").strip()
     if not target:
@@ -1118,7 +1139,12 @@ def gh_for_name(name: str, cache: Path | None = None) -> str:
         return exact[0]
     loose = [u for u, label in names.items()
              if u.startswith("gh_") and target in (label or "")]
-    return loose[0] if len(loose) == 1 else ""
+    if len(loose) == 1:
+        return loose[0]
+    folded = name_match_key(target)
+    hits = [u for u, label in names.items()
+            if u.startswith("gh_") and name_match_key(label) == folded]
+    return hits[0] if len(hits) == 1 else ""
 
 
 def session_activity(hours: int = 3, cache: Path | None = None) -> dict[str, Any]:

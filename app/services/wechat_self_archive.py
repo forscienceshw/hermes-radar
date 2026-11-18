@@ -25,7 +25,8 @@ from urllib.parse import urlsplit
 
 from ..paths import BASE_DIR, DATA_DIR, TMP_DIR
 from ..settings import get_secret, set_secret
-from ..utils import canonical_url, epoch_iso, extract_urls, json_loads, now_iso, parse_time
+from ..utils import (canonical_url, epoch_iso, extract_urls, json_loads, name_match_key,
+                     now_iso, parse_time)
 
 VENDOR_DIR = BASE_DIR / "analysis" / "wechatmsg_full" / "app" / "decrypt"
 ARCHIVE_DIR = DATA_DIR / "wechat-self"
@@ -904,14 +905,23 @@ def _public_account_filter(config: dict[str, Any], directory: dict[str, dict[str
         from ..db import Database
         accounts = Database().query("SELECT name,account_id FROM wechat_accounts WHERE enabled=1 AND fit!='EXCLUDE'")
         name_index: dict[str, list[str]] = {}
+        # 名字对不上 gh 时退一步用 OCR 折叠键：公众号库里有一批名字是 OCR 出来的，
+        # 「Al-Protein Design」（小写 L）其实是「AI-Protein Design」。不退这一步，
+        # 这些号永远进不了名单，表现就是「明明关注了却一条都收不到」。
+        ocr_index: dict[str, list[str]] = {}
         for user, info in directory.items():
             for alias in info["aliases"]:
                 name_index.setdefault(alias, []).append(user)
+                ocr_index.setdefault(name_match_key(alias), []).append(user)
         for account in accounts:
             matches: set[str] = set()
             if account.get("account_id"):
                 matches.add(str(account["account_id"]))
             matches.update(name_index.get(_account_name_key(account["name"]), []))
+            if not matches:
+                hits = set(ocr_index.get(name_match_key(account["name"]), []))
+                if len(hits) == 1:               # 折叠会带来误撞，必须唯一命中才认
+                    matches.update(hits)
             if matches:
                 allowed.update(matches)
                 catalog_matched.update(matches)

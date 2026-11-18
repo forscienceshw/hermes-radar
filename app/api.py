@@ -26,8 +26,8 @@ from .services.notify import flush_open_batches, send_test_notification
 from .services.relevance import assess_candidate
 from .services import wechat_panel, wechat_public
 from .settings import get_secret, get_settings, save_settings, secret_status, set_secret
-from .utils import (extract_bvid, extract_urls, job_error_is_retryable, json_loads, local_date, now_iso,
-                    parse_time, redact_secrets, stable_json, utcnow)
+from .utils import (ARCHIVE_PAUSE_KEY, extract_bvid, extract_urls, job_error_is_retryable, json_loads, local_date,
+                    now_iso, parse_time, redact_secrets, stable_json, utcnow)
 
 configure_logging("web")
 db = Database()
@@ -324,6 +324,10 @@ def progress() -> dict[str, Any]:
         rate = archives_per_min or (0.6 * max(1, int(queued.get("archive_running") or 0)))
         eta = int(archive_queued / rate * 60) if rate else None
     today_calls = db.one("SELECT value FROM runtime WHERE key=?", ("llm_calls:" + local_date(),))
+    # 批次是一条链：每批跑完再排下一批，两批之间有一两秒空档。只看「正在执行」会让
+    # 停止按钮一闪一闪，所以按「还有没有未终结的批次任务」来判断。
+    batch_jobs = db.one("""SELECT COUNT(*) c FROM jobs WHERE kind='archive_history_batch'
+        AND state IN ('READY','RETRY_WAIT','LEASED')""")
     return {
         "total": counts.get("total") or 0, "discovered": counts.get("discovered") or 0,
         "index_only": counts.get("index_only") or 0, "archived": counts.get("archived") or 0,
@@ -332,6 +336,9 @@ def progress() -> dict[str, Any]:
         "analyze_queued": int(queued.get("analyze_queued") or 0), "analyze_running": int(queued.get("analyze_running") or 0),
         "archives_last_10min": int(recent.get("archives") or 0), "analyses_last_10min": int(recent.get("analyses") or 0),
         "archives_per_minute": archives_per_min, "eta_seconds": eta, "running": running,
+        "archives_batch_running": sum(1 for j in running if j["kind"] == "archive_history_batch"),
+        "archive_batch_jobs": int((batch_jobs or {}).get("c") or 0),
+        "archive_paused": bool(db.get_runtime(ARCHIVE_PAUSE_KEY)),
         "llm_calls_today": int((today_calls or {}).get("value") or 0),
         "llm_call_limit": int((get_settings().get("llm") or {}).get("daily_call_limit") or 0),
         "time": now_iso(),
@@ -495,15 +502,15 @@ def archive_history(source_id: str) -> dict[str, Any]:
 @app.post("/api/archive-index-only")
 def archive_index_only() -> dict[str, Any]:
     """Queue throttled full-text archiving for every index-only item (no cloud reading)."""
-    remaining = db.one("""SELECT COUNT(*) c FROM items WHERE status='discovered' AND excluded_at IS NULL""")["c"]
-    if not remaining:
-        return {"queued": False, "remaining": 0}
-    running = db.one("""SELECT id FROM jobs WHERE kind='archive_history_batch' AND state IN ('READY','RETRY_WAIT','LEASED')""")
-    if running:
-        return {"queued": True, "already_running": True, "remaining": remaining, "llm_calls": 0}
-    db.enqueue_job("archive_history_batch", {"version": 1, "batch_size": 8},
-                   dedupe_key=f"history-archive-start:all:{uuid.uuid4()}", priority=200, max_attempts=3)
-    return {"queued": True, "remaining": remaining, "llm_calls": 0}
+    from .pipeline import start_archive_batch
+    return start_archive_batch(db)
+
+
+@app.post("/api/archive-index-only/stop")
+def archive_index_only_stop() -> dict[str, Any]:
+    """叫停批量归档：撤销排队批次，正在跑的那一批做完当前条目就停下。"""
+    from .pipeline import stop_archive_batch
+    return stop_archive_batch(db)
 
 
 @app.get("/api/wechat/accounts")

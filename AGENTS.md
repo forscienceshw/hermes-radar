@@ -249,3 +249,44 @@ RadarSetup.exe /S --dir=E:\RadarInstallTest --port=8899 --no-autostart --no-desk
   分批（40 个）放回 READY。否则用户把上限从 1200 调到 5000，队列还要干等到零点。
 - 计数用 `self._analyze_running`。asyncio 单线程，增减之间没有 await，不用加锁。
 - 并发不是越高越好：云模型端会限流，且每篇都要下载正文和图片，8 以上收益接近 0。
+
+## 批量归档必须能停（2026-11-18 起）
+
+- 停止走「标记 + 排空」，不 kill 协程：`runtime["archive_batch_paused"]` 置位 →
+  `archive_history_batch` 在**每个条目之间**检查一次 → 做完手上这条就退出，不续排。
+  直接杀会把条目留在半截状态（正文抓到一半、图片缺几张）。
+- 排队中的批次由 `UPDATE jobs SET state='CANCELLED'` 撤销；`LEASED` 的动不了，
+  靠标记收尾。所以按停止之后还会看到一条"批量归档"在跑几秒，是正常的。
+- 手动点「归档全部仅索引条目」= 继续：`start_archive_batch()` 会先清掉标记。
+- `start_archive_batch` / `stop_archive_batch` 是纯数据库函数，放在 `pipeline.py`，
+  API 只是薄壳。测试不该为了调它们去 import 整个 FastAPI 应用。
+
+## 内存盒子有两种 JSON，缺一种少一半（2026-11-18 起）
+
+- A 形态：`{"AppMsgId","DateTime","weight","uniqueId":"gh_x@mid","localId","Title"}`
+  → 有 gh 和标题，**没有链接**。
+- B 形态：`{"AppMsgId","DateTime","isPreview","detailInfo":{"ContentUrl",…},"showName","sourceUsername"}`
+  → 有链接和号名，**没有 Title**。
+- 必须按 `mid` 合并：gh 取 A 的 `uniqueId`（精确配对，不看字段顺序），标题取 A 的
+  `Title`（窗口截止到下一个 `"AppMsgId"`，否则会把邻居的标题认成自己的），
+  URL 取 URL 池里 `?mid=` 对得上的那条。实测 84 → 225 张卡片，带链接 31 → 190。
+- 别用 `json.loads` 整体解析：堆里的 JSON 会被截断、会被复制几十份、还会夹二进制。
+  逐字段正则比解析器稳。
+- `_decode_json_string` 里 **不要**对 `json.loads(bytes)` 的返回值再 `.decode()`：
+  它已经是 str，多调一次会抛异常并被吞掉，`\uXXXX` 转义就永远解不开。
+
+## 公众号名对不上 gh，就是收不到推送（2026-11-18 起）
+
+- 公众号库里的名字有一批是 OCR 出来的：`Al-Protein Design` 其实是 `AI-Protein Design`，
+  `ScienceAl` 是 `ScienceAI`，`A14Protein` 是 `AI4Protein`。启用名单里 644 个名字
+  有 35 个因此映射不到 gh，这些号一条推送都收不到，而且**没有任何报错**。
+- 匹配顺序固定：精确 → 忽略大小写 → 包含（唯一命中）→ `name_match_key` 折叠
+  （唯一命中）。折叠会把 `l`/`1`/`|` 折成 `i`、`0` 折成 `o`，所以撞车时必须放弃，
+  宁可报"对不上"也不能把 A 的文章算到 B 头上。
+- `wechat_accounts.account_id` 有值就直接用，不要再拿名字去猜。
+
+## 解密缓存要原子替换（2026-11-18 起）
+
+`decrypt_database` 以前 `open(out,"wb")` 就地覆盖，别的进程正在读时会读到半截文件，
+报 `database disk image is malformed`——看起来像库坏了，其实只是写了一半。现在写
+`.tmp` 再 `os.replace`；Windows 上目标被占用时重试 4 次，仍不行才退回就地覆盖。

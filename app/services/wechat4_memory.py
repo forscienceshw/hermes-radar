@@ -10,9 +10,10 @@
 2. 客户端内存：盒子卡片的 JSON 列表，每条带 ``AppMsgId``（mid）、``DateTime``、
    ``uniqueId``（``gh_xxx@mid``）和完整 ``Title``；另有文章 URL 池，按 mid 对齐。
 
-2026-11-18 实测：一次扫描 0.8 秒，拿到 78 个号各一条最新推送（时间跨 24 小时），
-2312 个 URL，mid 与 URL 的匹配率 16/16。这是 4.x 下唯一能恢复「自动读取所有
-公众号更新」的本地路径——不需要点开任何推文，不需要外部服务。
+2026-11-18 实测：一次扫描 1.5 秒 / 582 MB，拿到 **225 条卡片（193 个号各一条
+最新推送，时间跨 36 小时）**，其中 190 条带完整正文链接；URL 池 1518 条。
+只认单一 JSON 形态时同样一次扫描只有 84 张卡片、31 条带链接——差的就是下面
+那两种形态要不要合起来用。
 
 只读、只读、只读：OpenProcess + ReadProcessMemory，绝不写微信任何文件。
 """
@@ -43,6 +44,18 @@ READABLE = {0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80}
 CARD_RE = re.compile(
     rb'\{"AppMsgId":(\d+|"[^"]*"),"DateTime":(\d+),"weight":\d+,'
     rb'"uniqueId":"([^"@]*)@([^"]*)","localId":(\d+),"Title":"((?:[^"\\]|\\.)*)"\}')
+# 盒子里的数据有两种形态，必须合起来用：
+#   A 精简形态：{"AppMsgId":mid,"DateTime":ts,"weight":…,"uniqueId":"gh_x@mid",…,"Title":"…"}
+#     —— 有标题和 gh，**没有 URL**；
+#   B 完整形态：{"AppMsgId":mid,"DateTime":ts,"isPreview":…,"detailInfo":{…,"ContentUrl":"…"},
+#               "showName":"…","sourceUsername":"gh_x",…}
+#     —— 有 URL 和号名，字段顺序不固定。
+# 2026-11-18 实测：A 形态 231 条、B 形态约 1500 条 URL，两者按 mid 对齐后有
+# 178 条三者齐全；而只认 A 形态的旧写法一次只拿到 84 张卡片。
+UNIQ_RE = re.compile(rb'"uniqueId":"(gh_[0-9a-z]+)@(\d+)"')
+HEAD_RE = re.compile(rb'"AppMsgId":(\d{5,}),"DateTime":(\d{9,})')
+TITLE_RE = re.compile(rb'"Title":"((?:[^"\\]|\\.)*)"')
+OBJ_SPAN = 8000               # 一个元素最多往后看 8 KB 找 Title
 # 号信息：{"…","showName":"纳米孔测序圈子","sourceUsername":"gh_b454d3a6ed68",…}
 ACC_RE = re.compile(
     rb'"showName":"((?:[^"\\]|\\.)*)","sourceUsername":"(gh_[0-9a-z]+)"')
@@ -135,11 +148,40 @@ def _read(handle: int, address: int, size: int) -> bytes:
 
 
 def _decode_json_string(raw: bytes) -> str:
-    """把 JSON 里的转义串还原成正常文本。"""
+    """把 JSON 里的转义串还原成正常文本。
+
+    注意 ``json.loads`` 拿到 bytes 时返回的已经是 **str**，不能再 ``.decode()``；
+    以前多调了一次，异常被吞掉后总是走 fallback，于是 ``\\u7b2c`` 这种转义写法
+    的标题一直原样带着反斜杠进库。
+    """
     try:
-        return json.loads(b'"' + raw + b'"').decode("utf-8", "replace")
+        value = json.loads(b'"' + raw + b'"')
+        if isinstance(value, str):
+            return value
     except Exception:                                     # noqa: BLE001
-        return raw.decode("utf-8", "replace")
+        pass
+    return raw.decode("utf-8", "replace")
+
+
+def _assemble_cards(gh_of: dict[str, str], ts_of: dict[str, int],
+                    title_of: dict[str, str], mid_url: dict[str, str]) -> list[dict[str, Any]]:
+    """把三种来源按 mid 归并成卡片。
+
+    gh 来自 A 形态的 ``uniqueId``（精确配对，不看字段顺序），标题来自 A 形态的
+    ``Title``，URL 来自 B 形态的 ``ContentUrl``（URL 自带 mid，所以对得上）。
+    缺哪个就先空着，下一轮扫描补——不要因为缺 URL 就把整条丢掉。
+    """
+    out: list[dict[str, Any]] = []
+    for mid, gh in gh_of.items():
+        title = title_of.get(mid, "")
+        url = mid_url.get(mid, "")
+        if not title and not url:
+            continue                                   # 什么都没有，收了也没用
+        out.append({"gh": gh, "mid": mid, "ts": ts_of.get(mid, 0),
+                    "title": title, "key": f"{gh}@{mid}", "url": url,
+                    "canonical_url": canonical_url(url) if url else ""})
+    out.sort(key=lambda c: c["ts"], reverse=True)
+    return out
 
 
 def available() -> bool:
@@ -161,7 +203,9 @@ def scan(budget: float = SCAN_BUDGET) -> Snapshot:
     if not h:
         return Snapshot(at=now, reason="打不开 Weixin.exe 进程（权限不足或已退出）")
 
-    cards: dict[str, dict[str, Any]] = {}
+    gh_of: dict[str, str] = {}          # mid -> gh（uniqueId 精确配对，不靠字段顺序）
+    ts_of: dict[str, int] = {}
+    title_of: dict[str, str] = {}
     accounts: dict[str, str] = {}
     mid_url: dict[str, str] = {}
     scanned = 0
@@ -175,24 +219,27 @@ def scan(budget: float = SCAN_BUDGET) -> Snapshot:
                 off += chunk
                 scanned += len(data)
                 if data:
+                    if b'"uniqueId"' in data:
+                        for m in UNIQ_RE.finditer(data):
+                            gh_of.setdefault(m.group(2).decode("ascii", "replace"),
+                                             m.group(1).decode("ascii", "replace"))
                     if b'"AppMsgId"' in data:
-                        for m in CARD_RE.finditer(data):
-                            gh = m.group(3).decode("ascii", "replace")
-                            if not gh.startswith("gh_"):
-                                continue
-                            mid = m.group(4).decode("ascii", "replace")
+                        # 逐个元素解析：窗口截止到下一个 AppMsgId，避免把邻居的
+                        # Title 认成自己的（堆里同一份 JSON 会被复制很多遍）。
+                        heads = list(HEAD_RE.finditer(data))
+                        for i, head in enumerate(heads):
+                            end = heads[i + 1].start() if i + 1 < len(heads) else len(data)
+                            mid = head.group(1).decode("ascii", "replace")
                             try:
-                                ts = int(m.group(2))
+                                ts_of.setdefault(mid, int(head.group(2)))
                             except ValueError:
+                                pass
+                            if mid in title_of:
                                 continue
-                            if ts <= 0:
-                                continue
-                            key = f"{gh}@{mid}"
-                            prev = cards.get(key)
-                            title = _decode_json_string(m.group(6))
-                            if prev is None or (not prev["title"] and title):
-                                cards[key] = {"gh": gh, "mid": mid, "ts": ts,
-                                              "title": title, "key": key}
+                            window = data[head.start():min(end, head.start() + OBJ_SPAN)]
+                            m = TITLE_RE.search(window)
+                            if m:
+                                title_of[mid] = _decode_json_string(m.group(1))
                     if b'"showName"' in data:
                         for m in ACC_RE.finditer(data):
                             accounts.setdefault(m.group(2).decode("ascii", "replace"),
@@ -211,12 +258,9 @@ def scan(budget: float = SCAN_BUDGET) -> Snapshot:
         except Exception:                             # noqa: BLE001
             pass
 
-    # 把 URL 贴回卡片：mid 是唯一能对上号的东西
-    out: list[dict[str, Any]] = []
-    for card in cards.values():
-        card["url"] = mid_url.get(card["mid"], "")
-        card["canonical_url"] = canonical_url(card["url"]) if card["url"] else ""
-        out.append(card)
-    out.sort(key=lambda c: c["ts"], reverse=True)
+    # 拼卡片：gh 来自 A 形态的 uniqueId，标题来自 A 形态的 Title，URL 来自 B 形态的
+    # ContentUrl（URL 自己带 mid，所以对得上）。三者按 mid 归并，缺哪个先空着，
+    # 下一轮扫描补。
+    out = _assemble_cards(gh_of, ts_of, title_of, mid_url)
     return Snapshot(at=now, cards=out, accounts=accounts, urls=mid_url,
                     scanned_mb=scanned / 1048576, elapsed=time.time() - t0)
