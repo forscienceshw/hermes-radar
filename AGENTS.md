@@ -15,6 +15,10 @@ python radar.py save "一句话说清改了什么"     # 存
 
 一次会话里如果有多个独立改动，分成多次 save，不要攒成一大坨 —— 将来出问题时才能只退一半。
 
+**跑测试必须关掉安全删除垫片**：`CODEBUDDY_SAFE_DELETE_ENABLED=0 python -m unittest ...`。
+否则 `tempfile.TemporaryDirectory.cleanup()` 会被垫片的批量删除守卫拦下，抛 18 个
+`ERROR`，看着像代码坏了，其实一条都没测出问题。11-18 在这上面白追了半小时。
+
 ## 动手前的规矩
 
 - 先 `python radar.py status`。工作区有别人的未保存改动时，先问清楚再动。
