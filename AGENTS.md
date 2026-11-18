@@ -297,6 +297,20 @@ RadarSetup.exe /S --dir=E:\RadarInstallTest --port=8899 --no-autostart --no-desk
 - 写库前先备份 `data/backups/wechat_accounts_before_calib.json`，改动明细落在
   报告同名的 `.applied.json`。实测一次 1403 条对上，启用 644 条里 638 条拿到 gh。
 
+## 别在服务运行时猛写库（2026-11-18 起）
+
+- 现象：网页上点「收藏到收藏夹」报 **Internal Server Error**，`web.log` 里是
+  `sqlite3.OperationalError: attempt to write a readonly database`，报在
+  `db.py` 的 `BEGIN IMMEDIATE`。读一切正常，只有写失败，重启 API 就好。
+- 成因：`Database.init()` 每次都执行 `PRAGMA journal_mode=WAL`。这句即使已经是
+  WAL，在别的连接正读写时仍要抢一把排他锁。服务在跑的时候另开进程构造
+  `Database()`（一次性脚本、批量修数据），就会把服务进程踢进 readonly，
+  而且**它自己不会恢复**。11-18 那次是校准脚本 1400 条各开一个事务，堵了三分钟。
+- 现在 `init()` 先读 `PRAGMA journal_mode`，只有不是 wal 才切；`transaction()`
+  在 readonly 重试到一半时会 `_repair_journal_mode()` 重置一次。
+- 批量改数据必须**一个事务写完**（`executemany`），不要逐条 `db.execute`。
+- 真复现了：重启 app.api 即可（`kill` 掉后 supervisor 自动拉起）。
+
 ## 解密缓存要原子替换（2026-11-18 起）
 
 `decrypt_database` 以前 `open(out,"wb")` 就地覆盖，别的进程正在读时会读到半截文件，

@@ -269,7 +269,13 @@ class Database:
     def init(self) -> None:
         conn = self.connect()
         try:
-            conn.execute("PRAGMA journal_mode=WAL")
+            # 只读检查再决定要不要切：`PRAGMA journal_mode=WAL` 即使已经是 WAL，
+            # 在别的连接正在读写时也要抢一把排他锁。服务已经在跑的时候再构造一个
+            # Database()（脚本、一次性命令、测试），这一下就可能把**别人**踢进
+            # readonly——2026-11-18 收藏按钮连续 500 就是这么来的。
+            mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+            if str(mode or "").lower() != "wal":
+                conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript(SCHEMA)
             columns = {row["name"] for row in conn.execute("PRAGMA table_info(items)")}
             if "excluded_at" not in columns:
@@ -324,6 +330,18 @@ class Database:
         if changed:
             self.add_event("canonical_migrated", f"规范化 {changed} 条微信链接，后续分享参数不再产生重复条目")
 
+    def _repair_journal_mode(self) -> bool:
+        """把库拉回 WAL。只在 readonly 重试用尽一半时才调用。"""
+        try:
+            conn = self.connect()
+            try:
+                conn.execute("PRAGMA journal_mode=WAL")
+            finally:
+                conn.close()
+            return True
+        except sqlite3.Error:
+            return False
+
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
         with self._write_lock:
@@ -342,6 +360,10 @@ class Database:
                     conn = None
                     if "readonly" not in str(exc).lower() or attempt == 3:
                         raise
+                    if attempt >= 1:
+                        # journal_mode 被别的进程踢回 delete 时，WAL 的写路径就没了，
+                        # 之后每次 BEGIN IMMEDIATE 都报 readonly。重置一次能救回来。
+                        self._repair_journal_mode()
                     time.sleep(0.25 * (2 ** attempt))
             try:
                 assert conn is not None

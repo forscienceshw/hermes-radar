@@ -179,13 +179,13 @@ def main() -> int:
         db = Database()
         grades = ["exact", "folded"] + (["fuzzy"] if args.with_fuzzy else [])
         changed = []
+        updates: list[tuple] = []
         stamp = now_iso()
         for grade in grades:
             for i in buckets.get(grade, []):
                 gh = i["gh"][0]
                 new_name = real.get(gh) or i["name"]
-                db.execute("UPDATE wechat_accounts SET account_id=?,name=?,updated_at=? WHERE id=?",
-                           (gh, new_name, stamp, i["id"]))
+                updates.append((gh, new_name, stamp, i["id"]))
                 changed.append({"id": i["id"], "old": i["name"], "new": new_name, "gh": gh, "grade": grade})
         if args.with_loose:
             for i in buckets.get("loose", []):
@@ -193,13 +193,19 @@ def main() -> int:
                     continue                      # 停用的号改了也只是噪音
                 gh = i["gh"][0]
                 new_name = real.get(gh) or i["name"]
-                db.execute("UPDATE wechat_accounts SET account_id=?,name=?,updated_at=? WHERE id=?",
-                           (gh, new_name, stamp, i["id"]))
+                updates.append((gh, new_name, stamp, i["id"]))
                 changed.append({"id": i["id"], "old": i["name"], "new": new_name, "gh": gh, "grade": "loose"})
-        db.add_event("wechat_accounts_calibrated",
-                     f"用本机微信关注列表校准公众号库：改回 {len(changed)} 条"
-                     f"（精确 {len(buckets.get('exact', []))}、折叠 {len(buckets.get('folded', []))}"
-                     f"、形近 {len(buckets.get('fuzzy', [])) if args.with_fuzzy else 0}）", None, None)
+        # 必须一口气写完。1400 条各开一个事务，实测会把正在跑的服务堵三分钟，
+        # 表现就是别处点一下报 500 "attempt to write a readonly database"。
+        with db.transaction() as conn:
+            conn.executemany(
+                "UPDATE wechat_accounts SET account_id=?,name=?,updated_at=? WHERE id=?", updates)
+            conn.execute(
+                "INSERT INTO events(type,message,item_id,source_id,created_at) VALUES(?,?,?,?,?)",
+                ("wechat_accounts_calibrated",
+                 f"用本机微信关注列表校准公众号库：改回 {len(changed)} 条"
+                 f"（精确 {len(buckets.get('exact', []))}、折叠 {len(buckets.get('folded', []))}"
+                 f"、形近 {len(buckets.get('fuzzy', [])) if args.with_fuzzy else 0}）", None, None, stamp))
         out = Path(args.json).with_suffix(".applied.json") if args.json else None
         if out:
             out.write_text(json.dumps(changed, ensure_ascii=False, indent=1), encoding="utf-8")
