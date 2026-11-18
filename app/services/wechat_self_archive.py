@@ -646,6 +646,89 @@ def _wechat3_history_candidates(source: dict[str, Any], config: dict[str, Any],
                         "source": str(snap["source"]), "cached": snap["cached"]}
 
 
+def _wechat4_memory_candidates(source: dict[str, Any], config: dict[str, Any],
+                               previous: dict[str, Any], names: dict[str, str],
+                               allowed: set[str], enforce_allowlist: bool,
+                               excluded: set[str]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """从 Weixin.exe 内存里补 4.x 订阅号盒子的推送。
+
+    4.x 不把订阅号正文写进库，但客户端内存里留着盒子卡片的 JSON：
+    ``AppMsgId``(=mid) / ``DateTime`` / ``uniqueId``=``gh_x@mid`` / ``Title``，
+    外加一池文章 URL 按 mid 对齐。只读 private 堆，不碰微信任何文件。
+
+    首次运行（seen 为空）会把当前盒子里的条目一次性补齐，然后按 key 增量。
+    """
+    from . import wechat4_memory
+
+    state = previous.get("memory") if isinstance(previous.get("memory"), dict) else {}
+    seen: dict[str, int] = {}
+    for key, value in (state.get("seen") or {}).items():
+        try:
+            seen[str(key)] = int(value or 0)
+        except (TypeError, ValueError):
+            continue
+
+    if not config.get("memory_channel", True):
+        return [], {"available": False, "reason": "内存通道已关闭（memory_channel=false）",
+                    "seen": seen, "kept": 0, "last_scan_at": now_iso()}
+
+    snap = wechat4_memory.scan()
+    cursor: dict[str, Any] = {
+        "available": snap.ok, "reason": snap.reason, "kept": 0,
+        "scanned": len(snap.cards), "urls": len(snap.urls),
+        "accounts": len(snap.accounts), "elapsed": round(snap.elapsed, 2),
+        "scanned_mb": round(snap.scanned_mb, 1), "last_scan_at": now_iso(),
+    }
+    if not snap.ok:
+        return [], {**cursor, "seen": seen}
+
+    now = int(time.time())
+    days = max(1, min(365, int(config.get("initial_backfill_days", 7) or 7)))
+    floor = now - days * 86400
+    max_new = max(1, min(2000, int(config.get("memory_max_new", 300) or 300)))
+
+    out: list[dict[str, Any]] = []
+    skipped_no_url = 0
+    for card in snap.cards:
+        key = card["key"]
+        ts = int(card["ts"])
+        if ts < floor or key in seen:
+            continue
+        gh = card["gh"]
+        if (enforce_allowlist and gh not in allowed) or gh in excluded:
+            # 名单外的**不记 seen**：以后把它勾进名单还能补回来
+            continue
+        url = card.get("url") or ""
+        if not url:
+            skipped_no_url += 1
+            continue                  # URL 池还没加载到，下一轮再看
+        seen[key] = ts
+        out.append({
+            "source_id": source["id"], "kind": "article",
+            "url": url, "canonical_url": card.get("canonical_url") or canonical_url(url),
+            "external_key": f"public4mem:{gh}:{card['mid']}",
+            "title": card["title"] or url,
+            "author": names.get(gh, snap.accounts.get(gh) or gh),
+            "published_at": epoch_iso(ts),
+            "metadata": {"share_channel": "wechat_memory_box",
+                         "wechat_version": "4.x-memory",
+                         "wechat_account_id": gh,
+                         "public_message_id": card["mid"],
+                         "description": "",
+                         "account_name": snap.accounts.get(gh, ""),
+                         "catalog_matched": gh in allowed},
+        })
+        if len(out) >= max_new:
+            break
+
+    keep = now - 30 * 86400
+    seen = {k: v for k, v in seen.items() if v >= keep}
+    cursor.update({"kept": len(out), "seen": len(seen),
+                   "pending_url": skipped_no_url,
+                   "window_days": days})
+    return out, {**cursor, "seen": seen}
+
+
 def _wechat4_public_candidates(module, source: dict[str, Any], config: dict[str, Any],
                                previous: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     directory = module.oa_directory()
@@ -698,6 +781,12 @@ def _wechat4_public_candidates(module, source: dict[str, Any], config: dict[str,
         source, config, previous, allowed, excluded, names, enforce_allowlist)
     candidates.extend(history)
 
+    # 4.x 真正的推送流在客户端内存里（盒子卡片的 JSON），库是空的。这条是
+    # 「不用点开任何推文就能自动拿到全部更新」的唯一本地路径。
+    memory, memory_cursor = _wechat4_memory_candidates(
+        source, config, previous, names, allowed, enforce_allowlist, excluded)
+    candidates.extend(memory)
+
     cursor = {"initialized": True, "wechat_version": "4.x",
               "last_create_time": max(newest, int(previous.get("last_create_time") or 0)),
               "catalog_fingerprint": fingerprint,
@@ -705,11 +794,13 @@ def _wechat4_public_candidates(module, source: dict[str, Any], config: dict[str,
               "last_read_at": now_iso(), "matched_links": len(candidates),
               "catalog_matched_accounts": len(catalog_matched),
               "catalog_unmatched_names": unmatched, "warnings": [],
-              "wechat3": history_cursor}
+              "wechat3": history_cursor, "memory": memory_cursor}
     if not effective:
         cursor["warnings"].append("还没有勾选要追踪的公众号，本批不采集任何推文")
     if not history_cursor.get("available"):
         cursor["warnings"].append(f"3.x 历史库不可用：{history_cursor.get('reason', '未知原因')}")
+    if memory_cursor.get("reason"):
+        cursor["warnings"].append(f"内存通道：{memory_cursor['reason']}")
     return candidates, cursor
 
 
