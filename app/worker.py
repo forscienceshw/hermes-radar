@@ -13,6 +13,7 @@ from .logging_config import configure_logging
 from .pipeline import JobRunner
 from .services.notify import QuietHours, merge_closed_batches
 from .services.archive import WechatNeedsVerification
+from .services.analyzer import DailyLimitReached, requeue_limit_blocked
 from .services.relevance import cleanup_existing_items, cleanup_marketing_items, dedupe_duplicate_items
 from .settings import get_settings
 from .utils import json_loads, now_iso, stable_json
@@ -179,6 +180,13 @@ class Worker:
                 # A scheduled wait must not consume the retry budget or the counter
                 # climbs into the hundreds while the job is simply waiting for 20:30.
                 self.db.reschedule_job(job["id"], run_at, reason=str(exc), reset_attempts=True)
+            except DailyLimitReached as exc:
+                # 额度用完不是「这篇坏了」。顺延到次日零点之后，不扣重试次数、
+                # 不改条目状态；否则一场额度用尽就会把当天剩余的真文章全判成 error。
+                if item_id:
+                    self.db.clear_runtime(f"progress:{item_id}")
+                self.db.reschedule_job(job["id"], exc.retry_at, reason=str(exc), reset_attempts=True)
+                log.info("精读额度已满，%s 顺延到 %s", job["id"], exc.retry_at)
             except WechatNeedsVerification as exc:
                 # 验证页不是「文章坏了」，是这一刻被限流。普通重试次数是给网络抖动用的，
                 # 不能烧在这上面；但也不能无限等，所以自己数「第几轮」，三轮收尾。
@@ -238,6 +246,9 @@ class Worker:
         marketing = cleanup_marketing_items(self.db)
         if marketing:
             log.info("正文复核：%s 条引流软文已移出资料库（可在「已过滤」里恢复）", marketing)
+        requeued = requeue_limit_blocked(self.db)
+        if requeued:
+            log.info("额度用尽时被误判失败的 %s 条已放回精读队列", requeued)
         recovered = self.db.recover_expired_jobs()
         pruned = self.db.prune_stale_jobs()
         if pruned:

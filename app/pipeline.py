@@ -34,6 +34,8 @@ class JobRunner:
         elif kind == "archive_history_batch":
             await self._archive_history_batch(payload)
         elif kind == "analyze_item":
+            from .services.analyzer import ensure_daily_budget
+            ensure_daily_budget(self.db)          # 没额度就别抓正文，整单顺延
             await self._archive_if_missing(payload["item_id"])
             if payload.get("force"):
                 await self._refresh_papers(payload["item_id"])

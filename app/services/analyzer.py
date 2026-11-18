@@ -2,8 +2,10 @@ import base64
 import io
 import logging
 import json
+import random
 import re
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
@@ -416,6 +418,57 @@ async def triage_archived_images(db: Database, item_id: str, force: bool = False
     return drop_archived_images(db, item_id, [label - 1 for label in labels], note)
 
 
+class DailyLimitReached(RuntimeError):
+    """本地每日调用保险丝打满。
+
+    这不是「这篇读坏了」，是「今天排不上了」。以前它和真正的失败共用一条
+    路径，重试四次后条目被标成 error，第二天额度恢复了也不会再读——一场
+    额度用尽就能把几百篇真文章判死。现在它带着「何时可以再排」一起抛出，
+    由 worker 原样顺延到次日，不烧重试次数、不改条目状态。
+    """
+
+    def __init__(self, limit: int, message: str, retry_at: str):
+        super().__init__(message)
+        self.limit = limit
+        self.retry_at = retry_at          # ISO 时间：本地次日 0 点后错峰几分钟
+
+
+def next_local_reset(spread_seconds: int = 900) -> str:
+    """本地次日 0 点之后的一个随机时刻。
+
+    保险丝按本地日期归零，但如果几百个任务都定在 00:00:00，第二天一开工
+    就是一场雪崩。错峰 15 分钟，够 8 个并发把队列顺开。
+    """
+    now = datetime.now().astimezone()
+    midnight = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    if now.hour == 0 and now.minute < 15:
+        # 刚过零点还在同一批：别把今天的任务推到明天
+        midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    moment = midnight + timedelta(seconds=random.uniform(0, max(0, spread_seconds)))
+    return moment.isoformat(timespec="seconds")
+
+
+def _limit_error(limit: int) -> DailyLimitReached:
+    return DailyLimitReached(
+        limit,
+        f"今天的 {limit} 次本地精读额度已用完，剩余条目自动顺延到明天，不占重试次数",
+        next_local_reset())
+
+
+def ensure_daily_budget(db: Database) -> None:
+    """只检查、不计数。
+
+    放在 analyze 任务的最前面：额度已经满了就别再去抓正文、也别再调视觉，
+    整单直接顺延。以前是先抓完正文、走完图片分诊才在最后一步撞上保险丝，
+    白花流量，还把「没额度」写成了「这篇坏了」。
+    """
+    limit = int(get_settings()["llm"]["daily_call_limit"])
+    row = db.one("SELECT value FROM runtime WHERE key=?", ("llm_calls:" + local_date(),))
+    count = int(row["value"]) if row else 0
+    if count >= limit:
+        raise _limit_error(limit)
+
+
 def _check_daily_limit(db: Database) -> None:
     limit = int(get_settings()["llm"]["daily_call_limit"])
     key = "llm_calls:" + local_date()
@@ -423,11 +476,38 @@ def _check_daily_limit(db: Database) -> None:
         row = conn.execute("SELECT value FROM runtime WHERE key=?", (key,)).fetchone()
         count = int(row["value"]) if row else 0
         if count >= limit:
-            raise RuntimeError(f"已达本地每日调用保险丝 {limit} 次；这只限制本项目自己排队，"
-                               f"不是 WorkBuddy 的额度，可在设置里调高")
+            raise _limit_error(limit)
         timestamp = now_iso()
         conn.execute("INSERT INTO runtime(key,value,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=?,updated_at=?",
                      (key, str(count + 1), timestamp, str(count + 1), timestamp))
+
+
+LIMIT_BLOCKED_MARK = "额度已用完"
+
+
+def requeue_limit_blocked(db: Database) -> int:
+    """把「因为额度用尽被判死」的条目放回队列。
+
+    历史遗留：保险丝打满曾被当成普通失败，重试四次后条目进了 error，第二天
+    额度恢复了也没有人再读它。这里只捞 error 文本里明确提到保险丝/额度的那
+    批，别的原因失败的条目一律不动。
+    """
+    rows = db.query("""SELECT id FROM items WHERE status='error' AND excluded_at IS NULL
+        AND (error LIKE '%保险丝%' OR error LIKE ?)""", (f"%{LIMIT_BLOCKED_MARK}%",))
+    requeued = 0
+    for row in rows:
+        alive = db.one("""SELECT id FROM jobs WHERE kind='analyze_item'
+            AND state IN ('READY','RETRY_WAIT','LEASED')
+            AND json_extract(payload_json,'$.item_id')=?""", (row["id"],))
+        if alive:
+            continue
+        db.execute("UPDATE items SET status='discovered',error=NULL WHERE id=?", (row["id"],))
+        db.enqueue_job("analyze_item", {"version": 1, "item_id": row["id"]},
+                       dedupe_key=f"analyze:{row['id']}:requeue", priority=60, max_attempts=4)
+        requeued += 1
+    if requeued:
+        db.add_event("limit_requeue", f"上次把额度用尽误判成失败的 {requeued} 条，已放回精读队列")
+    return requeued
 
 
 def _progress_sink(db: Database, item_id: str) -> Callable[[dict[str, Any]], None]:
