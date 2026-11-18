@@ -284,6 +284,18 @@ RadarSetup.exe /S --dir=E:\RadarInstallTest --port=8899 --no-autostart --no-desk
   （唯一命中）。折叠会把 `l`/`1`/`|` 折成 `i`、`0` 折成 `o`，所以撞车时必须放弃，
   宁可报"对不上"也不能把 A 的文章算到 B 头上。
 - `wechat_accounts.account_id` 有值就直接用，不要再拿名字去猜。
+- **名单本身也是 OCR 来的**：1460 条全部由 2026-11-13 的手机长截图识别导入
+  （`data/account_ocr_raw_*.json` 里还留着原图结果，单张图高 39642px），此后
+  从未从数据库重建过——到 11-18 只有 5 条带 `account_id`。「能读微信数据库」
+  指的是运行时把名字对成 gh，不是名单来自数据库，别把这两件事混为一谈。
+- 根治靠 `tools/calibrate_accounts.py`：以 `contact.db` 里 `username LIKE 'gh_%'`
+  的 1717 条真实名单为权威源，分档回填 `account_id` 和真名（exact → folded →
+  fuzzy → loose）。
+- 分档阈值：fuzzy 要 `SequenceMatcher ≥ 0.80` **且** 领先第二名 ≥ 0.15，
+  形近字/漏字（`漆草`→`潦草`、`数字李生`→`数字孪生`、`老干`→`老千`）能自动改；
+  像 `生物材料研究` 这种第一二名只差 0.10 的必须人工看。loose（包含关系）只动启用的。
+- 写库前先备份 `data/backups/wechat_accounts_before_calib.json`，改动明细落在
+  报告同名的 `.applied.json`。实测一次 1403 条对上，启用 644 条里 638 条拿到 gh。
 
 ## 解密缓存要原子替换（2026-11-18 起）
 
