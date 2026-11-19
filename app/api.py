@@ -1927,6 +1927,39 @@ def _job_log_excerpt(job_id: str, limit: int = 24000) -> str:
     return redact_secrets(excerpt[-16000:])
 
 
+def _repair_hint(message: str) -> tuple[str, str]:
+    """按错误指纹给一条「先做什么」的提示。
+
+    自动改代码不安全，但「这一条到底该等、该重试、还是该改代码」可以自动判。
+    用户看到 800 条失败时，最需要的不是逐条日志，而是"这其实是同一件事"。
+    """
+    text = str(message or "").lower()
+    patterns = (
+        ("微信未登录 / 版本不适配",
+         ("未能识别当前微信账号", "请先打开并登录微信", "请保持微信已登录"),
+         "先打开微信确认已登录；仍然失败说明适配器不认识这个版本，需要更新读取器，不是重试能解决的。"),
+        ("3.x 读取器被 4.x 拒绝",
+         ("不会复用 3.x 密钥",),
+         "这台机器是 4.x，强制走 3.x 会永远读不到。检查 local_channel()，不要设 RADAR_WECHAT_CHANNEL=3.x。"),
+        ("标题或链接不完整",
+         ("只有裸链接", "没有提取到有效正文", "空壳页面", "没有正文"),
+         "先看链接是否带 chksm（带才给正文）；标题为空的多半是同批第二篇，启用账号下应放行，归档后会以正文标题覆盖。"),
+        ("网关临时风控",
+         ("502", "503", "504", "waf", "临时风控", "限流"),
+         "临时错误，等几分钟自动重试即可；连续出现再查代理和网络。"),
+        ("额度用尽",
+         ("达到今日 llm 调用上限", "额度", "insufficient_balance"),
+         "额度顺延到次日，不是文章坏了；需要当天跑完就在设置里提高上限。"),
+        ("密钥或权限",
+         ("401", "403", "invalid api key", "authentication"),
+         "检查设置里的 API Key / 数据源账号；这类重试不会好。"),
+    )
+    for label, tokens, advice in patterns:
+        if any(token in text for token in tokens):
+            return label, advice
+    return "", ""
+
+
 @app.get("/api/jobs/{job_id}/diagnostics")
 def job_diagnostics(job_id: str) -> dict[str, Any]:
     job = db.one("SELECT * FROM jobs WHERE id=?", (job_id,))
@@ -1938,6 +1971,8 @@ def job_diagnostics(job_id: str) -> dict[str, Any]:
     source = db.one("SELECT name,type,last_error FROM sources WHERE id=?", (target,)) if payload.get("source_id") else None
     log_excerpt = _job_log_excerpt(job_id)
     retryable = job_error_is_retryable(job.get("last_error") or "")
+    hint_label, hint_advice = _repair_hint(job.get("last_error") or "")
+    hint_block = (f"## 已知模式\n- 类型：{hint_label}\n- 先做：{hint_advice}\n\n" if hint_label else "")
     target_lines = []
     if item:
         target_lines = [f"- 文章：{item['title']}", f"- 原链接：{item['url']}", f"- 当前状态：{item['status']}",
@@ -1959,7 +1994,7 @@ def job_diagnostics(job_id: str) -> dict[str, Any]:
 
 {chr(10).join(target_lines)}
 
-## 环境
+{hint_block}## 环境
 - 项目：E:\\HermesResearchRadar
 - Python：{sys.version.split()[0]}
 - 系统：{platform.platform()}
@@ -1977,6 +2012,7 @@ def job_diagnostics(job_id: str) -> dict[str, Any]:
 3. 如果无法自动确认，列出需要我补充的日志或操作，不要盲目重试消耗付费额度。
 """
     return {"job_id": job_id, "retryable": retryable, "markdown": markdown,
+            "hint": hint_label, "hint_advice": hint_advice,
             "log_excerpt": log_excerpt, "payload": payload}
 
 
