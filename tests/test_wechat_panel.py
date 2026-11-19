@@ -8,9 +8,10 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from app.db import Database
-from app.services import filters, wechat_panel, wechat_public
+from app.services import filters, wechat3_public, wechat4_live, wechat_panel, wechat_public, wechat_self_archive
 
 # 真实卡片的长相（截取关键字段）：封面和发布时间藏在 mmreader/category/item 里。
 CARD_WITH_COVER = """<msg><appmsg appid="" sdkver="0">
@@ -231,6 +232,76 @@ class PanelActionsTest(unittest.TestCase):
         wechat_panel.disable_account(self.db, int(self.account["id"]), "广告太多")
         row = self.db.one("SELECT enabled FROM wechat_accounts WHERE id=?", (self.account["id"],))
         self.assertEqual(row["enabled"], 0)
+
+    def test_library_articles_lists_archived_wechat_items(self):
+        """面板要能把资料库已收录的推文补进列表。
+
+        4.x 不落盘正文、3.x 的 PublicMsg.db 又冻结在升级那天，只问微信的话
+        列表会停在 16 号，而资料库里 11-19 的条目明明存在。
+        """
+        wechat_panel.import_articles(self.db, self.account, "gh_abc", [self.article(1101, "已收录的一篇")])
+        rows = wechat_panel.library_articles(self.db, "gh_abc", "蛋白大全", days=3650)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["title"], "已收录的一篇")
+        self.assertEqual(rows[0]["idx"], 1)
+        self.assertGreater(rows[0]["create_time"], 0)
+        # 换一个号就查不到别人的文章
+        self.assertEqual(wechat_panel.library_articles(self.db, "gh_other", "别的号", days=3650), [])
+
+    def test_library_articles_keeps_idx_of_second_post(self):
+        second = self.article(1102, "同批第二篇",
+                              url="http://mp.weixin.qq.com/s?__biz=B&mid=1102&idx=2&sn=x")
+        wechat_panel.import_articles(self.db, self.account, "gh_abc", [second])
+        rows = wechat_panel.library_articles(self.db, "gh_abc", "", days=3650)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["idx"], 2)
+
+
+class PanelArticlesApiTest(unittest.TestCase):
+    """面板接口的合并层：本机微信没有的内容，也要从资料库里补回来。"""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.db = Database(Path(self.temp.name) / "test.db")
+        self.db.execute("""INSERT INTO wechat_accounts
+            (name,account_id,category_code,fit,reason,description,enabled,created_at,updated_at)
+            VALUES('蛋白大全','gh_abc','BIOMED','CORE','','',1,'t','t')""")
+        self.account = self.db.one("SELECT * FROM wechat_accounts WHERE name='蛋白大全'")
+
+    def _call(self, **kwargs):
+        from app import api
+        hint = {"at": 0, "at_display": "", "title": "", "unread": 0, "last_type": 0}
+        with patch.object(api, "db", self.db), \
+                patch.object(wechat_self_archive, "local_channel", return_value="4.x"), \
+                patch.object(wechat4_live, "recent_for", return_value=[]), \
+                patch.object(wechat4_live, "session_hint", return_value=hint), \
+                patch.object(wechat3_public, "recent_for", return_value=[]):
+            return api.wechat_account_articles(int(self.account["id"]), **kwargs)
+
+    def test_library_items_fill_the_gap_left_by_wechat(self):
+        article = {"url": "http://mp.weixin.qq.com/s?__biz=B&mid=9001&idx=1&sn=x",
+                   "title": "16 号之后的推文", "summary": "摘要",
+                   "published_at": "2026-11-19T08:30:00+00:00", "message_id": 9001}
+        wechat_panel.import_articles(self.db, self.account, "gh_abc", [article])
+        self.db.execute("UPDATE items SET status='ready' WHERE title=?", ("16 号之后的推文",))
+        payload = self._call(limit=10, offset=0, days=60)
+        self.assertEqual(payload["total"], 1)
+        self.assertEqual(payload["items"][0]["title"], "16 号之后的推文")
+        self.assertEqual(payload["items"][0]["state"], "archived")
+
+    def test_pagination_still_honours_limit(self):
+        for mid, day in ((9101, 11), (9102, 12), (9103, 13)):
+            wechat_panel.import_articles(self.db, self.account, "gh_abc", [{
+                "url": f"http://mp.weixin.qq.com/s?__biz=B&mid={mid}&idx=1&sn=x",
+                "title": f"第 {mid} 篇", "summary": "",
+                "published_at": f"2026-11-{day:02d}T08:30:00+00:00", "message_id": mid}])
+        first = self._call(limit=2, offset=0, days=60)
+        self.assertEqual(len(first["items"]), 2)
+        self.assertTrue(first["has_more"])
+        second = self._call(limit=2, offset=2, days=60)
+        self.assertEqual(len(second["items"]), 1)
+        self.assertFalse(second["has_more"])
 
 
 if __name__ == "__main__":

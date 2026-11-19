@@ -687,19 +687,25 @@ def wechat_account_articles(account_pk: int, limit: int = 24, offset: int = 0, d
     if not gh_id:
         return {**base, "error": "没能把网页上的号名对到微信内部编号：微信里可能没关注它，或者备注名和清单不一致"}
     if channel == "4.x":
-        rows = wechat4_live.recent_for(gh_id, limit=min(60, max(1, limit)), days=days)
+        # 合并后要支持翻页：两路微信通道至少取到当前页末尾，否则第 2 页开始
+        # 就只剩资料库那一路了。
+        window = min(200, max(60, offset + limit))
+        rows = wechat4_live.recent_for(gh_id, limit=window, days=days)
         # 4.x 客户端不落盘公众号正文，升级前的历史全在 3.x 的 PublicMsg.db 里。
         # 两路拼起来才是一个号完整的样子；否则面板上永远是"只有一两条"。
         try:
             from .services import wechat3_public
-            legacy = wechat3_public.recent_for(gh_id, limit=min(60, max(1, limit)), days=days)
+            legacy = wechat3_public.recent_for(gh_id, limit=window, days=days)
         except Exception:                               # noqa: BLE001
             legacy = []
-        if legacy:
-            merged: dict[str, dict] = {}
-            for row in list(rows) + list(legacy):
-                merged.setdefault(row["canonical_url"], row)
-            rows = sorted(merged.values(), key=lambda item: item["create_time"], reverse=True)
+        # 第三路是资料库自己：4.x 不落盘、3.x 库冻结、内存盒子只留最近几百条，
+        # 只问微信的话列表会停在换通道那天，而右侧小字（本站最近收录）还在往前
+        # 走——11-16 之后"点了才缺一大截"就是这么来的。
+        known = wechat_panel.library_articles(db, gh_id, account["name"], days=days)
+        merged: dict[str, dict] = {}
+        for row in list(rows) + list(legacy) + list(known):
+            merged.setdefault(row["canonical_url"], row)
+        rows = sorted(merged.values(), key=lambda item: item.get("create_time") or 0, reverse=True)
         hint = wechat4_live.session_hint(gh_id)
         articles = [{
             "canonical_url": row["canonical_url"],
@@ -712,7 +718,7 @@ def wechat_account_articles(account_pk: int, limit: int = 24, offset: int = 0, d
             "message_id": row["local_id"],
             # 一次群发多篇：同一 message_id 下的第几篇，前端据此区分卡片
             "idx": int(row.get("idx") or 1),
-        } for row in rows[offset:]]
+        } for row in rows[offset:offset + limit]]
         payload = {"items": articles, "total": len(rows),
                    "legacy_filled": bool(legacy),
                    "has_more": len(rows) > offset + len(articles)}
@@ -1885,6 +1891,11 @@ def jobs_summary(limit: int = 150) -> dict[str, Any]:
     recent_done = db.query("SELECT COUNT(*) c FROM jobs WHERE state='SUCCEEDED' AND updated_at>=?",
                            ((utcnow() - timedelta(hours=24)).isoformat(timespec="milliseconds"),))[0]["c"]
     heartbeat = db.one("SELECT value FROM runtime WHERE key='worker'")
+    # 失败列表经常是"同一件事重复了几百次"。先按错误首段归并，用户才知道
+    # 该修的是一个环境问题，还是几百篇不同的文章各自坏了。
+    failed_groups = db.query("""SELECT substr(last_error,1,90) AS error,COUNT(*) AS count
+        FROM jobs WHERE state='DEAD' AND last_error IS NOT NULL AND last_error<>''
+        GROUP BY substr(last_error,1,90) ORDER BY count DESC LIMIT 6""")
     return {
         "counts": {
             "ready": counts.get("READY", 0), "running": counts.get("LEASED", 0),
@@ -1893,6 +1904,7 @@ def jobs_summary(limit: int = 150) -> dict[str, Any]:
         },
         "active": counts.get("READY", 0) + counts.get("LEASED", 0) + counts.get("RETRY_WAIT", 0),
         "by_kind": by_kind,
+        "failed_groups": failed_groups,
         "jobs": rows,
         "worker_heartbeat": heartbeat["value"] if heartbeat else None,
     }
@@ -1983,6 +1995,42 @@ def retry_job(job_id: str) -> dict[str, Any]:
     db.execute("UPDATE jobs SET state='READY',run_at=?,attempts=0,last_error=NULL,owner=NULL,lease_until=NULL WHERE id=?",
                (now_iso(), job_id))
     return {"queued": True}
+
+
+class JobBulkInput(BaseModel):
+    action: str = "retry"
+    ids: list[str] = []
+    all_failed: bool = False
+
+
+@app.post("/api/jobs/bulk")
+def jobs_bulk(data: JobBulkInput) -> dict[str, Any]:
+    """失败任务的批量处置：重试或删除记录。
+
+    失败列表以前只能一条一条点，几百条旧账根本清不动。这里按 id 批量来；
+    ``all_failed`` 是「清空全部失败」用的入口，只动 DEAD，绝不碰正在跑的任务。
+    删除只删任务记录——资料库里的条目、正文和图片都不受影响。
+    """
+    action = (data.action or "").strip().lower()
+    if action not in {"retry", "delete"}:
+        raise HTTPException(400, "action 只能是 retry 或 delete")
+    ids = [str(value).strip() for value in data.ids if str(value).strip()]
+    if data.all_failed:
+        ids = [row["id"] for row in db.query("SELECT id FROM jobs WHERE state='DEAD'")]
+    if not ids:
+        raise HTTPException(400, "没有选中失败任务")
+    ids = ids[:2000]
+    marks = ",".join("?" for _ in ids)
+    if action == "retry":
+        updated = db.execute(f"""UPDATE jobs SET state='READY',run_at=?,attempts=0,last_error=NULL,
+            owner=NULL,lease_until=NULL,updated_at=? WHERE state='DEAD' AND id IN ({marks})""",
+                             [now_iso(), now_iso(), *ids]) or 0
+        db.add_event("jobs_retried", f"批量重试 {updated} 个失败任务")
+        return {"action": action, "updated": updated}
+    updated = db.execute(f"""DELETE FROM jobs WHERE state IN ('DEAD','CANCELLED','RETRY_WAIT')
+        AND id IN ({marks})""", ids) or 0
+    db.add_event("jobs_deleted", f"批量删除 {updated} 条失败任务记录（不影响资料库内容）")
+    return {"action": action, "updated": updated}
 
 
 @app.get("/api/llm/workbuddy/models")

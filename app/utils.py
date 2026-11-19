@@ -241,6 +241,20 @@ def job_error_is_retryable(message: str) -> bool:
     return any(token in text for token in transient) and not any(token in text for token in permanent)
 
 
+def job_error_is_environmental(message: str) -> bool:
+    """这类错误不是任务本身坏了，是这台机器/这个通道还没就绪。
+
+    微信没登录、当前只读适配器拒绝 4.x 的库、外部数据源没启用——等环境恢复
+    下一轮自然就好。把它们每轮都写成一条 DEAD，失败列表就会变成日志垃圾场
+    （本机实测 813 条死信里 786 条都是「微信没识别出账号」）。
+    """
+    text = str(message or "").lower()
+    tokens = ("未能识别当前微信账号", "请先打开并登录微信", "请保持微信已登录",
+              "不会复用 3.x 密钥", "未检测到微信", "微信未运行", "微信没有运行",
+              "数据源未启用", "余额不足", "余额约", "等待充值")
+    return any(token.lower() in text for token in tokens)
+
+
 def redact_secrets(text: str) -> str:
     value = re.sub(r"([?&](?:key|access_token)=)[^&\s\"']+", r"\1REDACTED", str(text))
     value = re.sub(r"(Bearer\s+)[A-Za-z0-9._-]+", r"\1REDACTED", value)

@@ -14,10 +14,13 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
 from ..utils import canonical_url, now_iso
 from . import filters
+
+IDX_IN_URL = re.compile(r"[?&]idx=(\d+)")
 
 # 排除原因预设。关键词是"同类"的判据：命中标题或简介就算同一类。
 # 只给常见的几类，剩下的让用户自己写——硬塞更多分类只会误伤。
@@ -74,6 +77,63 @@ def library_index(db: Any, canonical_urls: list[str]) -> dict[str, dict[str, Any
             FROM items WHERE kind='article' AND canonical_url IN ({','.join('?' * len(chunk))})""", chunk)
         for row in rows:
             result[str(row["canonical_url"])] = row
+    return result
+
+
+def library_articles(db: Any, gh_id: str, name: str = "", days: int = 365,
+                     limit: int = 300) -> list[dict[str, Any]]:
+    """资料库里已经收录的这个号的推文，按发布时间倒序。
+
+    为什么面板要问资料库：本机微信 4.x 不把公众号正文落盘，3.x 的
+    ``PublicMsg.db`` 在升级那天就冻结了，内存盒子又只留最近几百条。只问微信
+    的话，列表会永远停在升级/换通道的那一天——右侧小字却还写着最近收录的
+    标题，两边对不上。资料库里已经归档的条目反而是最完整的一份。
+
+    返回的字段与 ``wechat4_live.recent_for()`` 对齐，方便上层直接合并。
+    """
+    if not gh_id and not name:
+        return []
+    span = max(1, min(3650, int(days or 365)))
+    since = (datetime.now(timezone.utc) - timedelta(days=span)).strftime("%Y-%m-%d")
+    clauses: list[str] = []
+    params: list[Any] = [since]
+    if gh_id:
+        clauses.append("json_extract(metadata_json,'$.wechat_account_id')=?")
+        params.append(gh_id)
+    if name:
+        clauses.append("author=?")
+        params.append(name)
+    params.append(max(1, min(2000, int(limit or 300))))
+    rows = db.query(f"""SELECT id,url,canonical_url,title,summary,published_at,metadata_json
+        FROM items
+        WHERE kind='article' AND substr(published_at,1,10)>=? AND ({' OR '.join(clauses)})
+        ORDER BY published_at DESC LIMIT ?""", params)
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        url = str(row.get("url") or "")
+        if not url:
+            continue
+        canonical = str(row.get("canonical_url") or "").strip()
+        if not canonical:
+            try:
+                canonical = canonical_url(url)
+            except ValueError:
+                continue
+        try:
+            stamp = int(datetime.fromisoformat(str(row.get("published_at"))).timestamp())
+        except (TypeError, ValueError):
+            stamp = 0
+        match = IDX_IN_URL.search(url)
+        result.append({
+            "canonical_url": canonical,
+            "url": url,
+            "title": str(row.get("title") or ""),
+            "digest": str(row.get("summary") or ""),
+            "create_time": stamp,
+            "local_id": 0,
+            "idx": int(match.group(1)) if match else 1,
+            "item_id": row.get("id"),
+        })
     return result
 
 

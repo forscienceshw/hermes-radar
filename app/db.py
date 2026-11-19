@@ -684,6 +684,14 @@ class Database:
             # The paid DataX fallback was removed; its failure rows describe a pipeline that no longer exists.
             cursor = conn.execute("DELETE FROM jobs WHERE state='DEAD' AND last_error LIKE '%dataxapi%'")
             removed += cursor.rowcount
+            # 采集任务每轮都有新的 dedupe_key（带时间窗），失败一次就留一条死信：一天
+            # 288 条，三天就能把失败列表刷到 800+。同一个来源只留最新一条作为「它
+            # 出过问题」的证据，其余都是噪音——真正的原因在 sources.last_error 里。
+            cursor = conn.execute("""DELETE FROM jobs WHERE state='DEAD' AND kind='poll_source'
+                AND id NOT IN (
+                    SELECT MAX(id) FROM jobs WHERE state='DEAD' AND kind='poll_source'
+                    GROUP BY json_extract(payload_json,'$.source_id'))""")
+            removed += cursor.rowcount
             # A flush job whose batch is already closed, merged or sent has nothing to do.
             cursor = conn.execute("""UPDATE jobs SET state='CANCELLED',owner=NULL,lease_until=NULL,updated_at=?
                 WHERE kind='flush_batch' AND state IN ('READY','RETRY_WAIT')

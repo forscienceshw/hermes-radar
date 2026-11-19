@@ -16,7 +16,7 @@ from .services.archive import WechatNeedsVerification
 from .services.analyzer import DailyLimitReached, requeue_limit_blocked
 from .services.relevance import cleanup_existing_items, cleanup_marketing_items, dedupe_duplicate_items
 from .settings import get_settings
-from .utils import json_loads, now_iso, stable_json
+from .utils import job_error_is_environmental, json_loads, now_iso, stable_json
 
 log = logging.getLogger(__name__)
 _MUTEX_HANDLE = None
@@ -288,7 +288,16 @@ class Worker:
                 # leaving the item spinning in "精读中" for another ten minutes.
                 give_up = job["kind"] == "analyze_item" and int(job["attempts"]) >= 2 and (
                     isinstance(exc, TimeoutError) or "request_invalid_parameter" in text)
-                state = self.db.retry_job(job, text, force_dead=give_up)
+                if job["kind"] == "poll_source" and job_error_is_environmental(text):
+                    # 采集失败不是"这个任务坏了"，是微信没登录/通道还没就绪。下一轮
+                    # 调度自然会再试；写成 DEAD 只会让失败列表按小时膨胀（本机 786
+                    # 条「未能识别当前微信账号」就是这么来的）。来源的 last_error
+                    # 已经记下了真正的原因，这里只把任务记录收起来。
+                    self.db.execute("""UPDATE jobs SET state='CANCELLED',last_error=?,owner=NULL,
+                        lease_until=NULL,updated_at=? WHERE id=?""", (text[:4000], now_iso(), job["id"]))
+                    state = "CANCELLED"
+                else:
+                    state = self.db.retry_job(job, text, force_dead=give_up)
                 if item_id:
                     self.db.clear_runtime(f"progress:{item_id}")
                 if state == "DEAD":

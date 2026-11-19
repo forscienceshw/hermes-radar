@@ -391,3 +391,34 @@ OpenAlex / Unpaywall 对新刊、国内刊收录滞后。Vita（10.15302/vita.20
 否则第 2 篇与第 1 篇撞唯一键，直接被吞。
 
 同一篇在 XML 里常出现两份，参数完整度不同，按 (mid,idx) 去重后留带 `chksm` 的。
+
+## 公众号面板的「最近推文」必须并上资料库（2026-11-20 补）
+
+微信 4.x 不把公众号正文落盘（`wechat4_live.recent_for` 长期为空），3.x 的
+`PublicMsg.db` 在升级那天就冻结，内存盒子只留最近几百条（实测 331 张卡 / 209 个号）。
+只问微信的话，面板列表会永远停在换通道那天——而右侧小字来自 `items`（本站最近
+收录），于是出现「小字写着 11-19，点开只有到 11-16」的割裂。
+
+现在 `wechat_account_articles` 在 4.x 分支并三路：现役会话库 → 3.x 历史 →
+`wechat_panel.library_articles()`（资料库里已收录的）。去重按 canonical_url，
+排序按 create_time，分页必须在**合并之后**切片——`rows[offset:]` 会把 300 条
+一次全吐出来，`rows[offset:offset+limit]` 才对。
+
+## showModal 会压住精读页（2026-11-20 补）
+
+公众号面板 `#waArticles` 用 `showModal()`，处在浏览器 top layer；精读页
+`#detailDialog` 用 `show()` + 自绘 backdrop，z-index 再高也压不过 top layer。
+点「在资料库」看起来"没反应"，其实是精读页被面板盖住了。`openDetail()` 现在先
+关掉除自己以外的所有 `dialog[open]`。
+
+## 失败任务不该当日志用（2026-11-20 补）
+
+`poll_source` 的 dedupe_key 带时间窗，失败一次就留一条 DEAD：一天 288 条，
+本机三天堆到 813 条「未能识别当前微信账号」。两条规矩：
+
+- 环境性错误（微信没登录、适配器不认 4.x、数据源没余额）→ `CANCELLED`，原因
+  留在 `sources.last_error`，不占失败列表（`job_error_is_environmental`）。
+- 同一个来源的历史死信只留最新一条（`prune_stale_jobs`），其余删掉。
+
+`/api/jobs/bulk` 提供批量 retry/delete；`/api/jobs/summary` 多了 `failed_groups`，
+前端失败页据此显示「失败原因 Top」——800 条往往是同一件事，不该让用户逐条翻。

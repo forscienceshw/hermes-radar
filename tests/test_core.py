@@ -481,6 +481,32 @@ class CoreTests(unittest.TestCase):
         self.assertGreaterEqual(self.db.prune_stale_jobs(), 1)
         self.assertIsNone(self.db.one("SELECT id FROM jobs WHERE dedupe_key=?", (f"analyze:{item_id}:dead",)))
 
+    def test_prune_keeps_only_newest_poll_failure_per_source(self):
+        """采集任务每轮都有新 dedupe_key，失败一次留一条死信，一天能堆几百条。
+
+        同一个来源只该留最新一条当证据——真正的原因在 sources.last_error 里。
+        """
+        for round_no in range(4):
+            self.db.enqueue_job("poll_source", {"version": 1, "source_id": "src-1", "round": round_no},
+                                dedupe_key=f"poll:src-1:{round_no}")
+        self.db.enqueue_job("poll_source", {"version": 1, "source_id": "src-2", "round": 0},
+                            dedupe_key="poll:src-2:0")
+        self.db.execute("""UPDATE jobs SET state='DEAD',last_error='RuntimeError: 未能识别当前微信账号',
+            updated_at='2026-11-19T00:00:00+00:00' WHERE kind='poll_source'""")
+        self.db.prune_stale_jobs()
+        rows = self.db.query("SELECT payload_json FROM jobs WHERE kind='poll_source' AND state='DEAD'")
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(sum('src-1' in row["payload_json"] for row in rows), 1)
+        self.assertEqual(sum('src-2' in row["payload_json"] for row in rows), 1)
+
+    def test_environmental_errors_are_classified(self):
+        from app.utils import job_error_is_environmental
+        self.assertTrue(job_error_is_environmental("RuntimeError: 未能识别当前微信账号，请先打开并登录微信"))
+        self.assertTrue(job_error_is_environmental(
+            "RuntimeError: 检测到微信 4.x 的 Weixin.exe；当前只读适配器不会复用 3.x 密钥读取新版本数据"))
+        self.assertFalse(job_error_is_environmental("ValueError: 没有提取到有效正文"))
+        self.assertFalse(job_error_is_environmental(""))
+
     def test_reader_sanitizer_unhides_wechat_content_root(self):
         from bs4 import BeautifulSoup
         from app.services.archive import _sanitize
