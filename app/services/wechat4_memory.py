@@ -189,12 +189,18 @@ def _titles_of(value: Any) -> list[str]:
 
 
 def _url_score(url: str) -> tuple:
-    """挑最干净的那条链接。
+    """挑最完整的那条链接，别挑最短的。
 
-    同一篇的 URL 在堆里会有多个变体：http / https 并存，尾部粘着二进制
-    （表现为 U+FFFD），或者被截断丢了 sn。干净的优先，短一点说明没粘垃圾。
+    同一篇的 URL 在堆里会有多个变体：http / https 并存、尾部粘着二进制
+    （U+FFFD）、或者被截断。**微信要求带 `chksm` 的原始链接才给正文**：
+    只有 `sn` 没有 `chksm` 时返回的是十几 KB 的空壳页，`#js_content` 根本
+    不存在，归档只能报"没有正文"（2026-11-19「民间审稿办主任」那条就是）。
+
+    所以按"参数完整度"排序，长度只作最后的平手裁决：完整链接本来就更长。
     """
-    return ("\ufffd" not in url, url.startswith("https://"), "sn=" in url, -len(url))
+    sn = re.search(r"[?&]sn=([0-9a-fA-F]+)", url)
+    return ("\ufffd" not in url, url.startswith("https://"), "chksm=" in url,
+            len(sn.group(1)) if sn else 0, -len(url))
 
 
 def _assemble_cards(gh_of: dict[str, str], ts_of: dict[str, int],

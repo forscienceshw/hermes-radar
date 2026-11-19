@@ -135,6 +135,19 @@ class TwoShapeExtractionTest(unittest.TestCase):
         dirty = "http://mp.weixin.qq.com/s?__biz=A&mid=1&idx=1&sn=abc\x02\ufffd"
         self.assertGreater(mem._url_score(clean), mem._url_score(dirty))
 
+    def test_url_score_prefers_complete_link_over_short_one(self):
+        """有 chksm 的完整链接必须赢过被截断的那条。
+
+        微信只对带 chksm 的原始链接返回正文；只有 sn 的短链接给的是十几 KB
+        的空壳页，`#js_content` 根本不存在。2026-11-19 一度按"越短越干净"
+        打分，反而把完整链接换掉了，归档只能报"没有正文"。
+        """
+        full = ("https://mp.weixin.qq.com/s?__biz=A&mid=1&idx=1&sn=" + "a" * 32
+                + "&chksm=" + "b" * 64)
+        cut = "https://mp.weixin.qq.com/s?__biz=A&mid=1&idx=1&sn=" + "a" * 20
+        self.assertGreater(mem._url_score(full), mem._url_score(cut))
+        self.assertEqual(mem._url_score(cut)[2], False, "缺 chksm 的排在有 chksm 的后面")
+
 
 class _FakeScan:
     def __init__(self, cards):
