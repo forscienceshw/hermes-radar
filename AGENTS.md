@@ -422,3 +422,17 @@ OpenAlex / Unpaywall 对新刊、国内刊收录滞后。Vita（10.15302/vita.20
 
 `/api/jobs/bulk` 提供批量 retry/delete；`/api/jobs/summary` 多了 `failed_groups`，
 前端失败页据此显示「失败原因 Top」——800 条往往是同一件事，不该让用户逐条翻。
+
+## 同批第二篇没有标题，不能挡（2026-11-20 补）
+
+4.x 内存盒子只把第一篇的标题关联到 mid 上，idx≥2 的卡片 `title` 为空，候选里
+用 URL 兜底。`assess_candidate` 原来要求 `catalog_matched and title 非空` 才放行，
+于是第二篇走到「只有裸链接，无法确认科研相关性」被拒——这是「同一时间推两篇、
+只读到上面那篇」的另一半原因；只把读取器按 (mid,idx) 拆开是不够的。
+
+现在启用账号（`catalog_matched`）下标题为空/URL 也放行，reason 写明「标题本地
+没带出，先收下」；归档时 `archive_web` 会用正文标题覆盖 `items.title`。广告、
+社会新闻仍在前面单独挡过一轮，名单外的裸链接照旧拒绝（都有测试锁着）。
+
+注意副作用：改完不会自动补历史——`memory.seen` 已经把这些 key 记成"看过"了。
+要补只能重扫 3.x 库（清 `cursor_json.wechat3`）或让用户转发链接。

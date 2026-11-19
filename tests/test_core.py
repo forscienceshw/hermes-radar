@@ -402,6 +402,22 @@ class CoreTests(unittest.TestCase):
                   "title": "招聘：实验技术员两名，待遇从优", "metadata": {"catalog_matched": True}}
         self.assertFalse(assess_candidate(advert)["keep"])
 
+    def test_whitelisted_account_passes_when_wechat_has_no_title(self):
+        """同批第二篇的标题本地没带出来，也不能挡。
+
+        4.x 内存盒子只把第一篇的标题关联到 mid 上，idx≥2 的卡片 title 为空
+        （候选里用 URL 兜底）。如果这里要求标题非空，用户勾了号的第二篇就永远
+        进不了库——表现就是「同一时间推两篇，只读到上面那篇」。
+        """
+        from app.services.relevance import assess_candidate
+        url = "https://mp.weixin.qq.com/s?__biz=A&mid=9&idx=2&sn=abc"
+        whitelisted = {"kind": "article", "url": url, "title": url,
+                       "metadata": {"catalog_matched": True}}
+        self.assertTrue(assess_candidate(whitelisted)["keep"])
+        # 名单外的号还是不能靠一条裸链接混进来
+        self.assertFalse(assess_candidate({"kind": "article", "url": url, "title": url,
+                                           "metadata": {}})["keep"])
+
     def test_archive_preserves_original_share_metadata(self):
         item_id = self.db.discover_item({"url": "https://www.bilibili.com/video/BV1GJ411x7h7/",
                                          "kind": "video", "title": "科研视频",

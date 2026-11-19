@@ -252,8 +252,16 @@ def assess_candidate(candidate: dict[str, Any], include_archived_text: bool = Fa
     # 追踪名单本身就是"我要看"的表态。2026-11-19「民间审稿办主任」那条
     # "培养皿可能是你实验的最大因素" 标题只命中"实验"这个泛词，在这里被
     # 静默丢弃，连 filtered 记录都没留，用户搜不到也查不出。
-    if metadata.get("catalog_matched") and title and not URL_ONLY_RE.match(title):
-        return {"keep": True, "reason": "来自公众号库中已启用的重点账号", "matched_terms": matched[:12]}
+    if metadata.get("catalog_matched"):
+        if title and not URL_ONLY_RE.match(title):
+            return {"keep": True, "reason": "来自公众号库中已启用的重点账号", "matched_terms": matched[:12]}
+        # 4.x 内存盒子只把「一次群发多篇」里第一篇的标题带出来，第二篇起标题是
+        # 空的（候选里用 URL 兜底）。用户已经把这个号勾进追踪名单，标题暂时缺失
+        # 不该让整篇消失——这正是「同一时间推两篇只读到上面那篇」的另一半原因。
+        # 归档时 archive_web 会用正文标题覆盖，所以这里放行是安全的。
+        return {"keep": True,
+                "reason": "来自已启用账号；微信本地没带出这一篇的标题，先收下，归档后以正文标题为准",
+                "matched_terms": matched[:12]}
 
     # 只命中"研究""发现"这类泛词不算证据：真正的研究报道，标题里一定有具体名词
     # （蛋白、纳米、量子…）。这一条挡掉的是"发现好多大学生不懂邮件礼仪"这种。
