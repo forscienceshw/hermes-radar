@@ -28,6 +28,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
+import re
 import sqlite3
 import time
 from pathlib import Path
@@ -253,30 +254,64 @@ def _lz4(data: Any) -> str:
         return ""
 
 
-def card(content: Any, fallback: str = "") -> dict[str, str]:
-    """把一条 Type=49/SubType=5 的卡片解成 title/des/url/account。
+def _mid_idx(url: str) -> tuple[str, int]:
+    """从链接里取 (mid, idx)：3.x 和 4.x 的链接都带这两个参数。"""
+    mid = re.search(r"[?&]mid=(\d+)", url)
+    idx = re.search(r"[?&]idx=(\d+)", url)
+    return (mid.group(1) if mid else ""), int(idx.group(1)) if idx else 1
+
+
+def _url_rank(url: str) -> tuple:
+    """同一篇在 XML 里可能出现两份，挑参数更全的那条。"""
+    return ("\ufffd" not in url, url.startswith("https://"),
+            "chksm=" in url, "sn=" in url, -len(url))
+
+
+def cards(content: Any, fallback: str = "") -> list[dict[str, str]]:
+    """把一条 Type=49/SubType=5 的卡片解成**若干篇** title/des/url/account。
 
     ``CompressContent`` 是 lz4；老消息可能直接躺在 ``StrContent`` 里，所以
     两条路都要试一遍。
+
+    一次群发多篇时，微信 3.x 把它们存成**一条** PublicMsg 行，XML 里并排几个
+    ``<appmsg>``。只取第一个就等于把靠下的几篇整条丢掉——2026-11-05 黄硕课题组
+    那批（环肽 + JACS 位阻标签）就是这么漏的。这里全部展开，并按 (mid,idx) 去重
+    （同一篇在 XML 里常常有两份，参数完整度不同）。
     """
     xml = _lz4(content) or (fallback if str(fallback or "").lstrip().startswith("<") else "")
     if not xml:
-        return {}
+        return []
     try:
         import xml.etree.ElementTree as ET
         root = ET.fromstring(xml)
     except ET.ParseError:
-        return {}
-    appmsg = root.find("appmsg")
-    if appmsg is None:
-        return {}
+        return []
 
-    def text(tag: str) -> str:
-        import html as html_module
-        return html_module.unescape(appmsg.findtext(tag) or "").strip()
+    import html as html_module
 
-    return {"title": text("title"), "des": text("des"), "url": text("url"),
-            "account": text("sourcedisplayname") or text("nickname")}
+    def text(node: Any, tag: str) -> str:
+        return html_module.unescape(node.findtext(tag) or "").strip()
+
+    picked: dict[str, dict[str, str]] = {}
+    for appmsg in root.iter("appmsg"):
+        item = {"title": text(appmsg, "title"), "des": text(appmsg, "des"),
+                "url": text(appmsg, "url"),
+                "account": text(appmsg, "sourcedisplayname") or text(appmsg, "nickname")}
+        if not (item["url"] or item["title"]):
+            continue
+        mid, idx = _mid_idx(item["url"])
+        item["idx"] = str(idx)
+        key = f"{mid}#{idx}" if mid else item["url"].split("#", 1)[0]
+        prev = picked.get(key)
+        if prev is None or _url_rank(item["url"]) > _url_rank(prev["url"]):
+            picked[key] = item
+    return list(picked.values())
+
+
+def card(content: Any, fallback: str = "") -> dict[str, str]:
+    """兼容老调用：只要第一篇。多篇场景请用 :func:`cards`。"""
+    found = cards(content, fallback)
+    return found[0] if found else {}
 
 
 def articles(since_ts: int | None = None, after_local_id: int = 0,
@@ -300,19 +335,24 @@ def articles(since_ts: int | None = None, after_local_id: int = 0,
     try:
         rows = []
         for row in con.execute(sql, params):
-            info = card(row["CompressContent"], row["StrContent"] or row["DisplayContent"] or "")
-            url = info.get("url") or ""
-            if "mp.weixin.qq.com" not in url:
-                continue
-            rows.append({
-                "user_name": str(row["StrTalker"] or ""),
-                "local_id": int(row["localId"]),
-                "create_time": int(row["CreateTime"] or 0),
-                "title": info.get("title") or url,
-                "digest": info.get("des", ""),
-                "url": url,
-                "account": info.get("account", ""),
-            })
+            for info in cards(row["CompressContent"],
+                              row["StrContent"] or row["DisplayContent"] or ""):
+                url = info.get("url") or ""
+                if "mp.weixin.qq.com" not in url:
+                    continue
+                rows.append({
+                    "user_name": str(row["StrTalker"] or ""),
+                    "local_id": int(row["localId"]),
+                    "create_time": int(row["CreateTime"] or 0),
+                    "title": info.get("title") or url,
+                    "digest": info.get("des", ""),
+                    "url": url,
+                    "account": info.get("account", ""),
+                    # 同一行里的第几篇：入库键要靠它区分，否则只留得下第一篇
+                    "idx": int(info.get("idx") or 1),
+                })
+                if len(rows) >= max(1, int(limit)):
+                    return rows
         return rows
     finally:
         con.close()
@@ -343,22 +383,24 @@ def recent_for(username: str, limit: int = 60, days: int = 365,
         out: list[dict[str, Any]] = []
         seen: set[str] = set()
         for row in con.execute(sql, params):
-            info = card(row["CompressContent"], row["StrContent"] or row["DisplayContent"] or "")
-            url = info.get("url") or ""
-            if "mp.weixin.qq.com" not in url:
-                continue
-            from ..utils import canonical_url
-            canonical = canonical_url(url)
-            if canonical in seen:
-                continue
-            seen.add(canonical)
-            out.append({"create_time": int(row["CreateTime"] or 0),
-                        "local_id": int(row["localId"]),
-                        "title": info.get("title", ""),
-                        "url": url, "canonical_url": canonical,
-                        "digest": info.get("des", ""), "visits": ""})
-            if len(out) >= max(1, int(limit)):
-                break
+            for info in cards(row["CompressContent"],
+                              row["StrContent"] or row["DisplayContent"] or ""):
+                url = info.get("url") or ""
+                if "mp.weixin.qq.com" not in url:
+                    continue
+                from ..utils import canonical_url
+                canonical = canonical_url(url)
+                if canonical in seen:
+                    continue
+                seen.add(canonical)
+                out.append({"create_time": int(row["CreateTime"] or 0),
+                            "local_id": int(row["localId"]),
+                            "idx": int(info.get("idx") or 1),
+                            "title": info.get("title", ""),
+                            "url": url, "canonical_url": canonical,
+                            "digest": info.get("des", ""), "visits": ""})
+                if len(out) >= max(1, int(limit)):
+                    return out
         return out
     finally:
         con.close()

@@ -39,6 +39,48 @@ def _appmsg(title: str, url: str, account: str = "某号", digest: str = "摘要
     return lz4.block.compress(xml.encode("utf-8"))
 
 
+def _appmsg_multi(items: list[tuple[str, str]], account: str = "某号") -> bytes:
+    """一次群发多篇：微信 3.x 把几篇塞进同一条消息的多个 <appmsg>。"""
+    from xml.sax.saxutils import escape
+    body = "".join(f"<appmsg><title>{escape(t)}</title><des>摘要</des><url>{escape(u)}</url>"
+                   f"<sourcedisplayname>{account}</sourcedisplayname></appmsg>"
+                   for t, u in items)
+    import lz4.block
+    return lz4.block.compress(f"<msg>{body}</msg>".encode("utf-8"))
+
+
+class MultiAppmsgTests(unittest.TestCase):
+    """一个 PublicMsg 行里挂多篇时，靠下的那几篇不能丢。"""
+
+    def test_expands_every_appmsg(self) -> None:
+        url1 = "https://mp.weixin.qq.com/s?__biz=x&mid=100&idx=1&sn=a&chksm=c1"
+        url2 = "https://mp.weixin.qq.com/s?__biz=x&mid=100&idx=2&sn=b&chksm=c2"
+        got = w3.cards(_appmsg_multi([("上篇", url1), ("下篇", url2)]), "")
+        self.assertEqual([item["title"] for item in got], ["上篇", "下篇"])
+        self.assertEqual([item["idx"] for item in got], ["1", "2"])
+
+    def test_duplicate_pair_keeps_richer_url(self) -> None:
+        thin = "http://mp.weixin.qq.com/s?__biz=x&mid=100&idx=2&sn=b"
+        rich = "https://mp.weixin.qq.com/s?__biz=x&mid=100&idx=2&sn=b&chksm=c2"
+        got = w3.cards(_appmsg_multi([("同一篇", thin), ("同一篇", rich)]), "")
+        self.assertEqual(len(got), 1, "同一 (mid,idx) 只留一篇")
+        self.assertIn("chksm=", got[0]["url"])
+
+    def test_articles_emit_one_row_per_article(self) -> None:
+        with TemporaryDirectory() as tmp:
+            db = Path(tmp) / "PublicMsg.db"
+            url1 = "https://mp.weixin.qq.com/s?__biz=x&mid=100&idx=1&sn=a&chksm=c1"
+            url2 = "https://mp.weixin.qq.com/s?__biz=x&mid=100&idx=2&sn=b&chksm=c2"
+            _make_public_db(db, [(7, 49, 5, 1_700_000_000, "gh_aaa", "",
+                                  _appmsg_multi([("上篇", url1), ("下篇", url2)]))])
+            rows = w3.articles(after_local_id=0, limit=100,
+                               snap={"db": db, "source": db, "cached": True, "pages": 0})
+        self.assertEqual([row["title"] for row in rows], ["上篇", "下篇"])
+        self.assertEqual([row["idx"] for row in rows], [1, 2])
+        self.assertEqual({row["local_id"] for row in rows}, {7})
+
+
+
 class CardTests(unittest.TestCase):
     def test_parses_lz4_appmsg(self) -> None:
         got = w3.card(_appmsg("标题甲", "https://mp.weixin.qq.com/s/abc"), "")
@@ -203,6 +245,26 @@ class HistoryCursorTests(unittest.TestCase):
                 self.source, {}, {}, set(), set(), {}, False)
         self.assertEqual(candidates, [])
         self.assertIn("boom", cursor["reason"])
+
+    def test_sibling_articles_get_distinct_keys(self) -> None:
+        """同一次群发的第 2 篇必须有自己的入库键，否则撞键被吞。"""
+        url1 = "https://mp.weixin.qq.com/s?__biz=x&mid=100&idx=1&sn=a&chksm=c1"
+        url2 = "https://mp.weixin.qq.com/s?__biz=x&mid=100&idx=2&sn=b&chksm=c2"
+        rows = [
+            {"user_name": "gh_aaa", "local_id": 10, "create_time": 1_700_000_000,
+             "title": "上篇", "digest": "", "url": url1, "account": "号A", "idx": 1},
+            {"user_name": "gh_aaa", "local_id": 10, "create_time": 1_700_000_000,
+             "title": "下篇", "digest": "", "url": url2, "account": "号A", "idx": 2},
+        ]
+        with mock.patch.object(w3, "snapshot", return_value={"db": Path("x"), "source": Path("x"), "cached": True}), \
+             mock.patch.object(w3, "articles", return_value=rows):
+            candidates, _ = self.archive._wechat3_history_candidates(
+                self.source, {}, {}, {"gh_aaa"}, set(), {"gh_aaa": "号A"}, True)
+        keys = [item["external_key"] for item in candidates]
+        self.assertEqual(len(set(keys)), 2, "两篇不能共用一个 external_key")
+        self.assertEqual(keys[0], "public3:gh_aaa:10")
+        self.assertEqual(keys[1], "public3:gh_aaa:10#2")
+        self.assertEqual(candidates[1]["metadata"]["public_message_idx"], 2)
 
 
 if __name__ == "__main__":          # pragma: no cover

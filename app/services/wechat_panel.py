@@ -13,6 +13,7 @@
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Iterable
 
 from ..utils import canonical_url, now_iso
@@ -103,11 +104,17 @@ def import_articles(db: Any, account: dict[str, Any], gh_id: str, articles: list
             canonical = canonical_url(url)
         except ValueError:
             continue
+        # 一次群发多篇共用 local_id，键里带上 idx，第 2 篇才不会撞键被吞
+        idx = 1
+        hit = re.search(r"[?&]idx=(\d+)", url)
+        if hit:
+            idx = int(hit.group(1))
+        key = f"wechat-panel:{gh_id or account.get('name', '')}:{article.get('message_id') or canonical}"
         candidate = {
             "kind": "article",
             "url": url,
             "canonical_url": canonical,
-            "external_key": f"wechat-panel:{gh_id or account.get('name', '')}:{article.get('message_id') or canonical}",
+            "external_key": key + (f"#{idx}" if idx > 1 else ""),
             "title": str(article.get("title") or "").strip(),
             "author": account.get("name") or "",
             "published_at": article.get("published_at"),

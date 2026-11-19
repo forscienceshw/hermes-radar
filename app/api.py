@@ -710,6 +710,8 @@ def wechat_account_articles(account_pk: int, limit: int = 24, offset: int = 0, d
             "published_at": datetime.fromtimestamp(row["create_time"], timezone.utc)
                                      .isoformat(timespec="seconds") if row["create_time"] else "",
             "message_id": row["local_id"],
+            # 一次群发多篇：同一 message_id 下的第几篇，前端据此区分卡片
+            "idx": int(row.get("idx") or 1),
         } for row in rows[offset:]]
         payload = {"items": articles, "total": len(rows),
                    "legacy_filled": bool(legacy),

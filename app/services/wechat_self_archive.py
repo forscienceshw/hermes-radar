@@ -630,13 +630,16 @@ def _wechat3_history_candidates(source: dict[str, Any], config: dict[str, Any],
         candidates.append({
             "source_id": source["id"], "kind": "article",
             "url": item["url"], "canonical_url": canonical_url(item["url"]),
-            "external_key": f"public3:{talker}:{item['local_id']}",
+            # 一次群发多篇共用一个 localId，键里必须带 idx，否则第 2 篇撞键被丢掉
+            "external_key": (f"public3:{talker}:{item['local_id']}"
+                             + (f"#{item['idx']}" if int(item.get("idx") or 1) > 1 else "")),
             "title": item["title"] or item["url"],
             "author": names.get(talker, item.get("account") or talker),
             "published_at": epoch_iso(item["create_time"]),
             "metadata": {"share_channel": "wechat_public_local", "wechat_version": "3.x-history",
                          "wechat_account_id": talker,
                          "public_message_id": item["local_id"],
+                         "public_message_idx": int(item.get("idx") or 1),
                          "description": item.get("digest", ""),
                          "catalog_matched": talker in allowed},
         })
