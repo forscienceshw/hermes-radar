@@ -57,6 +57,51 @@ class CardParsingTest(unittest.TestCase):
             self.assertEqual(wechat_public.parse_card(junk), {})
 
 
+# 一次群发多篇：三个 <appmsg> 并排，前两个是同一篇的两份（参数完整度不同）。
+CARD_MULTI = """<msg>
+<appmsg><title><![CDATA[上面那篇]]></title><des><![CDATA[摘要一]]></des>
+<url><![CDATA[https://mp.weixin.qq.com/s?__biz=AAA&mid=100&idx=1&sn=a1]]></url></appmsg>
+<appmsg><title><![CDATA[上面那篇]]></title><des><![CDATA[摘要一]]></des>
+<url><![CDATA[https://mp.weixin.qq.com/s?__biz=AAA&mid=100&idx=1&sn=a1&chksm=abc]]></url></appmsg>
+<appmsg><title><![CDATA[下面那篇]]></title><des><![CDATA[摘要二]]></des>
+<url><![CDATA[https://mp.weixin.qq.com/s?__biz=AAA&mid=100&idx=2&sn=b2&chksm=def]]></url></appmsg>
+</msg>"""
+
+# 另一种存法：一个 appmsg 里塞 mmreader/category/item 列表。
+CARD_MMREADER_MULTI = """<msg><appmsg><title><![CDATA[外层标题]]></title>
+<mmreader><category count="2"><name><![CDATA[某号]]></name>
+<item><title><![CDATA[第一篇]]></title>
+<url><![CDATA[https://mp.weixin.qq.com/s?__biz=AAA&mid=200&idx=1&sn=c1]]></url>
+<pub_time>1794832020</pub_time><summary><![CDATA[摘要甲]]></summary></item>
+<item><title><![CDATA[第二篇]]></title>
+<url><![CDATA[https://mp.weixin.qq.com/s?__biz=AAA&mid=200&idx=2&sn=c2]]></url>
+<pub_time>1794832100</pub_time><summary><![CDATA[摘要乙]]></summary></item>
+</category></mmreader></appmsg></msg>"""
+
+
+class MultiArticleCardTest(unittest.TestCase):
+    """一条消息挂多篇时，面板上每一篇都要出现，否则补录都没入口。"""
+
+    def test_expands_sibling_appmsg(self):
+        cards = wechat_public.parse_cards(CARD_MULTI)
+        self.assertEqual([c["title"] for c in cards], ["上面那篇", "下面那篇"])
+        self.assertEqual([c["idx"] for c in cards], [1, 2])
+
+    def test_keeps_richer_url_for_same_article(self):
+        cards = wechat_public.parse_cards(CARD_MULTI)
+        self.assertIn("chksm=", cards[0]["url"])
+
+    def test_expands_mmreader_items(self):
+        cards = wechat_public.parse_cards(CARD_MMREADER_MULTI)
+        self.assertEqual([c["title"] for c in cards], ["第一篇", "第二篇"])
+        self.assertEqual(cards[1]["published_epoch"], 1794832100)
+        self.assertEqual(cards[1]["source_name"], "某号")
+
+    def test_parse_card_still_returns_first(self):
+        self.assertEqual(wechat_public.parse_card(CARD_MULTI)["title"], "上面那篇")
+
+
+
 class GhIdResolveTest(unittest.TestCase):
     """号名对编号：同名精确匹配优先，放宽匹配必须唯一。"""
 

@@ -294,17 +294,21 @@ def cards(content: Any, fallback: str = "") -> list[dict[str, str]]:
 
     picked: dict[str, dict[str, str]] = {}
     for appmsg in root.iter("appmsg"):
-        item = {"title": text(appmsg, "title"), "des": text(appmsg, "des"),
-                "url": text(appmsg, "url"),
-                "account": text(appmsg, "sourcedisplayname") or text(appmsg, "nickname")}
-        if not (item["url"] or item["title"]):
-            continue
-        mid, idx = _mid_idx(item["url"])
-        item["idx"] = str(idx)
-        key = f"{mid}#{idx}" if mid else item["url"].split("#", 1)[0]
-        prev = picked.get(key)
-        if prev is None or _url_rank(item["url"]) > _url_rank(prev["url"]):
-            picked[key] = item
+        # 有的群发把几篇塞进 <mmreader><category><item> 列表里，而不是并排 <appmsg>
+        nodes = appmsg.findall("mmreader/category/item") or [appmsg]
+        for node in nodes:
+            item = {"title": text(node, "title") or text(appmsg, "title"),
+                    "des": text(node, "summary") or text(node, "digest") or text(appmsg, "des"),
+                    "url": text(node, "url") or text(appmsg, "url"),
+                    "account": text(appmsg, "sourcedisplayname") or text(appmsg, "nickname")}
+            if not (item["url"] or item["title"]):
+                continue
+            mid, idx = _mid_idx(item["url"])
+            item["idx"] = str(idx)
+            key = f"{mid}#{idx}" if mid else item["url"].split("#", 1)[0]
+            prev = picked.get(key)
+            if prev is None or _url_rank(item["url"]) > _url_rank(prev["url"]):
+                picked[key] = item
     return list(picked.values())
 
 

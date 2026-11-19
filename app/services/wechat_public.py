@@ -14,6 +14,7 @@
 """
 from __future__ import annotations
 
+import re
 import threading
 import time
 import xml.etree.ElementTree as ET
@@ -112,35 +113,62 @@ def gh_id_for(name: str, account_id: str = "") -> str:
     return loose[0] if len(loose) == 1 else ""
 
 
-def parse_card(xml_text: str) -> dict[str, Any]:
-    """把一条公众号卡片的 XML 拆成前端要的字段。解析不了就返回空字典。"""
+def parse_cards(xml_text: str) -> list[dict[str, Any]]:
+    """把一条公众号卡片拆成**若干篇**。一条消息里挂多篇是常态。
+
+    两种存法都要认：
+
+    * 几个 ``<appmsg>`` 并排（3.x 一次群发多篇最常见的写法）；
+    * 一个 ``<appmsg>`` 里塞 ``<mmreader><category><item>`` 列表。
+
+    老代码只 ``root.find("appmsg")`` 取第一个，靠下的那几篇在面板列表里根本不
+    出现，连补录入口都点不到——2026-11-05 黄硕课题组那批（环肽 + JACS 位阻标签）
+    就是这么漏的。同一篇在 XML 里常出现两份（参数完整度不同），按 (mid,idx) 去重。
+    """
     if not xml_text or "<appmsg" not in xml_text:
-        return {}
+        return []
     try:
         root = ET.fromstring(xml_text)
     except ET.ParseError:
-        return {}
-    appmsg = root.find("appmsg")
-    if appmsg is None:
-        return {}
+        return []
 
     def text(node: ET.Element | None, tag: str) -> str:
         if node is None:
             return ""
         return (node.findtext(tag) or "").strip()
 
-    item = appmsg.find("mmreader/category/item")
-    node = item if item is not None else appmsg
-    topnew = appmsg.find("mmreader/category/topnew")
-    title = text(node, "title") or text(appmsg, "title")
-    url = text(node, "url") or text(appmsg, "url")
-    summary = text(node, "summary") or text(node, "digest") or text(appmsg, "des")
-    cover = text(node, "cover") or text(topnew, "cover")
-    published = text(node, "pub_time")
-    source_name = text(appmsg, "mmreader/category/name")
-    epoch = int(published) if published.isdigit() else 0
-    return {"title": title, "url": url, "summary": summary, "cover": cover,
-            "published_epoch": epoch, "source_name": source_name}
+    picked: dict[str, dict[str, Any]] = {}
+    for appmsg in root.iter("appmsg"):
+        topnew = appmsg.find("mmreader/category/topnew")
+        source_name = text(appmsg, "mmreader/category/name")
+        nodes = appmsg.findall("mmreader/category/item") or [appmsg]
+        for node in nodes:
+            title = text(node, "title") or text(appmsg, "title")
+            url = text(node, "url") or text(appmsg, "url")
+            if not (url or title):
+                continue
+            published = text(node, "pub_time")
+            card = {"title": title, "url": url,
+                    "summary": text(node, "summary") or text(node, "digest") or text(appmsg, "des"),
+                    "cover": text(node, "cover") or text(topnew, "cover"),
+                    "published_epoch": int(published) if published.isdigit() else 0,
+                    "source_name": source_name}
+            mid = re.search(r"[?&]mid=(\d+)", url)
+            idx = re.search(r"[?&]idx=(\d+)", url)
+            card["idx"] = int(idx.group(1)) if idx else 1
+            key = f"{mid.group(1)}#{card['idx']}" if mid else url.split("#", 1)[0]
+            prev = picked.get(key)
+            rank = ("chksm=" in url, url.startswith("https://"), "sn=" in url, -len(url))
+            if prev is None or rank > ("chksm=" in prev["url"], prev["url"].startswith("https://"),
+                                       "sn=" in prev["url"], -len(prev["url"])):
+                picked[key] = card
+    return list(picked.values())
+
+
+def parse_card(xml_text: str) -> dict[str, Any]:
+    """兼容老调用：只要第一篇。多篇场景请用 :func:`parse_cards`。"""
+    found = parse_cards(xml_text)
+    return found[0] if found else {}
 
 
 def _talker_id(conn: Any, gh_id: str) -> int | None:
@@ -168,27 +196,30 @@ def recent_articles(gh_id: str, limit: int = 24, offset: int = 0, days: int = 36
         items: list[dict[str, Any]] = []
         seen: set[str] = set()
         for local_id, created, compressed, plain in rows:
-            card = parse_card(_decompress(compressed) or (plain if str(plain or "").lstrip().startswith("<") else ""))
-            url = card.get("url") or ""
-            if not url:
-                continue
-            try:
-                canonical = canonical_url(url)
-            except ValueError:
-                continue
-            if canonical in seen:
-                continue
-            seen.add(canonical)
-            stamp = card.get("published_epoch") or int(created or 0)
-            items.append({
-                "canonical_url": canonical,
-                "url": url,
-                "title": card.get("title") or "(无标题)",
-                "summary": (card.get("summary") or "")[:160],
-                "cover": card.get("cover") or "",
-                "published_at": datetime.fromtimestamp(stamp, timezone.utc).isoformat(timespec="seconds"),
-                "message_id": int(local_id),
-            })
+            xml_text = _decompress(compressed) or (plain if str(plain or "").lstrip().startswith("<") else "")
+            for card in parse_cards(xml_text):
+                url = card.get("url") or ""
+                if not url:
+                    continue
+                try:
+                    canonical = canonical_url(url)
+                except ValueError:
+                    continue
+                if canonical in seen:
+                    continue
+                seen.add(canonical)
+                stamp = card.get("published_epoch") or int(created or 0)
+                items.append({
+                    "canonical_url": canonical,
+                    "url": url,
+                    "title": card.get("title") or "(无标题)",
+                    "summary": (card.get("summary") or "")[:160],
+                    "cover": card.get("cover") or "",
+                    "published_at": datetime.fromtimestamp(stamp, timezone.utc).isoformat(timespec="seconds"),
+                    "message_id": int(local_id),
+                    # 同一条消息里的第几篇：前端与补录键都靠它区分
+                    "idx": int(card.get("idx") or 1),
+                })
         return {"items": items, "total": total, "has_more": offset + len(rows) < total}
     finally:
         conn.close()

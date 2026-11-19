@@ -376,3 +376,18 @@ OpenAlex / Unpaywall 对新刊、国内刊收录滞后。Vita（10.15302/vita.20
 
 历史遗留：`items` 里 7457 条公众号链接中 344 条缺 chksm，多数是 3.x 通道抓的
 （那条路不校验），不用回头改；`archive_item` 里报"没有正文"的 17 条才是真受影响的。
+
+## 一次群发多篇：3.x 也是"一条消息挂几篇"（2026-11-19 补）
+
+4.x 内存盒子按 `AppMsgId`(mid) 归并，3.x 的 PublicMsg.db 更直接：**一行**里
+并排几个 `<appmsg>`（也有把几篇塞进 `<mmreader><category><item>` 列表的写法）。
+旧代码 `root.find("appmsg")` 只取第一个，靠下的那几篇不光不入库，连面板列表里
+都不出现，连"补录"入口都点不到。11-05 黄硕课题组那批（环肽 + JACS 位阻标签）
+就是这么漏的，11-19 的 Nature 红外 + Nature Chemistry 适配体又漏了一次。
+
+现在三个地方都按篇展开：`wechat3_public.cards()`（历史通道与面板 4.x 合并）、
+`wechat_public.parse_cards()`（面板 3.x 直读）、`wechat4_memory._assemble_cards()`。
+凡是入库键都要带 `#idx`（`public3:` / `wechat-panel:` / `public4mem:` 三套都改了），
+否则第 2 篇与第 1 篇撞唯一键，直接被吞。
+
+同一篇在 XML 里常出现两份，参数完整度不同，按 (mid,idx) 去重后留带 `chksm` 的。
