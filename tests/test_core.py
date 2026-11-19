@@ -381,6 +381,27 @@ class CoreTests(unittest.TestCase):
         self.assertFalse(assess_candidate({"kind": "article", "url": "https://mp.weixin.qq.com/s/c",
                                            "title": "https://mp.weixin.qq.com/s/c"})["keep"])
 
+    def test_whitelisted_account_passes_even_with_vague_title(self):
+        """启用名单里的号，标题只命中泛词也要放行。
+
+        2026-11-19「民间审稿办主任」那条「培养皿可能是你实验的最大因素」
+        只命中"实验"，在泛词拦截处被静默丢弃（连 filtered 记录都没留）。
+        这条放行必须排在泛词拦截之前：用户把这个号勾进追踪名单本身就是
+        他要看的表态，而广告、引流、社会新闻在前面已经单独挡过一轮。
+        """
+        from app.services.relevance import assess_candidate
+        vague = {"kind": "article", "url": "https://mp.weixin.qq.com/s?__biz=A&mid=9&idx=1",
+                 "title": "有意思的工作，培养皿可能是你实验的最大因素；不过这个工作居然不去做 NRF2 上游",
+                 "metadata": {"catalog_matched": True}}
+        self.assertTrue(assess_candidate(vague)["keep"])
+        # 同一个标题、不在名单里，还是照旧挡掉：个人口味不能借这条混过去
+        vague["metadata"] = {}
+        self.assertFalse(assess_candidate(vague)["keep"])
+        # 名单里的广告仍然要挡
+        advert = {"kind": "article", "url": "https://mp.weixin.qq.com/s?__biz=A&mid=10&idx=1",
+                  "title": "招聘：实验技术员两名，待遇从优", "metadata": {"catalog_matched": True}}
+        self.assertFalse(assess_candidate(advert)["keep"])
+
     def test_archive_preserves_original_share_metadata(self):
         item_id = self.db.discover_item({"url": "https://www.bilibili.com/video/BV1GJ411x7h7/",
                                          "kind": "video", "title": "科研视频",

@@ -65,6 +65,10 @@ ACC_RE = re.compile(
 # （__biz + mid + idx + sn 齐了就够，尾部 chksm 掉了不影响）。
 URL_RE = re.compile(rb"https?://mp\.weixin\.qq\.com/s[^\x00-\x20\"'<>\\\x7f]{10,400}")
 MID_IN_URL = re.compile(r"[?&]mid=(\d+)")
+# 同一次群发推多篇时 mid 相同、idx 不同（idx=1 是靠上那篇）。以前只按 mid
+# 归并，第二篇起全部被 setdefault 吞掉 —— 用户看到的就是"同时推两篇，只读到
+# 上面那篇"。2026-11-19 实测进程堆里有 101 个 mid 带多个 idx（最多 4 篇）。
+IDX_IN_URL = re.compile(r"[?&]idx=(\d+)")
 
 READ_CHUNK = 8 << 20          # 单次最多读 8 MB
 SCAN_BUDGET = 20.0            # 一次扫描最多花 20 秒
@@ -163,24 +167,72 @@ def _decode_json_string(raw: bytes) -> str:
     return raw.decode("utf-8", "replace")
 
 
+def _url_variants(value: Any) -> dict[int, str]:
+    """把 URL 池的一项拆成 {idx: url}，兼容旧的"mid→单个 URL"写法。"""
+    if isinstance(value, dict):
+        out: dict[int, str] = {}
+        for key, url in value.items():
+            try:
+                out[int(key)] = str(url)
+            except (TypeError, ValueError):
+                continue
+        return {k: v for k, v in out.items() if v}
+    if isinstance(value, str) and value:
+        return {1: value}
+    return {}
+
+
+def _titles_of(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value] if value else []
+    return [str(item) for item in (value or []) if item]
+
+
+def _url_score(url: str) -> tuple:
+    """挑最干净的那条链接。
+
+    同一篇的 URL 在堆里会有多个变体：http / https 并存，尾部粘着二进制
+    （表现为 U+FFFD），或者被截断丢了 sn。干净的优先，短一点说明没粘垃圾。
+    """
+    return ("\ufffd" not in url, url.startswith("https://"), "sn=" in url, -len(url))
+
+
 def _assemble_cards(gh_of: dict[str, str], ts_of: dict[str, int],
-                    title_of: dict[str, str], mid_url: dict[str, str]) -> list[dict[str, Any]]:
-    """把三种来源按 mid 归并成卡片。
+                    title_of: dict[str, Any], mid_url: dict[str, Any]) -> list[dict[str, Any]]:
+    """把三种来源按 (mid, idx) 归并成卡片。
 
     gh 来自 A 形态的 ``uniqueId``（精确配对，不看字段顺序），标题来自 A 形态的
-    ``Title``，URL 来自 B 形态的 ``ContentUrl``（URL 自带 mid，所以对得上）。
+    ``Title``，URL 来自 B 形态的 ``ContentUrl``（URL 自带 mid/idx，所以对得上）。
     缺哪个就先空着，下一轮扫描补——不要因为缺 URL 就把整条丢掉。
+
+    **一次群发多篇时 mid 相同、idx 不同**，所以要按 (mid, idx) 出卡片：key 用
+    ``gh@mid``（idx=1，保持与历史数据一致）或 ``gh@mid#idx``。
     """
     out: list[dict[str, Any]] = []
     for mid, gh in gh_of.items():
-        title = title_of.get(mid, "")
-        url = mid_url.get(mid, "")
-        if not title and not url:
-            continue                                   # 什么都没有，收了也没用
-        out.append({"gh": gh, "mid": mid, "ts": ts_of.get(mid, 0),
-                    "title": title, "key": f"{gh}@{mid}", "url": url,
-                    "canonical_url": canonical_url(url) if url else ""})
-    out.sort(key=lambda c: c["ts"], reverse=True)
+        titles = _titles_of(title_of.get(mid))
+        variants = _url_variants(mid_url.get(mid))
+        ts = ts_of.get(mid, 0)
+        if not variants:
+            if not titles:
+                continue                               # 什么都没有，收了也没用
+            out.append({"gh": gh, "mid": mid, "idx": 1, "ts": ts, "title": titles[0],
+                        "key": f"{gh}@{mid}", "url": "", "canonical_url": ""})
+            continue
+        for idx in sorted(variants):
+            url = variants[idx]
+            if idx == 1:
+                title = titles[0] if titles else ""
+            elif len(titles) >= idx:
+                # 标题的顺序是堆里的出现顺序，只有数量够时才敢按序号配；
+                # 不够就留空（入库时用 URL 兜底，归档后会以正文标题为准）
+                title = titles[idx - 1]
+            else:
+                title = ""
+            out.append({"gh": gh, "mid": mid, "idx": idx, "ts": ts, "title": title,
+                        "key": f"{gh}@{mid}" if idx == 1 else f"{gh}@{mid}#{idx}",
+                        "url": url, "canonical_url": canonical_url(url) if url else ""})
+    out.sort(key=lambda c: (c["ts"], -c["idx"]), reverse=True)
     return out
 
 
@@ -205,9 +257,9 @@ def scan(budget: float = SCAN_BUDGET) -> Snapshot:
 
     gh_of: dict[str, str] = {}          # mid -> gh（uniqueId 精确配对，不靠字段顺序）
     ts_of: dict[str, int] = {}
-    title_of: dict[str, str] = {}
+    title_of: dict[str, list[str]] = {}  # mid -> 多个标题（一次群发多篇时按序对应 idx）
     accounts: dict[str, str] = {}
-    mid_url: dict[str, str] = {}
+    mid_url: dict[str, dict[int, str]] = {}   # mid -> {idx: url}
     scanned = 0
     t0 = time.time()
     try:
@@ -234,12 +286,15 @@ def scan(budget: float = SCAN_BUDGET) -> Snapshot:
                                 ts_of.setdefault(mid, int(head.group(2)))
                             except ValueError:
                                 pass
-                            if mid in title_of:
-                                continue
                             window = data[head.start():min(end, head.start() + OBJ_SPAN)]
                             m = TITLE_RE.search(window)
                             if m:
-                                title_of[mid] = _decode_json_string(m.group(1))
+                                title = _decode_json_string(m.group(1))
+                                # 堆里的截断片段常带 U+FFFD，宁可留空也别拿它当标题
+                                if title and "\ufffd" not in title:
+                                    names = title_of.setdefault(mid, [])
+                                    if title not in names and len(names) < 8:
+                                        names.append(title)
                     if b'"showName"' in data:
                         for m in ACC_RE.finditer(data):
                             accounts.setdefault(m.group(2).decode("ascii", "replace"),
@@ -248,8 +303,17 @@ def scan(budget: float = SCAN_BUDGET) -> Snapshot:
                         for m in URL_RE.finditer(data):
                             url = m.group(0).decode("utf-8", "replace")
                             hit = MID_IN_URL.search(url)
-                            if hit:
-                                mid_url.setdefault(hit.group(1), url)
+                            if not hit:
+                                continue
+                            idx_hit = IDX_IN_URL.search(url)
+                            try:
+                                idx = int(idx_hit.group(1)) if idx_hit else 1
+                            except ValueError:
+                                idx = 1
+                            bucket = mid_url.setdefault(hit.group(1), {})
+                            current = bucket.get(idx)
+                            if current is None or _url_score(url) > _url_score(current):
+                                bucket[idx] = url
             if time.time() - t0 > budget:
                 break
     finally:
@@ -262,5 +326,7 @@ def scan(budget: float = SCAN_BUDGET) -> Snapshot:
     # ContentUrl（URL 自己带 mid，所以对得上）。三者按 mid 归并，缺哪个先空着，
     # 下一轮扫描补。
     out = _assemble_cards(gh_of, ts_of, title_of, mid_url)
-    return Snapshot(at=now, cards=out, accounts=accounts, urls=mid_url,
+    flat_urls = {f"{mid}#{idx}": url for mid, bucket in mid_url.items()
+                 for idx, url in bucket.items()}
+    return Snapshot(at=now, cards=out, accounts=accounts, urls=flat_urls,
                     scanned_mb=scanned / 1048576, elapsed=time.time() - t0)

@@ -246,6 +246,15 @@ def assess_candidate(candidate: dict[str, Any], include_archived_text: bool = Fa
     matched = [term for term in terms if _contains_term(folded, term)]
     specific = [term for term in matched if term.casefold() not in WEAK_TERMS]
     title_hits = [term for term in matched if _contains_term(title.casefold(), term)]
+
+    # 用户明确启用的重点账号要先放行，而且必须排在泛词拦截**前面**。
+    # 广告、引流、社会新闻上面已经挡过一轮；剩下的内容，用户把这个号勾进
+    # 追踪名单本身就是"我要看"的表态。2026-11-19「民间审稿办主任」那条
+    # "培养皿可能是你实验的最大因素" 标题只命中"实验"这个泛词，在这里被
+    # 静默丢弃，连 filtered 记录都没留，用户搜不到也查不出。
+    if metadata.get("catalog_matched") and title and not URL_ONLY_RE.match(title):
+        return {"keep": True, "reason": "来自公众号库中已启用的重点账号", "matched_terms": matched[:12]}
+
     # 只命中"研究""发现"这类泛词不算证据：真正的研究报道，标题里一定有具体名词
     # （蛋白、纳米、量子…）。这一条挡掉的是"发现好多大学生不懂邮件礼仪"这种。
     if specific or len(title_hits) >= 2:
@@ -253,11 +262,6 @@ def assess_candidate(candidate: dict[str, Any], include_archived_text: bool = Fa
     if matched:
         return {"keep": False, "reason": "只命中了研究/发现这类泛词，看不出具体科研主题",
                 "matched_terms": matched[:6]}
-
-    # The local PublicMsg connector sets this only after exact matching against
-    # the user's enabled CORE account catalog. A bare self-chat URL never gets it.
-    if metadata.get("catalog_matched") and title and not URL_ONLY_RE.match(title):
-        return {"keep": True, "reason": "来自公众号库中已启用的重点账号", "matched_terms": []}
 
     # An explicit manual submission is an intentional override of the automatic
     # title filter, but still restricted to the two supported content types.

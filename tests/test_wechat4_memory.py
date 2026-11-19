@@ -103,6 +103,38 @@ class TwoShapeExtractionTest(unittest.TestCase):
         cards = mem._assemble_cards({"400": "gh_d"}, {"400": 1794968546}, {}, {})
         self.assertEqual(cards, [], "既没标题又没链接的空壳不该进队列")
 
+    def test_assemble_keeps_every_article_of_one_broadcast(self):
+        """一次群发多篇：mid 相同、idx 不同，每篇都要出卡片。
+
+        2026-11-19 用户报「同时推两篇，只读到上面那篇」。旧写法按 mid 归并，
+        idx=2 起全被 setdefault 吞掉；实测进程堆里 101 个 mid 带多个 idx。
+        """
+        gh_of = {"500": "gh_e"}
+        ts_of = {"500": 1795055495}
+        title_of = {"500": ["上篇标题", "下篇标题"]}
+        mid_url = {"500": {1: "https://mp.weixin.qq.com/s?__biz=E&mid=500&idx=1&sn=a",
+                           2: "https://mp.weixin.qq.com/s?__biz=E&mid=500&idx=2&sn=b"}}
+        cards = mem._assemble_cards(gh_of, ts_of, title_of, mid_url)
+        self.assertEqual([c["idx"] for c in cards], [1, 2], "同一次群发按 idx 升序")
+        self.assertEqual([c["title"] for c in cards], ["上篇标题", "下篇标题"])
+        self.assertEqual(cards[0]["key"], "gh_e@500", "idx=1 保持旧 key，历史 seen 仍能去重")
+        self.assertEqual(cards[1]["key"], "gh_e@500#2")
+        self.assertTrue(all(c["url"] for c in cards))
+
+    def test_assemble_leaves_title_empty_when_count_is_short(self):
+        """标题只读到一条却有两篇时，第二篇宁可留空，也不许张冠李戴。"""
+        cards = mem._assemble_cards(
+            {"600": "gh_f"}, {"600": 1795055495}, {"600": ["只有第一条标题"]},
+            {"600": {1: "https://mp.weixin.qq.com/s?mid=600&idx=1",
+                     2: "https://mp.weixin.qq.com/s?mid=600&idx=2"}})
+        self.assertEqual(cards[0]["title"], "只有第一条标题")
+        self.assertEqual(cards[1]["title"], "", "配不上就留空，入库时用 URL 兜底")
+
+    def test_url_score_prefers_clean_https(self):
+        clean = "https://mp.weixin.qq.com/s?__biz=A&mid=1&idx=1&sn=abc"
+        dirty = "http://mp.weixin.qq.com/s?__biz=A&mid=1&idx=1&sn=abc\x02\ufffd"
+        self.assertGreater(mem._url_score(clean), mem._url_score(dirty))
+
 
 class _FakeScan:
     def __init__(self, cards):

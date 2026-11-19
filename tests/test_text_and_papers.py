@@ -113,3 +113,30 @@ class CandidateTitlesTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CitationPdfMetaTest(unittest.TestCase):
+    """落地页取 PDF 地址：新刊、国内刊只能靠这条兜底。
+
+    Vita（10.15302/vita.2026.10.0084）在 OpenAlex 查是 404、Unpaywall 没记录，
+    以前直接判 closed；可官网页面一直挂着 citation_pdf_url。
+    """
+
+    def test_reads_meta_with_name_first(self):
+        from app.services.papers import _citation_pdf_from_html
+        html = ('<html><head><meta name="citation_pdf_url" '
+                'content="https://www.vita-journal.com/vita/EN/PDF/10.15302/x">'
+                '</head></html>')
+        self.assertEqual(_citation_pdf_from_html(html),
+                         "https://www.vita-journal.com/vita/EN/PDF/10.15302/x")
+
+    def test_reads_meta_with_content_first(self):
+        from app.services.papers import _citation_pdf_from_html
+        html = ('<meta content="https://example.org/a.pdf" '
+                'name="citation_pdf_url" />')
+        self.assertEqual(_citation_pdf_from_html(html), "https://example.org/a.pdf")
+
+    def test_ignores_unrelated_meta_and_missing_tag(self):
+        from app.services.papers import _citation_pdf_from_html
+        self.assertEqual(_citation_pdf_from_html('<meta name="og:title" content="x">'), "")
+        self.assertEqual(_citation_pdf_from_html(""), "")

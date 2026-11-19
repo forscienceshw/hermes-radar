@@ -324,3 +324,42 @@ RadarSetup.exe /S --dir=E:\RadarInstallTest --port=8899 --no-autostart --no-desk
 `decrypt_database` 以前 `open(out,"wb")` 就地覆盖，别的进程正在读时会读到半截文件，
 报 `database disk image is malformed`——看起来像库坏了，其实只是写了一半。现在写
 `.tmp` 再 `os.replace`；Windows 上目标被占用时重试 4 次，仍不行才退回就地覆盖。
+
+## 一次群发多篇要按 (mid, idx) 出卡片（2026-11-19 起）
+
+公众号一次推两篇时，微信的 `AppMsgId`(mid) 是**同一个**，靠 `idx` 区分（idx=1
+是靠上那篇）。内存通道以前按 mid 归并，`setdefault` 把 idx=2 起全吞掉了 ——
+用户看到的就是"同时推两篇，只读到了上面那篇"。
+
+现在 `_assemble_cards` 对每个 (mid, idx) 出一张卡：key 用 `gh@mid`（idx=1，
+兼容历史 seen）或 `gh@mid#idx`，`external_key` 同理。标题只有在条数够时才按序号
+配，配不上就留空（入库用 URL 兜底，归档后以页面 `og:title` 为准）。
+2026-11-19 实测进程堆里有 101 个 mid 带多个 idx，最多一次推 4 篇。
+
+## 重点账号的放行要排在泛词拦截之前（2026-11-19 起）
+
+`relevance.assess_candidate` 里 `catalog_matched` 的分支原来写在"只命中泛词"
+之后，**永远走不到**。用户明确勾进追踪名单的号，标题里只要只有"实验""研究"
+这类泛词，就被静默丢弃 —— 连 filtered 记录都没有，搜不到也查不出。
+2026-11-19「民间审稿办主任」那条"培养皿可能是你实验的最大因素"就是这样丢的。
+
+顺序现在固定为：广告/引流 → 社会新闻 → **启用名单放行** → 具体名词 → 泛词拦截。
+名单外、只有泛词的照旧挡掉：个人口味不能借这条混过去。
+
+## PDF 兜底：直接问出版社要（2026-11-19 起）
+
+OpenAlex / Unpaywall 对新刊、国内刊收录滞后。Vita（10.15302/vita.2026.10.0084）
+两个库都查不到，被判成 `closed`，可官网页面一直挂着 `citation_pdf_url`。
+
+`papers.py` 现在在"两个库都没给出 PDF"时抓一次落地页的
+`<meta name="citation_pdf_url">`（Highwire 规范，几乎所有 OA 平台都遵守）。
+属性顺序都兼容，失败不影响主流程。
+
+## 改完代码必须重启 api / worker（2026-11-19 补）
+
+`radar.py save` 只提交代码，**运行中的进程不会重新加载**。2026-11-19 排查
+"文章为什么没入库"时，跑着的 api/worker 还是前一天 22:31 启动的，当天所有修复
+都没生效，白等了两轮采集。
+
+改完代码要 terminate 掉 `app.api` / `app.worker` 进程，supervisor 5 秒内自动
+拉起新进程；或在面板上点一次「停止 → 启动」。验收前先看进程启动时间。

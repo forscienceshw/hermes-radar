@@ -11,7 +11,7 @@ from urllib.parse import quote, urlencode
 from pypdf import PdfReader
 
 from ..db import Database
-from ..net import download_file, get_json
+from ..net import download_file, get_json, request
 from ..settings import get_settings
 from ..storage import atomic_write, paper_folder, store_blob_file
 from . import purge
@@ -167,6 +167,41 @@ def _openalex_metadata(payload: dict[str, Any]) -> dict[str, Any]:
             "openalex": payload}
 
 
+def _citation_pdf_from_html(html: str) -> str:
+    """从落地页的 `<meta name="citation_pdf_url">` 里取 PDF 地址。
+
+    属性顺序各家不一样（name 在前、content 在前都见过），所以先切出 meta 标签
+    再判断，不用一条大正则去赌顺序。
+    """
+    for tag in re.findall(r"<meta\b[^>]*>", html, re.I):
+        if "citation_pdf_url" not in tag.lower():
+            continue
+        found = re.search(r'content\s*=\s*["\']([^"\']+)["\']', tag, re.I)
+        if found:
+            return found.group(1).strip()
+    return ""
+
+
+async def _landing_pdf_url(landing: str) -> str:
+    """直接问出版社要 PDF：OpenAlex / Unpaywall 没收的刊也能拿到。
+
+    2026-11-19 的 Vita（10.15302/vita.2026.10.0084）：OpenAlex 返回 404、
+    Unpaywall 没有记录、Crossref 只有题录，于是被判成 closed。可它官网页面
+    一直挂着 citation_pdf_url。几乎所有 OA 平台都遵循 Highwire 规范，这是比
+    元数据库更稳的一条兜底。
+    """
+    if not landing:
+        return ""
+    try:
+        response = await request(landing, max_bytes=4_000_000,
+                                 headers={"Accept": "text/html,application/xhtml+xml,*/*;q=0.8"})
+    except Exception:                                    # noqa: BLE001 - 兜底失败不该影响主流程
+        return ""
+    if response.status >= 400:
+        return ""
+    return _citation_pdf_from_html(response.text[:800_000])
+
+
 async def resolve_and_download(db: Database, paper_id: str) -> None:
     paper = db.one("SELECT * FROM papers WHERE id=?", (paper_id,))
     if not paper or paper["status"] == "downloaded":
@@ -230,6 +265,13 @@ async def resolve_and_download(db: Database, paper_id: str) -> None:
                 landing_candidates.append(location["url_for_landing_page"])
     pdf_candidates = list(dict.fromkeys(pdf_candidates))
     landing_candidates = list(dict.fromkeys(landing_candidates))
+    if not pdf_candidates:
+        # 两个元数据库都没给出 PDF 时，直接问出版社要一次（新刊、国内刊常见）
+        probe = landing_candidates[0] if landing_candidates else f"https://doi.org/{doi}"
+        fallback = await _landing_pdf_url(probe)
+        if fallback:
+            pdf_candidates = [fallback]
+            landing_candidates = landing_candidates or [probe]
     timestamp = now_iso()
     # matched_by 是入库时记下的「这篇是怎么找到的」，重查一次不能把它抹掉。
     matched_by = (json_loads(paper.get("metadata_json"), {}) or {}).get("matched_by")
