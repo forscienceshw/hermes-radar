@@ -625,16 +625,27 @@ $('#llmProvider').onchange=()=>{const provider=$('#llmProvider').value,local=pro
 $('#loadWorkbuddyModels').onclick=async()=>{try{$('#workbuddyModelInfo').textContent='正在读取官方目录……';const r=await api('/api/llm/workbuddy/models');$('#workbuddyModelInfo').textContent=`共 ${r.models.length} 个可用模型`;$('#detailContent').innerHTML=`<h1>WorkBuddy 可用模型</h1><p class="muted">倍率仅为目录展示信息，实际扣减以每次调用记录为准。</p><div class="table-wrap"><table><thead><tr><th>模型</th><th>ID</th><th>积分倍率</th><th>图片</th><th>选择</th></tr></thead><tbody>${r.models.map(m=>`<tr><td>${esc(m.name)}</td><td><code>${esc(m.id)}</code></td><td>${esc(m.credits||'未标注')}</td><td>${m.supportsImages===true?'支持':m.supportsImages===false?'不支持':'未知'}</td><td><button data-cloud-model="${esc(m.id)}">使用</button></td></tr>`).join('')}</tbody></table></div>`;openDetail()}catch(e){$('#workbuddyModelInfo').textContent='读取失败';toast(e.message)}};
 $('#settingsForm').onsubmit=async e=>{e.preventDefault();try{const patch={llm:{enabled:$('#llmEnabled').value==='true',provider:$('#llmProvider').value,base_url:$('#llmBase').value,model:$('#llmModel').value,vision_enabled:$('#visionEnabled').value==='true',daily_call_limit:Number($('#llmDaily').value),min_local_relevance:Number($('#llmPrefilter').value),long_material_strategy:$('#llmLongMaterial').value,accounts:window.collectAccounts?collectAccounts():undefined},analysis:{custom_reading_prompt:$('#readingPrompt').value,concurrency:Number($('#llmConcurrency').value)},notifications:{channel:$('#notifyChannel').value,instant_threshold:Number($('#instantThreshold').value),batch_size:Number($('#batchSize').value),max_wait_minutes:Number($('#maxWait').value),min_relevance:Number($('#minRelevance').value),quiet_start:$('#quietStart').value,quiet_end:$('#quietEnd').value,quiet_allow_critical:$('#quietCritical').value==='true',max_per_day:Number($('#maxPerDay').value),send_windows:$('#sendWindows').value.split(',').map(x=>x.trim()).filter(Boolean),highlight_threshold:Number($('#highlightThreshold').value),digest_limit:Number($('#digestLimit').value)},papers:{email:$('#paperEmail').value},video:{asr_enabled:$('#asrEnabled').value==='true',asr_model:$('#asrModel').value,max_duration_minutes:Number($('#asrDuration').value)}};await api('/api/settings',{method:'PUT',body:patch});for(const [id,name] of [['llmKey','llm_api_key'],['dataxKey','datax_api_key'],['notifyWebhook','notification_webhook'],['wecomKfSecret','wecom_kf_secret']]){if($('#'+id).value){await api('/api/settings/secrets',{method:'POST',body:{name,value:$('#'+id).value}});$('#'+id).value=''}}$('#settingsResult').textContent='已保存';toast('设置已安全保存')}catch(err){toast(err.message)}};
 function openDetail(){
-  // 公众号推文面板、排除弹窗等都是 showModal 打开的，处在浏览器的 top layer；
-  // 精读页用的是 show()，永远压在它下面——「点了在资料库却看不见」就是这么来的。
-  // 先把这些模态层收掉（关掉面板不会丢东西，再点一次号名就回来了）。
-  for(const d of $$('dialog[open]'))if(d.id!=='detailDialog')d.close();
-  const d=$('#detailDialog');if(!d.open)d.show();$('#detailBackdrop').classList.add('open');document.body.classList.add('modal-open')}
-function closeDetail(){const d=$('#detailDialog');stopItemWatch();if(d.open)d.close();$('#detailBackdrop').classList.remove('open');document.body.classList.remove('modal-open');closeCollectPop()}
+  // 精读页也必须走 showModal：公众号推文面板是 showModal 打开的，待在 top layer 里。
+  // 只有 showModal 才能叠到它上面，关闭后又正好回到下面那层——列表不用重新加载。
+  // show() 是非模态，z-index 再高也压不过 top layer，所以以前只能先把面板关掉。
+  const d=$('#detailDialog');
+  if(!d.open)d.showModal();
+  document.body.classList.add('modal-open')}
+function closeDetail(){const d=$('#detailDialog');if(d.open)d.close()}
 $('#closeDialog').onclick=closeDetail;
-$('#detailBackdrop').onclick=closeDetail;
-$('#detailDialog').addEventListener('close',()=>{stopItemWatch();$('#detailBackdrop').classList.remove('open');document.body.classList.remove('modal-open')});
-document.addEventListener('keydown',e=>{if(e.key!=='Escape')return;if(!$('#collectionPop').hidden){closeCollectPop();return}if($('#chatDrawer').classList.contains('open')){$('#chatClose').click();return}if($('#detailDialog').open)closeDetail()});
+$('#detailDialog').addEventListener('close',()=>{stopItemWatch();closeCollectPop()});
+// 任何一层模态关掉后，只要底下没有别的模态了才解锁滚动；否则关掉精读页会把
+// 还开着的推文面板一起解锁。
+document.addEventListener('close',e=>{if(e.target.tagName==='DIALOG'&&!$$('dialog[open]').length)document.body.classList.remove('modal-open')},true);
+// 点对话框外面那圈遮罩才关；点在面板内边距上不算。
+$('#detailDialog').addEventListener('click',e=>{
+  if(e.target!==e.currentTarget)return;
+  const r=e.currentTarget.getBoundingClientRect();
+  if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)closeDetail();
+});
+document.addEventListener('keydown',e=>{if(e.key!=='Escape')return;if(!$('#collectionPop').hidden){e.preventDefault();closeCollectPop();return}if($('#chatDrawer').classList.contains('open')){e.preventDefault();$('#chatClose').click()}});
+// Esc 不在这里手动关精读页：模态层自带「先关最上面那层」的顺序，
+// 手动 close 会让浏览器接着把下面那层公众号面板一起关掉。
 $('#collectionPopClose').onclick=closeCollectPop;
 $('#collectionCreate').onclick=()=>{const scope=collectTarget?collectScope(collectTarget.entryType):'library';const input=$('#collectionNewName');createCollectionFor(input.value,scope,true).then(()=>{input.value=''}).catch(e=>toast(e.message))};
 $('#collectionDialogClose').onclick=()=>$('#collectionDialog').close();

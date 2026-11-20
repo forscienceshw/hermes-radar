@@ -261,6 +261,70 @@ def disable_account(db: Any, account_pk: int, reason: str = "") -> dict[str, Any
     return {"enabled": 0}
 
 
+# 分类合并时谁更"像话"：CORE > OPTIONAL > EXCLUDE。
+# 旧的 OCR 记录常被猜成 CORE，新记录是 OPTIONAL，取前者不会丢用户的判断。
+_FIT_RANK = {"CORE": 0, "OPTIONAL": 1, "EXCLUDE": 2}
+
+
+def merge_accounts(db: Any, keep_pk: int, drop_pk: int) -> dict[str, Any]:
+    """把一条重复的号并到另一条上，数据一条都不丢。
+
+    典型场景：11-13 的长截图 OCR 造了一批残记录（名字被截断、``account_id`` 为空），
+    后来又按微信关注列表补进了真记录。两条是同一个号，只是旧的那条认不出 gh。
+
+    合并规则：
+    * **一定并到有 gh 的那条**上：采集靠 gh 认号，留一条没有编号的等于留个空壳。
+    * ``enabled`` 取或：旧记录里用户勾过"参与监测"，合并后不该悄悄失效。
+    * ``fit`` 取更靠前的一档，``category_code`` 优先取非 OTHER 的那个。
+    * ``reason``/``description`` 只填空，不覆盖已有文字。
+    * 面板「排除」记在 ``wechat_article_marks.account_pk`` 上，必须一起搬过去。
+
+    条目本身（``items.author`` / ``metadata.wechat_account_id``）**不动**：author 是
+    文章页面上的真实署名，拿库里的号名去改只会把溯源改坏。
+    """
+    keep = db.one("SELECT * FROM wechat_accounts WHERE id=?", (int(keep_pk),))
+    drop = db.one("SELECT * FROM wechat_accounts WHERE id=?", (int(drop_pk),))
+    if not keep or not drop:
+        raise ValueError("合并的两个号必须都存在")
+    if int(keep_pk) == int(drop_pk):
+        raise ValueError("不能和自己合并")
+    keep_gh = str(keep.get("account_id") or "").strip()
+    drop_gh = str(drop.get("account_id") or "").strip()
+    if not keep_gh and drop_gh:
+        keep, drop = drop, keep
+        keep_gh = drop_gh
+    if not keep_gh:
+        raise ValueError("两条都没有 gh 编号，认不出哪个才是真号，先别合并")
+
+    fit = keep.get("fit") if _FIT_RANK.get(str(keep.get("fit")), 9) <= _FIT_RANK.get(str(drop.get("fit")), 9) \
+        else drop.get("fit")
+    category = keep.get("category_code") or "OTHER"
+    if str(category) == "OTHER" and drop.get("category_code"):
+        category = drop["category_code"]
+    enabled = 1 if (int(keep.get("enabled") or 0) or int(drop.get("enabled") or 0)) else 0
+    stamp = now_iso()
+    with db.transaction() as conn:
+        moved = conn.execute(
+            "UPDATE wechat_article_marks SET account_pk=? WHERE account_pk=?",
+            (int(keep["id"]), int(drop["id"]))).rowcount
+        conn.execute(
+            """UPDATE wechat_accounts SET
+                fit=?, category_code=?, enabled=?,
+                reason=CASE WHEN COALESCE(reason,'')='' THEN ? ELSE reason END,
+                description=CASE WHEN COALESCE(description,'')='' THEN ? ELSE description END,
+                updated_at=? WHERE id=?""",
+            (fit, category, enabled, drop.get("reason") or "", drop.get("description") or "",
+             stamp, int(keep["id"])))
+        conn.execute("DELETE FROM wechat_accounts WHERE id=?", (int(drop["id"]),))
+    result = {"kept": int(keep["id"]), "kept_name": keep.get("name"),
+              "dropped": int(drop["id"]), "dropped_name": drop.get("name"),
+              "gh": keep_gh, "marks_moved": int(moved or 0), "enabled": enabled}
+    db.add_event("wechat_account_merged",
+                 f"合并重复公众号：{drop.get('name')} → {keep.get('name')}（{keep_gh}）",
+                 None, None)
+    return result
+
+
 def sync_account_rows(db: Any, rows: Iterable[dict[str, Any]], channel: str = "") -> dict[str, int]:
     """把「本机微信关注列表」灌进公众号库：只新增、只补 gh，不改启用状态。
 

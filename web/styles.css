@@ -140,11 +140,11 @@
 .nav-scroll{display:flex;flex-direction:column;gap:5px;overflow-y:auto;min-height:0;flex:1;padding-right:2px}
 .sidebar .storage-note{flex:none;margin-top:10px}
 
-/* ---------- 详情弹层改为非模态，浮层可以叠在上面 ---------- */
+/* ---------- 详情弹层：模态叠在推文面板上面，关掉就回到列表 ---------- */
 body.modal-open{overflow:hidden}
-.detail-backdrop{position:fixed;inset:0;background:rgba(23,35,43,.52);opacity:0;pointer-events:none;transition:opacity .18s;z-index:39}
-.detail-backdrop.open{opacity:1;pointer-events:auto}
 dialog{position:fixed;inset:0;margin:auto;z-index:40;overflow:auto}
+/* 精读页比公众号面板窄一圈，后面的列表还看得见；遮罩浅一点，别把底下的号名也糊掉。 */
+#detailDialog::backdrop{background:rgba(23,35,43,.34)}
 .mini-dialog{width:min(560px,92vw);max-height:80vh;padding:0 22px 22px}
 
 /* ---------- 资料库筛选与分页 ---------- */

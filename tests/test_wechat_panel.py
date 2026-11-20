@@ -7,11 +7,14 @@
 """
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
 from app.db import Database
 from app.services import filters, wechat3_public, wechat4_live, wechat_panel, wechat_public, wechat_self_archive
+from app.utils import now_iso
+from app.worker import Worker
 
 # 真实卡片的长相（截取关键字段）：封面和发布时间藏在 mmreader/category/item 里。
 CARD_WITH_COVER = """<msg><appmsg appid="" sdkver="0">
@@ -363,6 +366,90 @@ class SyncAccountsTest(unittest.TestCase):
         self.assertEqual(result["updated"], 1)
         row = self.db.one("SELECT account_id FROM wechat_accounts WHERE name='vita 生命'")
         self.assertEqual(row["account_id"], "gh_4620cb736abb")
+
+
+class MergeAccountsTest(unittest.TestCase):
+    """重复合并：搬走排除记录、保住启用的那个判断，删掉的只是目录项。"""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.db = Database(Path(self.temp.name) / "test.db")
+
+    def _add(self, name, gh, fit="OPTIONAL", category="OTHER", enabled=0, description="", reason=""):
+        self.db.execute("""INSERT INTO wechat_accounts
+            (name,account_id,category_code,fit,reason,description,enabled,created_at,updated_at)
+            VALUES(?,?,?,?,?,?,?,'t','t')""",
+                        (name, gh, category, fit, reason, description, enabled))
+        return int(self.db.one("SELECT id FROM wechat_accounts WHERE name=?", (name,))["id"])
+
+    def test_moves_marks_and_keeps_enabled(self):
+        drop = self._add("Immunology", None, fit="CORE", category="LIFE_MOLECULAR",
+                         enabled=1, reason="免疫学与疾病靶点机制")
+        keep = self._add("Glyco-Immunology", "gh_57b966c80444", fit="OPTIONAL", enabled=0)
+        self.db.execute("""INSERT INTO wechat_article_marks
+            (canonical_url,account_pk,gh_id,title,state,reason,rule_id,created_at)
+            VALUES(?,?,?,?,'excluded',?,NULL,'t')""",
+                        ("https://mp.weixin.qq.com/s?__biz=A&mid=1&idx=1", drop,
+                         "gh_57b966c80444", "x", "y"))
+        result = wechat_panel.merge_accounts(self.db, keep, drop)
+        self.assertEqual(result["marks_moved"], 1)
+        self.assertEqual(result["enabled"], 1)
+        row = self.db.one("SELECT * FROM wechat_accounts WHERE id=?", (keep,))
+        self.assertEqual(row["fit"], "CORE")
+        self.assertEqual(row["category_code"], "LIFE_MOLECULAR")
+        self.assertEqual(row["reason"], "免疫学与疾病靶点机制")
+        self.assertIsNone(self.db.one("SELECT id FROM wechat_accounts WHERE id=?", (drop,)))
+        mark = self.db.one("SELECT account_pk FROM wechat_article_marks WHERE title='x'")
+        self.assertEqual(int(mark["account_pk"]), keep)
+
+    def test_always_keeps_the_one_with_gh(self):
+        """传反了也要并到有 gh 的那条上，不能留下一条认不出号的空壳。"""
+        shell = self._add("看天下", None, enabled=1)
+        real = self._add("Vista看天下", "gh_52a264d06413")
+        result = wechat_panel.merge_accounts(self.db, shell, real)   # 参数顺序故意反着
+        self.assertEqual(result["kept"], real)
+        self.assertEqual(result["dropped"], shell)
+        row = self.db.one("SELECT name,account_id,enabled FROM wechat_accounts WHERE id=?", (real,))
+        self.assertEqual(row["account_id"], "gh_52a264d06413")
+        self.assertEqual(row["enabled"], 1)       # 旧记录勾过「参与监测」
+        self.assertIsNone(self.db.one("SELECT id FROM wechat_accounts WHERE id=?", (shell,)))
+
+    def test_refuses_when_neither_has_gh(self):
+        a = self._add("甲号", None)
+        b = self._add("乙号", None)
+        with self.assertRaises(ValueError):
+            wechat_panel.merge_accounts(self.db, a, b)
+        self.assertEqual(self.db.one("SELECT COUNT(*) c FROM wechat_accounts")["c"], 2)
+
+
+class SyncDueTest(unittest.TestCase):
+    """每日同步的限流：一天内不重复跑，时间戳坏掉就当作到期。"""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.db = Database(Path(self.temp.name) / "test.db")
+        self.worker = Worker.__new__(Worker)     # 只用到 db，不启动线程
+        self.worker.db = self.db
+
+    def _set_stamp(self, value):
+        self.db.set_runtime("wechat_accounts_synced_at", value)
+
+    def test_due_when_never_synced(self):
+        self.assertTrue(self.worker._accounts_sync_due())
+
+    def test_not_due_within_a_day(self):
+        self._set_stamp(now_iso())
+        self.assertFalse(self.worker._accounts_sync_due())
+
+    def test_due_after_a_day(self):
+        self._set_stamp((datetime.now(timezone.utc) - timedelta(hours=25)).isoformat())
+        self.assertTrue(self.worker._accounts_sync_due())
+
+    def test_garbage_stamp_is_due(self):
+        self._set_stamp("上次同步")
+        self.assertTrue(self.worker._accounts_sync_due())
 
 
 if __name__ == "__main__":

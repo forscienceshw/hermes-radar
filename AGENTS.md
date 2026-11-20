@@ -457,3 +457,50 @@ OpenAlex / Unpaywall 对新刊、国内刊收录滞后。Vita（10.15302/vita.20
 
 `wechat_accounts.name` 是 `UNIQUE COLLATE NOCASE`：插入撞键时退回按名字补 gh，
 不能让一次同步整批回滚。新号一律 `enabled=0`——自动按分类启用会把资料库变成垃圾场。
+
+## 弹层要叠，不要互相关（2026-11-20 补）
+
+公众号面板 `#waArticles`、排除弹窗、规则页都是 `showModal()`，待在浏览器 top layer。
+精读页 `#detailDialog` 以前用 `show()`（非模态）——z-index 写多高都压不过 top layer，
+所以「在资料库」点了没反应。当时的修法是 `openDetail()` 先把其它 dialog 全关掉，
+代价是推文列表跟着消失，看下一篇要重新点开号名、重新加载。
+
+现在精读页也走 `showModal()`：后开的模态叠在最上面，关掉自动回到下面那层，
+列表原样还在。两个连带约束：
+
+- **Esc 不要在 keydown 里手动 `close()`**。手关掉最上面那层以后，浏览器的默认
+  行为会接着关下一次层——精读页和推文面板一起没。模态层自带「先关最上面」的顺序。
+- `body.modal-open` 由所有 dialog 的 `close` 事件统一判断：底下还有 `dialog[open]`
+  就不解锁滚动，否则关掉精读页会把还开着的面板一起解锁。
+
+## 重复记录要合，不要靠名字猜（2026-11-20 补）
+
+11-13 的 OCR 快照留下 25 条「名字被截断、`account_id` 为空」的残记录，11-20 按
+关注列表补进真记录以后就成对出现。名字相近**不等于**同一个号（「湖南师范大学」
+和「湖南师范大学图书馆」是两个号），所以没做自动模糊合并，而是
+`wechat_panel.merge_accounts()` + `tools/merge_dupes.py` 里一份**人工核对过**的清单：
+
+- 前半段靠 `items.metadata_json.wechat_account_id` 对账——入库时从链接取的真 gh，
+  作者署名挂在哪个 gh 下，OCR 那条就是它；
+- 后半段靠 3.x `PublicMsg.db` 卡片反查——OCR 记录里的 `description` 是截屏上的标题，
+  拿去历史消息里搜，命中的号就是它。
+
+合并规则：一律并到**有 gh** 的那条上（认不出号的就是空壳），`enabled` 取或，
+`fit` 取更靠前的一档，`category_code` 优先非 OTHER，`reason`/`description` 只填空。
+`wechat_article_marks`（面板排除记录）必须跟着搬。条目本身不动——`items.author`
+是文章页上的真实署名，拿号名去改只会把溯源改坏。
+
+## 同步循环别在事件循环里做磁盘活（2026-11-20 补）
+
+`wechat4_live.refresh()` 是 SQLCipher 解密 + 全表读，`account_rows()` 要读整张
+`contact.db`。直接在 `account_sync_loop` 里同步调用会把采集、监听、任务队列一起
+卡住几十秒（单次预算就有 90 秒）。两处都必须 `asyncio.to_thread`。
+
+微信没登录时 4.x 根本没有密钥，这一趟读不到任何号——**不能写**
+`wechat_accounts_synced_at`，否则一天只有一次机会，刚好撞上关机就白等 24 小时。
+现在的处理是：`quick_status()` 说没运行就一小时后重试；读到 0 个也一小时后重试。
+
+对账口径：`contact.db` 里 `username LIKE 'gh_%'` 的号，加上库里已有 gh 的号，
+两边必须一一对上，跑一次同步 `inserted` 必须是 0。**非 gh 的老式号**
+（果壳、央视新闻、丁香园这类 `wxid_*` 用户名）这条链路读不到，它们的记录永远
+没有 `account_id`，也就永远收不到推文——这是通道限制，不是同步 bug。

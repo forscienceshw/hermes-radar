@@ -162,24 +162,40 @@ class Worker:
         一次性 OCR 快照，之后再关注一个号，库里根本不会出现——用户的体感就是
         「我明明关注了，公众号库里却没有」。这里每天读一次本机 contact.db 补齐，
         新号一律 enabled=0，收不收仍由用户在面板里勾。
+
+        两个坑：
+        * ``refresh()``/``account_rows()`` 都是同步的磁盘活（SQLCipher 解密 + 全表读），
+          直接在事件循环里跑会把采集、监听、任务队列一起卡住几十秒，必须扔进线程。
+        * 微信没登录时 4.x 根本没有密钥，读不到联系人表。这一趟不能算数——
+          不写 ``wechat_accounts_synced_at``，一小时后再试，否则一天只有一次机会，
+          刚好撞上关机就白等 24 小时。
         """
         from .services import wechat4_live, wechat_panel
 
         while not self.stop_event.is_set():
+            wait = 6 * 3600
             try:
                 if self._accounts_sync_due():
-                    wechat4_live.refresh()
-                    rows = wechat4_live.account_rows()
-                    if rows:
-                        result = wechat_panel.sync_account_rows(self.db, rows, "4.x")
-                        self.db.set_runtime("wechat_accounts_synced_at", now_iso())
-                        if result["inserted"] or result["merged"]:
-                            log.info("关注列表同步：新增 %s 个、按名字归并 %s 个（默认不追踪）",
-                                     result["inserted"], result["merged"])
+                    status = await asyncio.to_thread(wechat4_live.quick_status)
+                    if not status.get("running"):
+                        wait = 3600
+                        log.info("微信没在运行，关注列表同步推迟到一小时后重试")
+                    else:
+                        await asyncio.to_thread(wechat4_live.refresh)
+                        rows = await asyncio.to_thread(wechat4_live.account_rows)
+                        if rows:
+                            result = wechat_panel.sync_account_rows(self.db, rows, "4.x")
+                            self.db.set_runtime("wechat_accounts_synced_at", now_iso())
+                            if result["inserted"] or result["merged"]:
+                                log.info("关注列表同步：新增 %s 个、按名字归并 %s 个（默认不追踪）",
+                                         result["inserted"], result["merged"])
+                        else:
+                            wait = 3600
+                            log.info("关注列表同步读到 0 个公众号，一小时后重试")
             except Exception:                    # noqa: BLE001 - 同步失败不该拖垮采集
                 log.exception("同步本机公众号关注列表失败")
             try:
-                await asyncio.wait_for(self.stop_event.wait(), timeout=6 * 3600)
+                await asyncio.wait_for(self.stop_event.wait(), timeout=wait)
                 return
             except asyncio.TimeoutError:
                 continue
