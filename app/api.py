@@ -567,7 +567,7 @@ def sync_local_wechat_accounts() -> dict[str, Any]:
     Contact 表。新装环境必须走这一步：先让用户看见自己关注了什么，再由他自己勾选——
     自动按分类勾选会把资料库变成垃圾场，所以 enabled 一律 0。
     """
-    from .services import wechat4_live, wechat_self_archive
+    from .services import wechat4_live, wechat_panel, wechat_self_archive
 
     rows: list[dict[str, Any]] = []
     channel = ""
@@ -594,39 +594,8 @@ def sync_local_wechat_accounts() -> dict[str, Any]:
             400,
             "本机微信里没读到公众号。请确认微信已登录并保持运行，"
             "且在微信里打开过一次「订阅号消息」后重试。")
-    inserted = updated = 0
-    timestamp = now_iso()
-    with db.transaction() as conn:
-        for row in rows:
-            existing = conn.execute(
-                "SELECT id FROM wechat_accounts WHERE name=? COLLATE NOCASE",
-                (row["name"],)).fetchone()
-            if existing:
-                conn.execute(
-                    """UPDATE wechat_accounts SET
-                        account_id=CASE WHEN ?<>'' THEN ? ELSE account_id END,
-                        description=CASE WHEN description='' THEN ? ELSE description END,
-                        updated_at=? WHERE id=?""",
-                    (row["account_id"], row["account_id"], row.get("description") or "",
-                     timestamp, existing[0]))
-                updated += 1
-            else:
-                conn.execute(
-                    """INSERT INTO wechat_accounts
-                        (name,account_id,category_code,fit,reason,description,enabled,created_at,updated_at)
-                        VALUES(?,?,?,?,?,?,0,?,?)""",
-                    (row["name"], row["account_id"], "OTHER", "OPTIONAL",
-                     "本机微信同步，尚未判断是否要追踪", row.get("description") or "",
-                     timestamp, timestamp))
-                inserted += 1
-    db.add_event(
-        "wechat_accounts_synced",
-        f"从本机微信同步公众号（{channel}）：新增 {inserted} 个、更新 {updated} 个；"
-        f"默认全部不追踪，请自己勾选")
-    total = db.one("SELECT COUNT(*) c FROM wechat_accounts")["c"]
-    enabled = db.one("SELECT COUNT(*) c FROM wechat_accounts WHERE enabled=1")["c"]
-    return {"ok": True, "channel": channel, "found": len(rows), "inserted": inserted,
-            "updated": updated, "total": total, "enabled": enabled, **detail}
+    result = wechat_panel.sync_account_rows(db, rows, channel)
+    return {"ok": True, "channel": channel, "found": len(rows), **result, **detail}
 
 
 @app.patch("/api/wechat/accounts/{account_pk}")

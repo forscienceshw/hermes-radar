@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import re
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
@@ -258,6 +259,85 @@ def disable_account(db: Any, account_pk: int, reason: str = "") -> dict[str, Any
     db.add_event("wechat_account_disabled",
                  f"面板里停用了公众号：{reason or '不再收录'}", None, None)
     return {"enabled": 0}
+
+
+def sync_account_rows(db: Any, rows: Iterable[dict[str, Any]], channel: str = "") -> dict[str, int]:
+    """把「本机微信关注列表」灌进公众号库：只新增、只补 gh，不改启用状态。
+
+    匹配顺序必须是 **gh 编号 → 名字 → 折叠键**。少任何一档，同一份关注列表
+    每同步一次就会给 OCR 错名的号再造一条空壳，库里的重复条目只会越攒越多。
+
+    已存在的记录**不改名**：名字可能是用户认得的写法，微信里读到的备注名不一定
+    更好；只有新增的记录才用微信真名。gh 编号一定会补上——采集靠它认号。
+    """
+    from ..utils import name_match_key
+
+    known_id: dict[str, int] = {}
+    known_name: dict[str, list[int]] = {}
+    folded: dict[str, list[int]] = {}
+    for row in db.query("SELECT id,name,account_id FROM wechat_accounts"):
+        pk = int(row["id"])
+        gh = str(row["account_id"] or "").strip()
+        if gh:
+            known_id[gh] = pk
+        known_name.setdefault(str(row["name"] or "").casefold(), []).append(pk)
+        folded.setdefault(name_match_key(row["name"]), []).append(pk)
+
+    inserted = merged = updated = 0
+    stamp = now_iso()
+    with db.transaction() as conn:
+        for row in rows:
+            name = str(row.get("name") or "").strip()
+            gh = str(row.get("account_id") or "").strip()
+            if not name:
+                continue
+            pk = known_id.get(gh) if gh else None
+            if pk is None:
+                hits = known_name.get(name.casefold()) or []
+                # 同名多条时只有一条能认，宁可不合并也不要乱配对
+                pk = hits[0] if len(hits) == 1 else None
+            if pk is None and gh:
+                hits = folded.get(name_match_key(name)) or []
+                if len(hits) == 1:
+                    pk = hits[0]
+                    merged += 1
+            if pk is not None:
+                conn.execute(
+                    """UPDATE wechat_accounts SET
+                        account_id=CASE WHEN ?<>'' THEN ? ELSE account_id END,
+                        description=CASE WHEN COALESCE(description,'')='' THEN ? ELSE description END,
+                        updated_at=? WHERE id=?""",
+                    (gh, gh, row.get("description") or "", stamp, pk))
+                updated += 1
+                continue
+            cursor = None
+            try:
+                cursor = conn.execute(
+                    """INSERT INTO wechat_accounts
+                        (name,account_id,category_code,fit,reason,description,enabled,created_at,updated_at)
+                        VALUES(?,?,?,?,?,?,0,?,?)""",
+                    (name, gh, "OTHER", "OPTIONAL",
+                     "本机微信同步，尚未判断是否要追踪", row.get("description") or "",
+                     stamp, stamp))
+                inserted += 1
+            except sqlite3.IntegrityError:
+                # 表的 name 是 UNIQUE COLLATE NOCASE；万一折叠键没重合（Unicode
+                # 归一化差异），退回按名字补 gh，别让一次同步整批回滚。
+                conn.execute(
+                    """UPDATE wechat_accounts SET
+                        account_id=CASE WHEN ?<>'' THEN ? ELSE account_id END,updated_at=?
+                    WHERE name=? COLLATE NOCASE""", (gh, gh, stamp, name))
+                updated += 1
+            if cursor is not None and gh and cursor.lastrowid:
+                known_id[gh] = int(cursor.lastrowid)
+    if inserted or merged:
+        db.add_event("wechat_accounts_synced",
+                     f"从本机微信同步关注列表（{channel or '本机'}）：新增 {inserted} 个、"
+                     f"按名字归并 {merged} 个；新号默认不追踪")
+    total = db.one("SELECT COUNT(*) c FROM wechat_accounts")["c"]
+    enabled = db.one("SELECT COUNT(*) c FROM wechat_accounts WHERE enabled=1")["c"]
+    return {"inserted": inserted, "updated": updated, "merged": merged,
+            "total": total, "enabled": enabled}
 
 
 def _safe_canonical(url: Any) -> str:

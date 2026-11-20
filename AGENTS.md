@@ -436,3 +436,24 @@ OpenAlex / Unpaywall 对新刊、国内刊收录滞后。Vita（10.15302/vita.20
 
 注意副作用：改完不会自动补历史——`memory.seen` 已经把这些 key 记成"看过"了。
 要补只能重扫 3.x 库（清 `cursor_json.wechat3`）或让用户转发链接。
+
+## 关注列表和「收谁的号」是两件事（2026-11-20 补）
+
+`wechat_accounts` 的 1460 条是 11-13 一次性 OCR 快照。之后用户再关注一个号，
+库里**不会**自动出现——他的体感就是「我明明关注了，公众号库里却没有」。
+11-20 的 `Vita 生命`(gh_4620cb736abb) 就是这样：OCR 把名字截成两字的「生命」，
+`account_id` 为空、`enabled=0`，校准脚本因为名字太短（loose 要求 ≥4 字）也没对上。
+
+现在三处共用 `wechat_panel.sync_account_rows()`：
+
+- `POST /api/wechat/accounts/sync-local`（面板上的「同步本机关注」按钮）
+- worker 的 `account_sync_loop`：每天一次（`runtime.wechat_accounts_synced_at`
+  限流 24h），只新增、不追踪
+- 新装环境首次灌库
+
+匹配顺序必须是 **gh → 名字 → 折叠键**（`name_match_key`）。只按名字的话，
+同一份关注列表每同步一次就会给 OCR 错名的号再造一条空壳。已存在的记录**不改名**
+（微信备注名不一定比用户认得的写法好），只补 gh 和空 description。
+
+`wechat_accounts.name` 是 `UNIQUE COLLATE NOCASE`：插入撞键时退回按名字补 gh，
+不能让一次同步整批回滚。新号一律 `enabled=0`——自动按分类启用会把资料库变成垃圾场。

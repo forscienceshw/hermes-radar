@@ -143,6 +143,47 @@ class Worker:
             except asyncio.TimeoutError:
                 continue
 
+    def _accounts_sync_due(self) -> bool:
+        stamp = self.db.get_runtime("wechat_accounts_synced_at") or ""
+        if not stamp:
+            return True
+        try:
+            last = datetime.fromisoformat(stamp)
+        except ValueError:
+            return True
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - last).total_seconds() >= 24 * 3600
+
+    async def account_sync_loop(self) -> None:
+        """每天把本机新关注的公众号补进库：只新增、不追踪。
+
+        「读到关注列表」和「决定收谁的推文」是两件事。库里的 1460 条是 11-13
+        一次性 OCR 快照，之后再关注一个号，库里根本不会出现——用户的体感就是
+        「我明明关注了，公众号库里却没有」。这里每天读一次本机 contact.db 补齐，
+        新号一律 enabled=0，收不收仍由用户在面板里勾。
+        """
+        from .services import wechat4_live, wechat_panel
+
+        while not self.stop_event.is_set():
+            try:
+                if self._accounts_sync_due():
+                    wechat4_live.refresh()
+                    rows = wechat4_live.account_rows()
+                    if rows:
+                        result = wechat_panel.sync_account_rows(self.db, rows, "4.x")
+                        self.db.set_runtime("wechat_accounts_synced_at", now_iso())
+                        if result["inserted"] or result["merged"]:
+                            log.info("关注列表同步：新增 %s 个、按名字归并 %s 个（默认不追踪）",
+                                     result["inserted"], result["merged"])
+            except Exception:                    # noqa: BLE001 - 同步失败不该拖垮采集
+                log.exception("同步本机公众号关注列表失败")
+            try:
+                await asyncio.wait_for(self.stop_event.wait(), timeout=6 * 3600)
+                return
+            except asyncio.TimeoutError:
+                continue
+
     async def jsonl_watcher(self) -> None:
         """JSONL is a local tail, not a poll job: avoid thousands of queue rows per day."""
         while not self.stop_event.is_set():
@@ -354,6 +395,7 @@ class Worker:
                  self.owner, recovered, self.analysis_limit)
         self.tasks = [asyncio.create_task(self.scheduler()), asyncio.create_task(self.heartbeat()),
                       asyncio.create_task(self.jsonl_watcher()), asyncio.create_task(self.backup_loop()),
+                      asyncio.create_task(self.account_sync_loop()),
                       asyncio.create_task(self.wechat_watcher()),
                       asyncio.create_task(self.settings_watch()),
                       asyncio.create_task(self.budget_watch())]

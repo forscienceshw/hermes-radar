@@ -304,5 +304,66 @@ class PanelArticlesApiTest(unittest.TestCase):
         self.assertFalse(second["has_more"])
 
 
+class SyncAccountsTest(unittest.TestCase):
+    """关注列表同步：只新增不追踪，而且不能同步一次就多一条重复。"""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.db = Database(Path(self.temp.name) / "test.db")
+
+    def test_new_account_is_added_but_not_tracked(self):
+        result = wechat_panel.sync_account_rows(self.db, [
+            {"name": "Vita 生命", "account_id": "gh_4620cb736abb", "description": "Vita 期刊"}])
+        self.assertEqual(result["inserted"], 1)
+        row = self.db.one("SELECT * FROM wechat_accounts WHERE account_id='gh_4620cb736abb'")
+        self.assertEqual(row["name"], "Vita 生命")
+        self.assertEqual(row["enabled"], 0)      # 收不收由用户勾，不替他决定
+        self.assertEqual(row["description"], "Vita 期刊")
+
+    def test_sync_twice_does_not_duplicate(self):
+        rows = [{"name": "Vita 生命", "account_id": "gh_4620cb736abb"}]
+        wechat_panel.sync_account_rows(self.db, rows)
+        second = wechat_panel.sync_account_rows(self.db, rows)
+        self.assertEqual(second["inserted"], 0)
+        self.assertEqual(second["updated"], 1)
+        self.assertEqual(self.db.one("SELECT COUNT(*) c FROM wechat_accounts")["c"], 1)
+
+    def test_gh_wins_over_ocr_name_and_keeps_the_old_name(self):
+        """库里已有 OCR 错名但 gh 已回填：不能再造一条，也别覆盖用户认得的名字。"""
+        self.db.execute("""INSERT INTO wechat_accounts
+            (name,account_id,category_code,fit,reason,description,enabled,created_at,updated_at)
+            VALUES('Al-Protein Design','gh_54f27925507e','CS_AI','CORE','','',1,'t','t')""")
+        result = wechat_panel.sync_account_rows(self.db, [
+            {"name": "AI-Protein Design", "account_id": "gh_54f27925507e"}])
+        self.assertEqual(result["inserted"], 0)
+        row = self.db.one("SELECT name FROM wechat_accounts WHERE account_id='gh_54f27925507e'")
+        self.assertEqual(row["name"], "Al-Protein Design")
+
+    def test_folds_ocr_name_when_gh_is_missing(self):
+        """OCR 名字与微信真名只差大小写/空格时，补 gh 而不是新增空壳。"""
+        self.db.execute("""INSERT INTO wechat_accounts
+            (name,account_id,category_code,fit,reason,description,enabled,created_at,updated_at)
+            VALUES('Al-Protein Design',NULL,'CS_AI','CORE','','',1,'t','t')""")
+        result = wechat_panel.sync_account_rows(self.db, [
+            {"name": "AI-Protein Design", "account_id": "gh_54f27925507e"}])
+        self.assertEqual(result["merged"], 1)
+        self.assertEqual(result["inserted"], 0)
+        row = self.db.one("SELECT account_id FROM wechat_accounts WHERE name='Al-Protein Design'")
+        self.assertEqual(row["account_id"], "gh_54f27925507e")
+
+    def test_name_case_differs_counts_as_same_account(self):
+        """表的 name 是 UNIQUE COLLATE NOCASE：大小写不同也要补 gh，不能再插一条。"""
+        self.db.execute("""INSERT INTO wechat_accounts
+            (name,account_id,category_code,fit,reason,description,enabled,created_at,updated_at)
+            VALUES('vita 生命',NULL,'SCI_COMM','CORE','','',1,'t','t')""")
+        result = wechat_panel.sync_account_rows(self.db, [
+            {"name": "Vita 生命", "account_id": "gh_4620cb736abb"}])
+        self.assertEqual(result["inserted"], 0)
+        self.assertEqual(result["updated"], 1)
+        row = self.db.one("SELECT account_id FROM wechat_accounts WHERE name='vita 生命'")
+        self.assertEqual(row["account_id"], "gh_4620cb736abb")
+
+
 if __name__ == "__main__":
     unittest.main()

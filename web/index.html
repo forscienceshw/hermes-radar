@@ -61,11 +61,11 @@ B站 UP 主：也可使用你自建的 RSSHub 地址，kind 设为 video。</pre
   <div id="sourcesList" class="card-list"></div>
 </section>
 <section id="wechat" class="view">
-  <div class="section-title"><div><h1>我的公众号库</h1><p>按 OCR 分类结果管理 1,460 个公众号。启用名单同时控制本机微信监测和可选 DataX 补扫；本机监测按名称精确匹配，无需补内部编号。</p></div></div>
+  <div class="section-title"><div><h1>我的公众号库</h1><p>这里管的是「收哪些公众号」：启用名单同时控制本机微信监测和可选 DataX 补扫。关注列表每天自动同步一次，新号默认停用，勾选后才开始收录。</p></div></div>
   <div id="wechatStats" class="stat-grid"></div>
   <div class="notice">本机微信监测使用这里的启用名单，不消耗 DataX 余额。DataX 仍保持停用，仅在你主动开启后用于外部补扫；本机只能看到微信实际接收或同步的公众号文章。</div>
   <div class="toolbar"><input id="waQ" placeholder="搜索名称、简介或分类理由"><button id="waSearch">搜索</button><select id="waCategory"><option value="">全部分类</option></select><select id="waFit"><option value="">全部建议</option><option value="CORE">CORE 核心</option><option value="OPTIONAL">OPTIONAL 可选</option><option value="EXCLUDE">EXCLUDE 排除</option></select><select id="waEnabled"><option value="">全部状态</option><option value="1">已启用</option><option value="0">已停用</option></select></div>
-  <div class="toolbar"><button id="waCheckPage">勾选当前页</button><button id="waUncheckPage">取消所有已勾选</button><button id="waCheckAll">勾选全部筛选结果</button><button id="waEnable" class="primary">启用已勾选</button><button id="waDisable">停用已勾选</button><span id="waSelectedInfo" class="muted">已勾选 0 个</span></div>
+  <div class="toolbar"><button id="waSyncLocal" title="把本机微信里关注、但库里还没有的公众号补进来（只新增，不追踪）">同步本机关注</button><button id="waCheckPage">勾选当前页</button><button id="waUncheckPage">取消所有已勾选</button><button id="waCheckAll">勾选全部筛选结果</button><button id="waEnable" class="primary">启用已勾选</button><button id="waDisable">停用已勾选</button><span id="waSelectedInfo" class="muted">已勾选 0 个</span></div>
   <div class="table-wrap"><table><thead><tr><th><input id="waHeaderCheck" type="checkbox"></th><th>公众号</th><th>分类</th><th>建议</th><th>状态</th><th>理由 / 最近文章</th></tr></thead><tbody id="waRows"></tbody></table></div>
   <div class="actions" style="margin-top:14px"><button id="waPrev">上一页</button><span id="waPageInfo" class="muted"></span><button id="waNext">下一页</button></div>
 </section>
