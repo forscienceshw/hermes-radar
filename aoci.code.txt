@@ -1,0 +1,137 @@
+#AOCI-CODE-VOLUME: 1
+
+===/<repository>/===
+.gitattributes[FV4T]: F:锁定仓库文本文件的换行策略 | R:- | A:- | S:基线按原始字节比对，本文件强制所有文本以 LF 检出，否则 Windows 默认 autocrlf 会把整棵树判成 stale
+.gitignore[FV4T]: F:声明只把代码与模板纳入版本库，运行期数据与缓存留在本地 | R:code:.gitattributes | A:忽略 data/、analysis/、config 下的密钥文件 | S:data 是用户几个月攒下的正文与图片，一旦被跟踪，回滚与打包都会把它带上
+AGENTS.md[SC8L]: F:人机共读的协作规则与踩坑铁律，改代码前后必须遵守的硬约束 | R:code:radar.py,code:README.md,code:app/services/relevance.py | A:章节即规则：存版本、动手前规矩、data/ 不是缓存、四道闸门、直删、改完重启、发版、AOCI 用法 | S:每条规则都对应一次真实事故（删除走回收站堆几千条 wal、拿正文判招聘误伤真文章、3.x 与 4.x 混读漏一半）；这些是结论不是建议，推翻前必须先拿证据并当场问用户
+Install.vbs[EV4T]: F:双击入口：定位同目录 install.py 并交给 python 执行首次安装 | R:code:install.py | A:install.py 缺失时 MsgBox 报错并以退出码 1 结束 | S:用 GetParentFolderName(WScript.ScriptFullName) 取自身目录，不能依赖当前工作目录，否则从快捷方式启动会找不到 install.py
+README.md[SC8M]: F:面向使用者的总览：启动停止、资料库调优、微信 4.x 读取原理、数据安全、迁移与发版 | R:code:AGENTS.md,code:docs/迁移到新电脑.md,code:radar.py | A:目录结构与命令必须与 app/paths.py、radar.py 一致 | S:文档里的路径与命令是用户的操作依据，改 paths 常量或 radar 子命令时要同步改这里，否则用户按文档找不到文件
+Start Radar.vbs[EV4T]: F:双击启动：用 .venv 的 pythonw 拉起 supervisor.pyw，不留控制台窗口 | R:code:supervisor.pyw,code:start_radar.pyw | A:缺 .venv 时提示运行时未安装 | S:必须显式用 .venv\Scripts\pythonw.exe；用裸 python 启动会留一个常驻黑窗，用户关掉它就等于杀掉服务
+Stop Radar.vbs[EV4T]: F:双击停止：调 stop_radar.pyw 写停止标记并等进程退出 | R:code:stop_radar.pyw | A:- | S:找不到 .venv 时静默退出而不是弹窗，避免关机前被提示拦住；停止是写标记不是杀进程，靠 supervisor 自己收尾
+VERSION[FC3T]: F:当前程序版本号，单行纯文本，安装器与更新器读取 | R:code:version.json | A:形如 1.0.0，不带 v 前缀 | S:与 version.json 必须同步，setup_gui 靠它判是否升级
+install.py[EO7L]: F:源码安装向导：建虚拟环境、装依赖、问几个配置问题、建数据库、设自启 | R:code:requirements.txt,code:config/settings.example.json,code:app/db.py | A:python install.py，--reconfigure 重新配置 | S:重复运行必须安全：不覆盖已有设置，只补缺失项；Python 版本低于 3.11 直接拒绝
+package.json[FV4T]: F:云通道的构建脚本与依赖声明（esbuild 打 bundle） | R:code:cloud/llm-worker.mjs,code:cloud/probe.mjs | A:npm run build:cloud / npm run probe:cloud | S:产物落 cloud/dist 且不入库；改完 mjs 必须重新 build，否则运行的是旧 bundle
+radar.py[XV8M]: F:统一命令行入口：save/status/list/undo/back/check/start/stop/pack/tidy/where/release | R:code:tools/vcs.py,code:tools/packaging.py,code:supervisor.pyw | A:python radar.py <子命令> | S:改完代码必须 save，否则没有回滚点；回滚只动代码与配置不动 data/，禁止手敲 git reset --hard
+requirements.txt[FV5T]: F:Python 运行时依赖清单（fastapi/uvicorn/httpx 等） | R:code:install.py,code:installer/setup_gui.py | A:pip install -r requirements.txt | S:改动会改变 setup_gui 的依赖哈希并触发重装；上界要留着，上游大版本会直接打断运行
+run_dev.pyw[XZ4T]: F:开发态启动器：把数据与配置指向 .devdata/.devconfig 后再起服务 | R:code:app/paths.py,code:start_radar.pyw | A:双击运行 | S:必须用 setdefault 而不是覆盖，否则会顶掉用户已设的 RADAR_DATA_DIR
+start_radar.pyw[ER5S]: F:真正的启动逻辑：查端口、判断是否已在运行、给中文提示后拉起 supervisor | R:code:supervisor.pyw,code:Start Radar.vbs | A:被 Start Radar.vbs 调用 | S:用 pythonw 运行，不能往 stdout 打印；判断已在运行要查端口而不是只看进程名
+stop_radar.pyw[ER4T]: F:停止逻辑：写停止标记并确认进程真的退出 | R:code:supervisor.pyw,code:Stop Radar.vbs | A:被 Stop Radar.vbs 调用 | S:写标记后要轮询确认退出，立即返回会让用户以为停了其实还在跑
+supervisor.pyw[ER8S]: F:守护进程：拉起 api 与 worker 两个子进程、崩溃重启、响应停止标记 | R:code:start_radar.pyw,code:stop_radar.pyw,code:app/api.py,code:app/worker.py | A:由 start_radar 拉起并常驻 | S:api 与 worker 是两个独立子进程，改完后端代码必须两个都重启；supervisor 被杀时子进程要跟着退出
+version.json[FO5T]: F:发版元数据：版本号、发布时间、更新说明、安装包地址与 sha256，供自动更新读取 | R:code:VERSION,code:tools/release.py,code:app/updater.py | A:三个版本源都会读它 | S:由 release.py 自动写入，手改容易与 VERSION 不一致；sha256 必须与实际上传的安装包一致，否则更新会被判成损坏
+
+===/<repository>/app/===
+__init__.py[CG4T]: F:包入口，从仓库根 VERSION 读出 __version__ | R:code:VERSION | A:app.__version__ | S:版本号从文件读而不是写死在代码里，发版只改 VERSION 一处；文件读不到时要静默降级，不能让整个包导入失败
+api.py[AU9L]: F:FastAPI 应用：全部 HTTP 路由（资料库、公众号面板、设置向导、精读、论文、笔记、集合）、静态资源与后台任务生命周期 | R:code:app/db.py,code:app/pipeline.py,code:app/services/wechat_panel.py,code:app/services/setup_status.py,code:web/app.js | A:GET /api/items、/api/wechat/accounts、/api/wechat/cover、/api/setup/status、POST /api/jobs/bulk 等 | S:_ASSET_FILES 是静态资源版本戳白名单，新增 web 下 js/css 必须登记，否则浏览器一直吃旧缓存；lifespan 拉起的协程随进程退出即终止，改完后端必须重启 api 进程
+db.py[PD9L]: F:SQLite 持久化层：建表与迁移、条目/任务/公众号/规则的读写与 JSON 字段解码 | R:code:app/paths.py,code:app/services/relevance.py,code:app/services/wechat_panel.py | A:SCHEMA_VERSION=3；items/jobs/sources/wechat_accounts/filter_rules/wechat_article_marks 等表 | S:items.metadata_json 里的 manual_keep 是补录条目的免扫凭证，自动清理依赖它；wechat_accounts.name 是 UNIQUE COLLATE NOCASE，按名字补 gh 撞键要退回按名字更新，不能让整批回滚
+logging_config.py[CO5T]: F:统一日志级别、格式与文件落盘（logs/） | R:code:app/paths.py | A:configure_logging() | S:日志必须落文件：pythonw 启动没有控制台，写 stdout 等于丢掉全部运行记录
+native_delete.py[CR8T]: F:把被 sitecustomize 垫片换成的「移入回收站」删除函数还原为原始实现 | R:code:tools/trash.py,code:app/services/purge.py | A:restore_native_deletes() | S:垫片在解释器启动时按环境变量决定装不装，运行期改环境变量无效，必须在 import app 时立刻还原；否则 SQLite 每次关连接删 -wal/-shm 都往回收站堆一条，几分钟几十条
+net.py[IN6M]: F:统一 HTTP 客户端：公网地址校验、浏览器 UA、代理、体积上限与下载落盘 | R:code:app/settings.py | A:UnsafeURL、request、download_file、get_json、post_json、post_form | S:所有出站请求必须走这里，直接 httpx 会绕过内网/回环地址校验（SSRF）；滑块验证页与内网地址统一在这一层挡，不要在每个调用方各写一套
+paths.py[CR8T]: F:全部路径常量：程序目录、data/、config/、logs/、blobs/、documents/ | R:code:app/settings.py,code:tools/packaging.py | A:RADAR_DATA_DIR 与 RADAR_CONFIG_DIR 两个环境变量可整体重定位 | S:不许在别处硬编码绝对路径；环境变量覆盖优先于默认布局，测试靠它把数据放进 .tmp，否则会污染正式资料库
+pipeline.py[AW7M]: F:任务编排：JobRunner 领取 jobs、按类型分派归档与精读、批量归档启停 | R:code:app/worker.py,code:app/services/archive.py,code:app/services/analyzer.py | A:JobRunner、start_archive_batch、stop_archive_batch | S:批量归档停止用「置 runtime 标记 + 排空」而不是硬杀协程，硬杀会把条目留在半截状态；精读排满时只能跳过 analyze_item，轮询与归档不能被拖死
+settings.py[CC8M]: F:settings.json 读写与默认值合并、DPAPI 加密的凭据文件读写 | R:code:config/settings.json,code:app/paths.py | A:DEFAULTS、get_settings、save_settings、set_secret、get_secret、secret_status | S:凭据用 DPAPI 绑定当前机器与账户，换机器必然解不开，get_secret 必须返回空串而不是抛异常，否则程序起不来；写文件必须原子替换，避免断电留半截 JSON
+storage.py[PD5T]: F:内容寻址存储：blob 落盘、条目目录、原子写、论文目录定位 | R:code:app/paths.py | A:store_blob、store_blob_file、item_directory、atomic_write、paper_folder | S:blob 以内容 sha256 命名且必须原子写入（先写临时再改名），中断留下的半张图会被后续当成完整文件直接展示
+updater.py[IO7M]: F:自动更新：多源查版本、下载安装包、校验并静默覆盖自身 | R:code:version.json,code:tools/release.py | A:check、download、apply、status，状态落 data/updates/state.json | S:任何一个源失败都不许向上抛，断网时软件必须照常跑；版本比较必须按数字分段，字符串比较会把 1.10.0 判成比 1.9.0 旧
+utils.py[CG7M]: F:通用工具：URL/DOI/BVID 提取与规范化、时间与哈希、公众号名折叠匹配、报错人话化 | R:code:app/services/papers.py,code:app/services/relevance.py | A:canonical_url、extract_bvid、normalize_doi、content_sha256、name_match_key、humanize_error_text | S:name_match_key 的折叠只在精确匹配失败后启用且必须唯一命中，撞车宁可报对不上；抓取用原始链接、去重才用 canonical_url，反过来会被微信判成爬虫返回验证页
+worker.py[AW8L]: F:后台主循环：轮询数据源、跑任务队列、同步公众号关注列表、定期清理与退避 | R:code:app/pipeline.py,code:app/db.py,code:app/services/wechat4_live.py,code:app/services/relevance.py | A:main()、single_instance()、Worker | S:单实例锁按安装目录区分；account_sync_loop 里的磁盘活必须 asyncio.to_thread，同步 IO 会卡住整个事件循环；微信没运行时不要写同步时间戳，否则一天内不再重试
+
+===/<repository>/app/collectors/===
+__init__.py[CG2T]: F:采集器子包入口，标记该目录放各数据源适配 | R:- | A:- | S:-
+sources.py[IN7M]: F:各数据源采集适配与调度：RSS、公众号 DataX、JSONL、B 站 UP 主 | R:code:app/pipeline.py,code:app/db.py,code:app/net.py | A:CAPABILITIES、COLLECTORS、poll_source(source) | S:DataX 只是可选外部补扫且默认停用，主通道是本机微信；列表页 t=pages/image_detail 不是文章，永远归档不了，必须在候选构造阶段就排除
+wecom_kf.py[IN5T]: F:企业微信客服消息通道：取 access_token 后拉取消息 | R:code:app/settings.py,code:app/net.py | A:poll_wecom_kf、_TOKEN_CACHE | S:token 缓存只在进程内有效（约两小时），过期要重取；凭据从 DPAPI 解出，绝不写进 settings.json 或日志
+
+===/<repository>/app/services/===
+__init__.py[CG1T]: F:业务服务子包入口，标记归档、论文、精读与投递都在此目录 | R:- | A:- | S:-
+analyzer.py[DA9L]: F:大模型精读：拼提示词、抽图与图注、结果归一化、每日额度控制与顺延 | R:code:app/services/workbuddy_llm.py,code:app/services/papers.py,code:app/services/archive.py | A:analyze_item、figure_cards、triage_archived_images、DailyLimitReached、ensure_daily_budget、resume_budget_parked、requeue_limit_blocked | S:额度用尽必须抛可识别的 DailyLimitReached（顺延且不消耗重试次数），抛普通异常会把当天剩下几百篇全判死；顺延任务只看额度不看 run_at 就永远回不来
+archive.py[ID8L]: F:正文归档：抓原文、清洗排版、下载配图、生成离线阅读页，识别删除页与验证页 | R:code:app/net.py,code:app/storage.py,code:app/utils.py,code:app/services/wechat4_live.py | A:archive_item、archive_web、probe_source、detect_gone、detect_verify_page、SourceGone、WechatNeedsVerification、NotAnArticle | S:抓取必须用原始完整链接（含 chksm/mpshare 等参数），裁成 biz/mid/idx/sn 会被判成爬虫返回滑块页；去重才用 canonical_url；t=pages/image_detail 不是文章，要按 NotAnArticle 直接判掉
+assistant.py[DA6M]: F:就地阅读助手：拼装文章+精读+图注+选中文本的上下文，维护会话与笔记，导出 Markdown | R:code:app/services/websearch.py,code:app/services/llm_gateway.py | A:item_context、build_messages、fit_messages、ensure_chat、append_message、auto_title、export_markdown | S:上下文窗口按模型名映射、未知模型退回 DEFAULT_WINDOW；超窗必须截断而不是报错，否则长文一问就失败
+autostart.py[RC5S]: F:开机自启：写 HKCU Run 项与旧版启动文件夹快捷方式，并分别报告状态 | R:code:installer/launcher.py,code:app/paths.py | A:status、enable、disable、launcher_command | S:只用 HKCU，不需要管理员权限；要同时识别旧的 Startup 快捷方式，否则用户会看到两条自启记录
+backup.py[PR7S]: F:资料库每日快照：SQLite 在线 backup、保留最近 7 份、滚动删除自己产生的旧快照 | R:code:app/paths.py,code:app/services/purge.py | A:run、status、backups、sweep_trash | S:滚动删除只碰 radar- 前缀的每日快照，用户手动留的 radar-before-* 永远不动；连接要先关再改名，否则 Windows 上快照永远停在 .part
+credits.py[CO4S]: F:本地点数账本：解析调用返回的 usage JSONL，汇总今日与近期消耗、最近调用 | R:code:app/services/workbuddy_llm.py | A:summary、recent_calls | S:只读本地账本；为了显示点数再去调云端接口既浪费点数也拖慢页面
+digest.py[AW6M]: F:推送摘要渲染与静默时段调度：重点/普通两档、按窗口与每日上限发送 | R:code:app/services/notify.py,code:app/services/relevance.py | A:focus_tags、classify、render_highlights、render_digest、next_window、window_allows、sent_today | S:只在配置窗口内且不超过 max_per_day 才发，否则一次采集就能把通知渠道刷爆
+filters.py[DC7S]: F:用户自定义入库过滤：按公众号+关键词挡栏目，支持预览、应用与按规则恢复 | R:code:app/services/relevance.py,code:app/services/wechat_panel.py | A:load_rules、match、reason_for、apply_to_existing、restore_by_rule、preview、split_patterns | S:规则只匹配标题或标题+简介，绝不读正文——正文里出现「招聘」是常事，拿正文屏蔽必然误伤；删规则会把被它挡住的条目一起放回来
+llm_gateway.py[IA5S]: F:交互式助手的统一模型出口：解析账号配置、拼 endpoint、做非 JSON 模式补全 | R:code:app/settings.py,code:app/services/workbuddy_llm.py | A:accounts、resolve、complete | S:精读走 analyzer._llm_call，这里只服务助手（JSON 模式必须关掉）；两条调用链不要合并，合并会把精读的结构化约束带坏
+notify.py[MM6M]: F:通知渲染与投递：批次合并、静默时段、企业微信/站内收件箱、测试发送 | R:code:app/services/digest.py,code:app/settings.py | A:QuietHours、merge_closed_batches、queue_for_notification、flush_open_batches、deliver_batch、send_test_notification | S:静默时段内只入队不发送；跨窗口的批次必须合并成一条，否则用户一次收到十几条
+papers.py[DA7L]: F:论文匹配与下载：从链接或标题找 DOI，查 Crossref/OpenAlex，下载开放获取 PDF | R:code:app/net.py,code:app/services/archive.py,code:app/settings.py | A:doi_from_links、title_similarity、candidate_titles、resolve_and_download、process_item_papers | S:标题相似度低于 0.86 不认，宁可漏也不要挂错 PDF；只走开放获取与出版社直链，不碰 Sci-Hub
+purge.py[CR7S]: F:直删：一次 SHFileOperationW 且不带 FOF_ALLOWUNDO，绕开 Python 的回收站垫片 | R:code:app/native_delete.py,code:tools/trash.py | A:remove、tree、unlink、FOF_SILENT 等常量 | S:只用于自己产生的临时文件、缓存、旧安装包与滚动备份，绝不碰 data/documents 与 data/blobs
+relevance.py[DB9M]: F:本地准入闸门：判是否科研内容、识别引流软文、去重，并批量清理历史条目 | R:code:app/db.py,code:app/services/filters.py,code:app/worker.py | A:assess_candidate、detect_marketing、cleanup_existing_items、kept_by_hand、dedupe_duplicate_items、DOMAIN_TERMS/EXCLUDE_TERMS | S:引流看位置（正文前 40%）并叠加 DOI/参考文献/图号放行，真论文的二维码在文末；带 manual_keep 的条目必须跳过，否则补录第二天又被扫走；个人口味不许写进这一层
+setup_status.py[CO6M]: F:设置向导的只读状态快照：版本、数据库、微信通道、模型、通知、空间、备份、环境告警 | R:code:app/services/wechat_probe.py,code:app/services/setup_test.py,code:app/settings.py | A:snapshot() | S:只读不写；所有步骤状态集中在这里算，前后端各算一套必然显示打架
+setup_test.py[IQ5S]: F:设置向导「测试」按钮的连通性检查：模型端点与微信通道 | R:code:app/services/workbuddy_direct.py,code:app/net.py | A:test_llm、test_wechat | S:检查必须便宜——WorkBuddy 那条只发一次最小请求，不列模型目录；这里绝不写任何设置
+video.py[ID5S]: F:B 站视频归档：解析 BV 号、取字幕、必要时走本地 ASR、落转写文本 | R:code:app/net.py,code:app/utils.py | A:archive_bilibili、_resolve_bvid、_subtitles、_local_asr | S:短链要先保留原始分享链接再补 BV，丢了原链就没法回溯来源；ASR 失败不能把整条判死
+websearch.py[IA7L]: F:助手联网检索：Europe PMC 与 arXiv 结构化检索 + Bing HTML 兜底，中文问题自动转英文词 | R:code:app/net.py,code:app/services/assistant.py | A:bing、europe_pmc、arxiv、plan_queries、gather、render_block、FOLLOWUP_WORDS | S:所有请求走 app.net.request 以复用内网地址校验与体积上限；单源失败不影响其他源，失败原因必须带回前端
+wechat3_public.py[ID8L]: F:3.x 公众号库 PublicMsg.db 离线只读通道：派生密钥、解密快照、出卡片与文章 | R:code:app/services/wechat_public.py,code:app/services/wechat_self_archive.py | A:cards、articles、recent_for、watermark、stats、directory | S:快照缓存只留 2 份并原子替换；游标必须往前走，不推进会每轮重扫同一千条，看着像在工作其实是死循环
+wechat4.py[ID7M]: F:微信 4.x 只读适配底层：找进程、认库目录、扫密钥、开 SQLCipher4 连接 | R:code:app/services/wechat4_live.py | A:weixin_process、db_roots、databases、scan_keys、verify_key、unlock、probe | S:这里的假设已被 4.2 推翻（密钥不再明文放内存），生产走 wechat4_live；改这里前先在真机验证，不要拿它当主通道
+wechat4_live.py[ID9L]: F:微信 4.x 生产通道：从 WCDB 配置对象取密钥、合并 WAL 解密、出会话与公众号文章及自己转发的链接 | R:code:app/services/wechat4.py,code:app/services/wechat4_memory.py,code:app/worker.py,code:app/services/wechat_panel.py | A:refresh、load_key_cache、iter_recent、collect_articles、collect_links、official_articles、recent_for、account_rows、biz_fingerprint、diagnose | S:表名是 md5 不是 sha1；合并 WAL 不校验帧 salt 会把库拼坏；local_type 高位是标志位；点开订阅号只负责补更早历史，不是读取前提
+wechat4_memory.py[ID7M]: F:4.x 订阅号盒子内存通道：扫 Weixin.exe 内存读卡片列表与文章 URL 池 | R:code:app/services/wechat4_live.py | A:scan()、available()、Snapshot | S:卡片有两种 JSON 形态，缺一种少一半；解析失败会静默返回空列表，看起来和「今天没推送」一模一样，改完必须跑 tests/test_wechat4_memory.py
+wechat_panel.py[DB8L]: F:公众号面板动作：补录文章、排除（打标记+建规则）、改分类、合并重复号、同步关注列表 | R:code:app/services/filters.py,code:app/services/wechat_public.py,code:app/db.py | A:library_articles、import_articles、restore_articles、exclude_articles、merge_accounts、sync_account_rows、preset_payload | S:排除不另造过滤逻辑，只写 wechat_article_marks 加该号专属 filter_rules；合并一律并到有 gh 的那条，名字相近不算证据
+wechat_probe.py[IO6S]: F:只读探测本机微信类型、版本、数据根与账号，供设置向导判断能不能读 | R:code:app/services/wechat_space.py,code:app/services/wechat4.py | A:status() | S:全程只读：不开库、不写凭据、不碰微信进程以外的任何东西
+wechat_public.py[ID7M]: F:本机 3.x PublicMsg.db 读取层，只供公众号面板的「近期推文」 | R:code:app/services/wechat3_public.py,code:app/api.py | A:recent_articles、account_directory、gh_id_for、parse_card、PublicMsgUnavailable | S:必须按 TalkerId（PublicNameToID 的 rowid）查，走 MsgTalkerIdTypeSeqIndex 是毫秒级；按 StrTalker 查是全表扫描，26 万行要 20 秒以上
+wechat_self_archive.py[ID9L]: F:本机微信「转发给自己」的链接抽取，以及公众号历史的多路候选汇总（3.x 库 / 4.x 会话 / 内存盒子） | R:code:app/services/wechat3_public.py,code:app/services/wechat4_live.py,code:app/services/wechat4_memory.py,code:app/worker.py | A:sync_self_chat、read_self_chat_links、local_channel、poll_wechat_self、poll_wechat_public_local | S:只查当前账号自己的会话，明文密钥不进日志；多路候选要按本地时间窗去重，否则同一条会在面板里出现两次
+wechat_space.py[RO7S]: F:看住微信存储位置：读 4.x ini 与 3.x 目录链接，报告、修复并清理 C 盘堆积 | R:code:app/services/wechat_probe.py | A:snapshot、ensure、clean、CLEANABLE | S:4.x 根目录写在 %APPDATA%\Tencent\xwechat\config 的 ini 里，升级或换账号会被重置回 C 盘；清理只碰白名单目录，绝不动聊天记录
+workbuddy_direct.py[IA9L]: F:WorkBuddy 点数直连通道：从客户端内存取登录令牌、DPAPI 缓存、流式调 /v2/chat/completions | R:code:app/services/workbuddy_llm.py,code:app/services/setup_test.py | A:client_token、call_gateway、client_model_catalog、probe、DirectUnavailable | S:必须 stream=true，非流式会被网关拒（11101）；令牌 aud 必须含 account，约 28 天有效；换机器后缓存解不开要静默降级；加 Origin/UA、跳过 models.list、signUp 都已实测无效
+workbuddy_llm.py[IA8M]: F:精读与模型列表的对外入口：优先直连客户端令牌，失败退回官方云 SDK worker | R:code:app/services/workbuddy_direct.py,code:app/services/analyzer.py | A:call_workbuddy_full、call_workbuddy、list_workbuddy_models、payload_summary | S:直连失败才退 worker，两次错误要合并上报；payload 上限 28MB，图片必须先压再发
+
+===/<repository>/cloud/===
+llm-worker.mjs[IA5T]: F:官方云 SDK 的 Node 子进程入口：从 stdin 读请求、按 JSONL 事件流回吐结果 | R:code:cloud/public-config.json,code:app/services/workbuddy_llm.py | A:stdin/stdout JSONL 协议（readRequest/emit） | S:2026-11-20 起网关要求登录，Node 里没有 localStorage 导致匿名调用 401，此通道只作兜底；日志必须写 stderr，stdout 是协议流
+probe.mjs[IO4T]: F:云 SDK 连通性探针：列可用模型并发一次最小调用 | R:code:cloud/public-config.json,code:package.json | A:npm run probe:cloud | S:只读探测，不写缓存也不改配置
+public-config.json[FC5T]: F:云应用的公开配置：applicationId、resourceId、endpoint 与 publishable key | R:code:cloud/llm-worker.mjs,code:cloud/probe.mjs | A:被两个 mjs 直接 import | S:只允许 publishable 级别的公开值；一旦换成密钥级凭据就不再是能入库的文件
+
+===/<repository>/config/===
+settings.example.json[FC4T]: F:默认设置模板，install.py 用它生成初始配置文件 | R:code:app/settings.py,code:install.py | A:结构与 app/settings.py 的 DEFAULTS 保持一致 | S:新增配置项要同时改 DEFAULTS，否则用户升级后缺键会走默认分支，界面上看不到这一项
+settings.json[CC6S]: F:本机实际配置且入库：端口、并发、轮询间隔、词表、推送时段、模型选择 | R:code:app/settings.py,code:config/settings.example.json | A:阈值与词表随代码一起回滚 | S:这个文件能入库是因为它可回滚，因此绝不能写机器相关的绝对路径或任何凭据；凭据只放 config 下的 DPAPI 加密文件
+
+===/<repository>/docs/wechat4/===
+01-技术原理.md[SD6M]: F:微信 4.2 的数据位置、SQLCipher4 加密结构、密钥来源、必须合并 WAL 的原因与表组织 | R:code:app/services/wechat4_live.py | A:与代码常量一一对应（页 4096、每页预留 80 字节） | S:这是实测推导的记录；「老办法为什么失效」一节是踩过的坑，不要照网上旧教程重试扫明文密钥
+02-集成指南.md[SD6M]: F:把微信 4.x 只读读取接进另一个项目的分步指南，每步都能独立验证 | R:code:app/services/wechat4_live.py,code:docs/wechat4/03-踩坑清单.md | A:候选字典字段契约、增量游标、归档链路 | S:字段契约必须对齐 user_name/account/create_time/local_id/title/url 等键名，少一个上层就静默丢条目
+03-踩坑清单.md[SD7M]: F:14 条实测坑的「症状→原因→正确做法」，按会让整条链路白干的程度排序 | R:code:app/services/archive.py,code:app/services/wechat4_live.py | A:坑 1 链接参数、坑 3 WAL 帧 salt、坑 4 zstd 标记、坑 8 前端顶层重名 | S:每条都真踩过；坑 1（裁掉 query 参数就返回滑块验证页）违反一次整批抓不到正文
+04-验证方法.md[SD6M]: F:在新机器上分层验证微信 4.x 读取能力，从下往上一层不过就别接上层 | R:code:tools/probe.py,code:docs/wechat4/03-踩坑清单.md | A:五层检查与一次性跑完全部检查的脚本 | S:分层顺序不能颠倒；上层失败往往只是下层没过，直接查上层是白费时间
+05-实测记录.md[SD5M]: F:真机实测数字：密钥提取、解密、数据规模、链接参数对照实验、归档吞吐 | R:code:docs/wechat4/04-验证方法.md | A:给出「正常长什么样」的基线 | S:这些数字用来判断有没有变慢或漏抓，改动读取或归档算法后要回来重测
+README.md[SD6S]: F:微信 4.2 读取模块的交接包说明：交付物、五条铁律、集成顺序、最小可用集 | R:code:docs/wechat4/01-技术原理.md,code:docs/wechat4/02-集成指南.md | A:五条铁律与集成顺序 | S:违反任何一条铁律的表现都是「看起来能跑但拿不到正文」，排查时先对照这一页
+
+===/<repository>/docs/===
+微信4.x验证方案.md[SD5S]: F:在不弄丢 3.9.9.43 的前提下试装 4.2 并只读验证的操作方案与回退路径 | R:code:installer/restore_wechat.py | A:三条红线、备份清单、验证步骤、回退步骤 | S:只备份不可再生的部分；聊天记录目录一个字节都不能动，回退靠恢复工具而不是重装覆盖
+迁移到新电脑.md[SD5T]: F:三种搬迁方式（只搬程序 / 程序加资料 / 整目录拷贝）与迁移后自检清单 | R:code:install.py,code:tools/packaging.py,code:app/paths.py | A:data/ 各子目录能否不拷、必须重填什么 | S:凭据用 DPAPI 绑定机器，换机器必然解不开；文档要直接说「重填」，不要让用户反复试旧凭据
+
+===/<repository>/installer/===
+launcher.py[EV7M]: F:Radar.exe 的图形入口：拉起与停止 supervisor、开浏览器、卸载，自身不承载业务逻辑 | R:code:supervisor.pyw,code:app/services/autostart.py | A:start/stop/restart/status/open/uninstall 子命令 | S:它不常驻业务，升级代码不需要重打这个 exe；停止要按命令行找子进程，只杀父进程会留下孤儿端口
+restore_wechat.py[EO6M]: F:把微信 3.9.9.43 原样铺回磁盘：程序文件来自备份 zip，注册表项写在 HKCU | R:code:docs/微信4.x验证方案.md | A:restore/register/silent/gui | S:只碰程序目录，绝不碰 Documents\WeChat Files；3.x 与 4.x 可共存于同一文件夹，不要互相覆盖
+setup_gui.py[EV8L]: F:RadarSetup.exe 图形安装向导（支持 /S 静默安装）：解压、建虚拟环境、装依赖、建快捷方式、登记卸载 | R:code:tools/packaging.py,code:VERSION,code:install.py | A:装完后双击安装目录里的 Radar.exe | S:升级时必须按 KEEP_ON_UPGRADE 保留 data/config/logs/.venv；清错目录等于删用户资料
+
+===/<repository>/tools/===
+__init__.py[XG2T]: F:工程工具包入口：版本控制、打包、安装相关脚本，与 app/ 业务代码无关 | R:- | A:- | S:-
+audit_multi.py[XQ6S]: F:只读体检：一次群发多篇时被归并吞掉了多少篇 | R:code:app/db.py | A:--days N，默认近 90 天 | S:只认「这一行确实有篇被收录过」的情况；整行都没收录说明本来没过准入，不算归并的锅；只读不写库
+build_exe.py[XV6S]: F:把源码打成 Radar.exe 与 RadarSetup.exe | R:code:installer/launcher.py,code:installer/setup_gui.py,code:tools/packaging.py | A:--launcher / --setup 可只打一个 | S:构建环境必须与运行时 .venv 分开，否则 PyInstaller 会把构建依赖混进运行环境
+build_restore.py[XV4T]: F:把微信回退工具打成独立 exe | R:code:installer/restore_wechat.py | A:产物 dist/exe 下的恢复工具 | S:备份 zip 不塞进 exe——178MB 走 onefile 每次启动都要解包，慢且费磁盘；exe 运行时找同目录的备份包
+calibrate_accounts.py[XZ6M]: F:用本机微信真实关注列表校准公众号库的名字与 gh 编号，只读体检→人工核对→写回 | R:code:app/services/wechat_panel.py,code:app/db.py | A:三档匹配（精确/折叠/模糊） | S:模糊匹配必须唯一命中，撞车宁可报对不上；名字短于 4 字的 OCR 残记录是校准盲区
+merge_dupes.py[XZ5S]: F:合并「OCR 残记录 + 后来按 gh 补进来的真记录」，清单为人工核对过 | R:code:app/services/wechat_panel.py | A:--pair 旧=新、--apply | S:名字相近不等于同一个号；证据只有条目元数据里的 gh 与 3.x 卡片反查；合并一律并到有 gh 的那条
+packaging.py[XV6S]: F:打包白名单：把能跑起来的部分收进 zip，换台电脑解压加安装即可用 | R:code:radar.py,code:install.py | A:INCLUDE_DIRS/INCLUDE_FILES/INCLUDE_GLOBS | S:刻意用白名单而非黑名单：data 里几 G 文档与个人库，黑名单漏一个就是几个 G 的误发；白名单里不许出现数据与凭据
+probe.py[XZ5S]: F:微信 4.2 只读命令行探针：状态、取密钥、列文章、列链接、列账号 | R:code:app/services/wechat4_live.py | A:status/refresh/articles/links/accounts | S:只读；每一步都要打印明确失败原因，不许吞异常当成空结果
+release.py[XV7M]: F:发版：bump 版本、打 tag、建 Release、传安装包、回写 version.json | R:code:version.json,code:VERSION,code:tools/build_exe.py | A:python radar.py release "说明" [--bump minor] [--dry-run] | S:全程走 api.github.com 而不是 git push（本机 github.com 经常不通）；上传后必须把 sha256 回写 version.json
+repro_url_param.py[XQ4S]: F:链接参数的对照实验：同一链接完整版与裁参版各抓一次，判读返回正文还是验证页 | R:code:app/services/archive.py | A:python tools/repro_url_param.py | S:会真实请求微信服务器，短时间重复跑容易触发风控
+trash.py[XZ7M]: F:回收站清理与直删工具：list/purge/wipe/check | R:code:app/services/purge.py,code:app/native_delete.py | A:python tools/trash.py <子命令> | S:wipe 只删亲手给出的路径，且受 git 跟踪的路径一律拒绝——2026-11-18 曾用它删掉生产 app/ 导致服务每 4 秒崩一次；清回收站条目是 purge 不是 wipe
+vcs.py[XZ7M]: F:版本控制底层：把 git 包成 save/undo/back/list 等不容易用错的动作 | R:code:radar.py | A:由 radar.py 调用 | S:任何覆盖工作区的操作先钉 autosave tag，所以回滚错了还能 back 回来；data/ 不在仓库里，回滚不会碰资料
+
+===/<repository>/scripts/===
+backfill_public_accounts.py[XZ5S]: F:回放一段历史窗口的公众号卡片，把启用名单里早于游标的推文补进来 | R:code:app/services/wechat4_live.py,code:app/db.py | A:python scripts/backfill_public_accounts.py --days N | S:绝不推进增量游标，否则实时采集会把这段历史整段跳过；只处理 enabled 名单内的号
+bench_reading.py[XQ4T]: F:一次性基准：拿真实条目跑指定提示词与模型，比较耗时和输出质量 | R:code:app/services/analyzer.py | A:脚本内写死条目 id 与模型名 | S:会真实消耗点数，跑前确认额度；换库或换条目要改常量，不能直接当通用工具
+classify_accounts.py[XZ5S]: F:批量给公众号打学科分类（模型分类 + 规则兜底），产出候选结果 | R:code:app/services/wechat_panel.py,code:app/db.py | A:CATEGORIES 词表与 MODEL 常量 | S:结果是候选不是事实，写库前必须人工过一遍；模型名写死，换供应商要同步改
+clean_research_library.py[XZ6S]: F:可逆清理资料库并修复 B 站短链：默认只读演练，--apply 才隐藏，--resolve-links 补 BV | R:code:app/services/relevance.py,code:app/db.py | A:三种模式互斥，默认 dry-run | S:默认必须只读；隐藏是软删除不是真删，补 BV 时原始分享短链要保留
+debug_classify.py[XZ3T]: F:分类调试：打印单条公众号的分类输入与模型输出 | R:code:scripts/classify_accounts.py | A:改 BASE/DATA 常量后直接运行 | S:-
+export_review_html.py[XZ4S]: F:把分类候选导成 HTML 与 CSV，供人工逐条复核 | R:code:scripts/classify_accounts.py | A:HTML_OUT 与 CSV_OUT 两个产物 | S:产物是复核用的临时文件，不要当资料库数据入库
+extract_accounts.py[XZ4S]: F:从手机长截图文本里抽公众号名字候选，过滤搜索/置顶等界面词 | R:code:scripts/prepare_accounts.py | A:OUT_RAW 与 OUT_CANDIDATES | S:OCR 会截断名字，短于 4 字的记录一律标可疑，不能直接当有效号
+extract_timestamps.py[XZ3T]: F:从截图文本里抽「最近更新」时间，供候选排序 | R:code:scripts/prepare_accounts.py | A:OUT 时间表 | S:-
+fill_image_alts.py[XZ4S]: F:回填图片 alt 图注：读磁盘上已存的 raw.html，不联网 | R:code:app/services/archive.py | A:python scripts/fill_image_alts.py [--apply] | S:只读本地 raw.html，绝不重新抓原文——重抓会改变证据且浪费配额
+prepare_accounts.py[XZ4S]: F:把分片提取结果合并成公众号候选清单，按最近更新排序并标注可疑名字 | R:code:scripts/extract_accounts.py,code:scripts/extract_timestamps.py | A:输出可直接导入的候选表 | S:名字可疑项要保留而不是丢弃，否则用户永远不知道漏了哪个号
+prune_blobs.py[XZ5T]: F:删除没有任何条目引用的图片与 PDF blob：默认只统计，--apply 才真删 | R:code:app/db.py,code:app/storage.py | A:--apply | S:白名单必须从数据库里的全部引用重建；误删的配图无法恢复，所以默认必须只统计
+repair_items.py[XZ5S]: F:修两类历史数据问题：0-10 量表被当成 0-100、短正文被误判为信息不足 | R:code:app/services/analyzer.py,code:app/services/relevance.py | A:fix_scales / rerun_short / requeue_failed | S:只改被判错的那批，不要全表重算分数；重跑会真的调用模型
+repair_reader_pages.py[XZ4T]: F:修早期阅读页的隐藏样式（visibility:hidden），只改内联样式并加兜底样式表 | R:code:app/services/archive.py | A:python scripts/repair_reader_pages.py | S:绝不改 raw 快照，那是原始证据；只动渲染出来的阅读页
+retriage_images.py[XZ5T]: F:给没做过图筛选的文章补跑视觉筛选，按新到旧、额度将尽即停 | R:code:app/services/analyzer.py | A:python scripts/retriage_images.py | S:每篇一次视觉调用会花点数，额度见底必须停；只处理 backlog，不重跑已筛过的
+retry_failed_archives.py[XZ4T]: F:用公开页面直接重试失败的归档，不走任何付费兜底 | R:code:app/services/archive.py | A:python scripts/retry_failed_archives.py | S:用普通浏览器身份抓取，不要带登录态或 cookie
+upgrade_reader_pages.py[XZ4T]: F:用当前模板重渲染已归档阅读页的外壳，保留已清洗的正文 | R:code:app/services/archive.py | A:python scripts/upgrade_reader_pages.py | S:只换外壳不重抓正文；重渲染失败要保留原页面，不能把可读的页写坏
+wechat4_probe.py[XZ4T]: F:4.x 只读命令行探针：验证取密钥、能开哪些库，可选抓最近链接 | R:code:app/services/wechat4_live.py | A:--links N | S:全程只读：不写微信库、不发消息、不改配置
+
+===/<repository>/web/===
+app.js[AU9L]: F:主前端脚本：资料库列表与精读、公众号面板、任务队列、事件流、过滤规则与集合 | R:code:web/index.html,code:web/styles.css,code:app/api.py | A:依赖 index.html 的 id；向 window 暴露 api/esc/toast/time/showItem 供 assistant.js 使用 | S:所有弹层必须用 showModal() 进 top layer，后开的压在上面、关闭自动回下层；Esc 不能手动 close（会连带关掉下一层）；顶层函数重名会让整页点不动
+assistant.js[AU6L]: F:笔记库、就地提问与对话抽屉 | R:code:web/app.js,code:app/services/assistant.py | A:依赖 app.js 暴露的 api/esc/toast/time/showItem | S:整体包在 IIFE 里就是为了不污染顶层作用域；不要复制 app.js 的状态，所有事实以后端返回为准
+index.html[AU8L]: F:单页骨架：全部视图容器、六个 dialog 与静态资源引用 | R:code:web/app.js,code:web/assistant.js,code:web/setup.js,code:web/styles.css | A:页面上的 id 就是三个脚本的契约（共约 292 个） | S:六个 dialog 的 id 与开合顺序决定叠放行为（detailDialog/waArticles/ruleDialog/waExcludeDialog/collectionDialog/imageViewer）；改 id 必须同步改三个脚本
+setup.js[AU5L]: F:配置向导前端：渲染 /api/setup/status、接每一步按钮、保存后刷新参数页表单 | R:code:app/services/setup_status.py,code:app/api.py,code:web/index.html | A:wiz 前缀的 id 与 WIZ_CHANNELS 映射 | S:刻意不复制 app.js 的状态，全部以后端快照为准，否则两处显示会不一致
+styles.css[AU5L]: F:全部样式：阅读页版式、卡片列表、抽屉、弹层遮罩与主题变量 | R:code:web/index.html | A::root 变量与 .read-* / .chat-* / .figure-* 等类名 | S:dialog 的遮罩只能写 ::backdrop，给 dialog 加 z-index 无效（top layer 由浏览器排序）；不要再造一层自定义 backdrop 元素
