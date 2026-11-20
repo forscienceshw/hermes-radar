@@ -1398,7 +1398,12 @@ def biz_fingerprint(storage: Path | None = None) -> tuple[tuple[str, int, int], 
 
     4.x 平时不把公众号正文落盘，只有在你打开「订阅号」那一刻才把攒着的消息
     一起写进 ``biz_message_*.db``。指纹一变就说明刚刚写了，worker 拿它当触发
-    信号立刻补采一次——这样"手动点开订阅号"就是全部动作，剩下的自动完成。
+    信号立刻补采一次。
+
+    注意主次：**点开「订阅号」不是必需动作**。日常新推送由 ``wechat4_memory``
+    每 30 秒从 Weixin.exe 进程内存里直接读（卡片带 URL，正文由雷达自己抓网页，
+    都不经过微信落盘），点不点都收得到。这里只负责"补更早的历史"——盒子里的
+    卡片被新推送挤掉以后，让微信把攒着的那批一次性写盘，才有得读。
     """
     storages = [storage] if storage else (db_storages() or [])
     marks: dict[str, tuple[str, int, int]] = {}
