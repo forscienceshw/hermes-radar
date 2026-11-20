@@ -281,6 +281,24 @@ def assess_candidate(candidate: dict[str, Any], include_archived_text: bool = Fa
     return {"keep": False, "reason": "标题和简介未显示自然科学或科研相关性", "matched_terms": []}
 
 
+MANUAL_KEEP_REASONS = {"公众号面板手动补录", "公众号面板恢复", "手动恢复收录"}
+
+
+def kept_by_hand(row: Any) -> bool:
+    """这条是用户自己说「我要」的：补录、恢复收录。
+
+    自动复核只该管机器收进来的东西。用户亲手补的条目再被词表扫走，他会以为补录
+    根本没生效——2026-11-20 的 Vita 除虫菊酯那篇就是这么消失的。
+    """
+    meta = json_loads(row.get("metadata_json"), {})
+    if not isinstance(meta, dict):
+        return False
+    if meta.get("manual_keep"):
+        return True
+    admission = meta.get("admission_filter") or {}
+    return isinstance(admission, dict) and str(admission.get("reason") or "") in MANUAL_KEEP_REASONS
+
+
 def cleanup_existing_items(db: Any) -> dict[str, int]:
     """Reversible startup sweep; also catches rows written by an older worker."""
     # If the local vocabulary is expanded, reconsider prior automatic
@@ -297,6 +315,8 @@ def cleanup_existing_items(db: Any) -> dict[str, int]:
     visible = 0
     for row in db.query("SELECT * FROM items WHERE excluded_at IS NULL"):
         visible += 1
+        if kept_by_hand(row):                   # 用户明确要过的不再自动扫走
+            continue
         # 和入库时用同一套证据（标题 + 简介）。以前这里看全文，导致"正文里提了一句
         # 蛋白"的招生贴、读博故事永远清不掉。
         assessment = assess_candidate(row, include_archived_text=False)

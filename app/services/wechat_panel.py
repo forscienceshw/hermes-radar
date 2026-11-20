@@ -197,7 +197,7 @@ def import_articles(db: Any, account: dict[str, Any], gh_id: str, articles: list
         if rows:
             row = rows[0]
             if row["excluded_at"]:
-                db.set_items_excluded([row["id"]], "公众号面板补录", excluded=False)
+                db.set_items_excluded([row["id"]], "公众号面板补录", excluded=False, manual=True)
             if not is_new and (row["status"] == "discovered" or not row["html_path"]):
                 db.enqueue_job("archive_item", {"version": 1, "item_id": row["id"]},
                                dedupe_key=f"archive:{row['id']}:panel", priority=60)
@@ -216,7 +216,7 @@ def restore_articles(db: Any, articles: list[dict[str, Any]]) -> dict[str, Any]:
         for row in rows:
             reason = str(row.get("exclusion_reason") or "")
             if reason.startswith("公众号面板"):
-                restored += db.set_items_excluded([row["id"]], "公众号面板恢复", excluded=False)
+                restored += db.set_items_excluded([row["id"]], "公众号面板恢复", excluded=False, manual=True)
     return {"restored": restored, "requested": len(canonical_urls)}
 
 

@@ -3,12 +3,13 @@
 这三块都在「入库」这条线上，判错了直接影响用户看到的资料库，
 所以每条判据都要有正例和反例，不能只测「能挡住」。
 """
+import json
 import tempfile
 import unittest
 from pathlib import Path
 
 from app.db import Database
-from app.services import filters
+from app.services import filters, relevance
 from app.services.archive import detect_verify_page
 from app.services.relevance import detect_marketing
 
@@ -171,6 +172,44 @@ class LibraryVisibilityTests(unittest.TestCase):
     def test_visible_when_status_is_explicit(self):
         rows = self.db.search(status="filtered", limit=10, hide_status="filtered")
         self.assertEqual([row["title"] for row in rows], ["没什么用的一篇"])
+
+
+class ManualKeepTests(unittest.TestCase):
+    """用户亲手补录/恢复的条目，启动时的自动复核不许再扫走。"""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(dir=_temp_root())
+        self.db = Database(Path(self.temp.name) / "test.db")
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def _add(self, url, title, reason):
+        item_id, _ = self.db.discover_item({
+            "url": url, "kind": "article", "title": title, "author": "某号",
+            "metadata": {"admission_filter": {"reason": reason, "matched_terms": []}}})
+        return item_id
+
+    def test_manual_import_survives_cleanup(self):
+        """标题里没有科研词：自动收进来的会被扫走，补录的必须留着。"""
+        auto = self._add("https://mp.weixin.qq.com/s?__biz=a&mid=1&idx=1", "周末去哪儿", "自动")
+        manual = self._add("https://mp.weixin.qq.com/s?__biz=a&mid=1&idx=2", "周末去哪儿",
+                           "公众号面板手动补录")
+        relevance.cleanup_existing_items(self.db)
+        rows = {row["id"]: row for row in self.db.query("SELECT id,excluded_at FROM items")}
+        self.assertIsNotNone(rows[auto]["excluded_at"])
+        self.assertIsNone(rows[manual]["excluded_at"], "补录过的条目不该被自动复核清掉")
+
+    def test_restore_marks_manual_keep(self):
+        item_id, _ = self.db.discover_item({
+            "url": "https://mp.weixin.qq.com/s?__biz=a&mid=2&idx=1", "kind": "article",
+            "title": "周末去哪儿", "author": "某号", "metadata": {}})
+        self.db.set_items_excluded([item_id], "自动", excluded=True)
+        self.db.set_items_excluded([item_id], "手动恢复收录", excluded=False, manual=True)
+        relevance.cleanup_existing_items(self.db)
+        row = self.db.one("SELECT excluded_at,metadata_json FROM items WHERE id=?", (item_id,))
+        self.assertIsNone(row["excluded_at"])
+        self.assertEqual(json.loads(row["metadata_json"])["manual_keep"], 1)
 
 
 if __name__ == "__main__":

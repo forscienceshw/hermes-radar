@@ -459,8 +459,15 @@ class Database:
                            item_id, source_id, conn)
         return item_id, True
 
-    def set_items_excluded(self, item_ids: list[str], reason: str, excluded: bool = True) -> int:
-        """Hide items reversibly without deleting their archived evidence."""
+    def set_items_excluded(self, item_ids: list[str], reason: str, excluded: bool = True,
+                           manual: bool = False) -> int:
+        """Hide items reversibly without deleting their archived evidence.
+
+        ``manual=True`` 表示这是用户自己点出来的决定（补录、恢复收录）。这类条目会在
+        ``metadata.manual_keep`` 上留个印子，下次启动的自动复核不再拿词表去扫它——
+        否则今天补录、明天重启又被「标题和简介未显示科研相关性」扫走，用户只会觉得
+        补录没生效。
+        """
         ids = list(dict.fromkeys(str(item_id) for item_id in item_ids if item_id))
         if not ids:
             return 0
@@ -481,6 +488,10 @@ class Database:
                 else:
                     cursor = conn.execute(f"""UPDATE items SET excluded_at=NULL,exclusion_reason=NULL
                         WHERE id IN ({marks}) AND excluded_at IS NOT NULL""", chunk)
+                    if manual:
+                        conn.execute(f"""UPDATE items SET metadata_json=json_set(
+                            CASE WHEN COALESCE(metadata_json,'') IN ('','null') THEN '{{}}' ELSE metadata_json END,
+                            '$.manual_keep',1) WHERE id IN ({marks})""", chunk)
                 changed += cursor.rowcount
             self.add_event("library_excluded" if excluded else "library_restored",
                            f"{'移出主资料库' if excluded else '恢复'} {changed} 条；原因：{reason}", conn=conn)

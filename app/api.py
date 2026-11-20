@@ -1025,7 +1025,7 @@ def restore_item(item_id: str) -> dict[str, Any]:
     if not row:
         raise HTTPException(404, "条目不存在")
     if row["excluded_at"]:
-        db.set_items_excluded([item_id], "手动恢复收录", excluded=False)
+        db.set_items_excluded([item_id], "手动恢复收录", excluded=False, manual=True)
         db.add_event("restored", "手动恢复收录", item_id)
     return {"restored": bool(row["excluded_at"])}
 
