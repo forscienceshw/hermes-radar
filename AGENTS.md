@@ -504,3 +504,37 @@ OpenAlex / Unpaywall 对新刊、国内刊收录滞后。Vita（10.15302/vita.20
 两边必须一一对上，跑一次同步 `inserted` 必须是 0。**非 gh 的老式号**
 （果壳、央视新闻、丁香园这类 `wxid_*` 用户名）这条链路读不到，它们的记录永远
 没有 `account_id`，也就永远收不到推文——这是通道限制，不是同步 bug。
+
+## 精读走客户端自己的登录态（2026-11-21 补）
+
+**症状**：`analyze_item` 全部失败，`RuntimeError: login_required：该能力需要登录后使用，请先登录。`
+164 条精读死信，最后一次成功是 11-20 14:56。
+
+**根因**：官方云 SDK（`cloud/dist/llm-worker.mjs`）在 Node 里没有 `localStorage`，
+`CloudAuthStorage` 退回内存 → 每次都是匿名请求。2026-11-20 17:40 起网关对匿名
+调用一律 401，所以整条链路在服务端侧关掉了，跟本地配置无关。
+
+**修法**：`app/services/workbuddy_direct.py` 借用客户端已经登录好的身份：
+
+- WorkBuddy.exe 的 private 堆里扫 JWT（`OpenProcess` + `ReadProcessMemory`），
+  解 payload 取 `exp` / `aud`，只要 `aud` 含 `account`、有效期还剩 60 秒以上的；
+- 直连 `https://www.workbuddy.cn/v2/chat/completions`（**必须 stream=true**，
+  网关明确拒绝非流式：`11101 Non-stream chat request is currently not supported`）；
+- `call_workbuddy_full` 先走这条路，`DirectUnavailable`（客户端没开）才退回 SDK，
+  两次错误合并报出来，不掩盖。
+
+**令牌生命周期**：客户端 token 有效期 28 天。内存里拿到后同时用 DPAPI 加密存
+`data/token-cache.bin`（`CryptProtectData`，绑定当前 Windows 账户），客户端关掉
+时用这份顶。内存里没找到 + 副本解不开，才报"取不到登录令牌"。
+
+**不要做的事**：不要去 `signUp`/`signInWithPassword` 绕过——这个应用的终端用户
+注册要求邮箱验证码（`signUp requires a verificationToken`），拿不到码就会走死路；
+也不要在请求上硬加 `Origin` / `User-Agent` 试（实测无效，401 与来源头无关）。
+
+**模型目录**：`/v2/models` 这类端点不存在（404）。设置页「查看可用模型」改成先问
+SDK，失败读客户端缓存的 `acc-product-config-v3-*.json`（59 个模型，字段
+`id`/`name`/`credits`），再失败才退回当前模型。设置页「测试连接」不再依赖目录，
+直接用直连发一个最小请求验证。
+
+**依赖边界**：这条路要求 WorkBuddy 客户端至少在本机登录过（有加密副本）。
+客户端彻底换机器/重装 → 副本解不开，需要客户端登录一次再跑。

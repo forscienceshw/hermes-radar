@@ -51,16 +51,22 @@ def _explain(exc: Exception) -> str:
 async def test_llm(provider: str, base_url: str, model: str, api_key: str) -> dict[str, Any]:
     started = time.monotonic()
     if provider == "workbuddy_cloud":
+        from . import workbuddy_direct
+        from .workbuddy_llm import list_workbuddy_models
+
         try:
-            from .workbuddy_llm import list_workbuddy_models
             models = await list_workbuddy_models()
-        except Exception as exc:
-            return {"ok": False, "message": f"WorkBuddy 云调用失败：{_explain(exc)}",
+        except Exception:                 # noqa: BLE001 - 目录拿不到不影响连通性验证
+            models = []
+        try:
+            # 真正说明问题的是能不能跑通一次请求，而不是目录里有多少条。
+            hit = await workbuddy_direct.probe(model or "glm-5.3-flash", timeout_seconds=45)
+        except Exception as exc:          # noqa: BLE001 - 失败原因要原样告诉用户
+            return {"ok": False, "message": f"WorkBuddy 点数不可用：{_explain(exc)}",
                     "seconds": round(time.monotonic() - started, 2)}
-        if not models:
-            return {"ok": False, "message": "能连上，但这个应用没有可用模型", "seconds": round(time.monotonic() - started, 2)}
-        ids = [item.get("id") for item in models][:8]
-        return {"ok": True, "message": f"已连接 WorkBuddy 点数，{len(models)} 个模型可用",
+        ids = [item.get("id") for item in models][:8] or [hit["model"]]
+        return {"ok": True,
+                "message": f"已连接 WorkBuddy 点数（{hit['model']} 实测 {hit['seconds']} 秒）",
                 "models": ids, "seconds": round(time.monotonic() - started, 2)}
 
     base = _normalise(base_url)

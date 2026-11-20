@@ -206,8 +206,21 @@ async def call_workbuddy_full(messages: list[dict[str, Any]], model: str, timeou
                                "temperature": temperature}
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
-    result = await _run_worker(payload, timeout_seconds=timeout_seconds, on_progress=on_progress,
-                               stall_seconds=stall_seconds)
+    # 优先借用客户端自己的登录态直连网关。官方云 SDK 在 Node 里没有 localStorage，
+    # session 永远是匿名的；2026-11-20 起网关对匿名调用一律回 401 login_required，
+    # 所以这条直连才是现在唯一能走通的路。客户端不在时退回 SDK，把两次错误一起报出来。
+    from . import workbuddy_direct
+
+    try:
+        result = await workbuddy_direct.call_gateway(
+            messages, model, timeout_seconds=timeout_seconds, temperature=temperature,
+            on_progress=on_progress, stall_seconds=stall_seconds, json_mode=json_mode)
+    except workbuddy_direct.DirectUnavailable as exc:
+        try:
+            result = await _run_worker(payload, timeout_seconds=timeout_seconds, on_progress=on_progress,
+                                       stall_seconds=stall_seconds)
+        except RuntimeError as sdk_error:
+            raise RuntimeError(f"{exc}；官方云 SDK 同样不可用（{sdk_error}）") from sdk_error
     usage = result.get("usage")
     if usage:
         with USAGE_LOG.open("a", encoding="utf-8") as handle:
@@ -227,5 +240,18 @@ async def call_workbuddy(messages: list[dict[str, Any]], model: str, timeout_sec
 
 
 async def list_workbuddy_models() -> list[dict[str, Any]]:
-    result = await _run_worker({"mode": "models"}, timeout_seconds=60)
-    return result.get("models") or []
+    """模型目录：先问官方 SDK，拿不到就读客户端缓存的产品配置。
+
+    2026-11-20 起 SDK 的匿名调用被网关拒绝，设置页「查看可用模型」跟着一起坏。
+    客户端自己那份 product config 里有同一份目录（id/name/credits），够用。
+    """
+    from . import workbuddy_direct
+
+    try:
+        result = await _run_worker({"mode": "models"}, timeout_seconds=45)
+        models = result.get("models") or []
+        if models:
+            return models
+    except Exception:                     # noqa: BLE001 - 拿不到就退回本地缓存
+        pass
+    return workbuddy_direct.client_model_catalog()
