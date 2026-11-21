@@ -1,7 +1,7 @@
 {
   "version": 1,
   "created_at": "2026-11-20T17:42:55Z",
-  "updated_at": "2026-11-21T06:33:15Z",
+  "updated_at": "2026-11-21T08:05:22Z",
   "files": {
     ".gitattributes": {
       "role": "index",
@@ -53,9 +53,9 @@
     },
     "aoci.code.txt": {
       "role": "index",
-      "sha256": "6b6057020355a1c04a28c1e810e8a89227cd2b5a71b84684237fb6a5b1636240",
-      "size": 41608,
-      "normalized_sha256": "6b6057020355a1c04a28c1e810e8a89227cd2b5a71b84684237fb6a5b1636240"
+      "sha256": "a1e9888386b0133d71abed6a2cc7a4e05c632250366133fb035dd7d206915e15",
+      "size": 42177,
+      "normalized_sha256": "a1e9888386b0133d71abed6a2cc7a4e05c632250366133fb035dd7d206915e15"
     },
     "aoci.meta.txt": {
       "role": "index",
@@ -77,9 +77,9 @@
     },
     "app/api.py": {
       "role": "index",
-      "sha256": "17c7be62d58087e9e273b56e82d7273b64bc33ac96dbc65185736e028ed449ef",
-      "size": 108432,
-      "normalized_sha256": "dff21997201d0a9edb9e97b7dd2e16779aaa56fb5183f8f91e88a01d9d83851f"
+      "sha256": "8746e23167fc1449a0615419acc8596adb59478b0dcc00af1b9d9490e23e8a2d",
+      "size": 108650,
+      "normalized_sha256": "cba6a33ef14764b15fe675911fdd9af976e17213e54242d6d1801ea162c27ab0"
     },
     "app/collectors/__init__.py": {
       "role": "index",
@@ -155,9 +155,9 @@
     },
     "app/services/assistant.py": {
       "role": "index",
-      "sha256": "0b6dd7a91af04f3c36d918be62568fe8451c978edcb69f9e97846ae6fa8ce4bb",
-      "size": 12912,
-      "normalized_sha256": "0b6dd7a91af04f3c36d918be62568fe8451c978edcb69f9e97846ae6fa8ce4bb"
+      "sha256": "d24b99cc36db530ead066e89a3c99a9c3f57af7e39d83f2cc6f9f66fd8187c1a",
+      "size": 13344,
+      "normalized_sha256": "d24b99cc36db530ead066e89a3c99a9c3f57af7e39d83f2cc6f9f66fd8187c1a"
     },
     "app/services/autostart.py": {
       "role": "index",
@@ -201,6 +201,12 @@
       "size": 19671,
       "normalized_sha256": "5fad43bf097c258e0dea7920335fca1a2213269587d34f5fde332803ab2d51e8"
     },
+    "app/services/pagefetch.py": {
+      "role": "index",
+      "sha256": "df2370a18456df0c35e32e531f90435f75a6fbbbcc88c85c8e811d69caf94e9b",
+      "size": 9666,
+      "normalized_sha256": "441ca9d75ac0606d1435a5d2d0f2fb5492d7f977b147862dc59af68850d6cfd0"
+    },
     "app/services/papers.py": {
       "role": "index",
       "sha256": "0272edb6363c8b4f60553adce66a713488a78aaf20be291aed54d28a89334e25",
@@ -239,9 +245,9 @@
     },
     "app/services/websearch.py": {
       "role": "index",
-      "sha256": "68af8f78453a2c58c81a3ac5e36729e57908e927f25009081cdb7c1261fd8a56",
-      "size": 21679,
-      "normalized_sha256": "68af8f78453a2c58c81a3ac5e36729e57908e927f25009081cdb7c1261fd8a56"
+      "sha256": "2777a15c252cd0cf0f89bb9d9c3aeef622fe0b4d1583cdd361c49accf38c44cd",
+      "size": 36293,
+      "normalized_sha256": "47dd21bef9ddc9471163e15c5b8c10403444a0c6bf5d8c14da10466ef82c1458"
     },
     "app/services/wechat3_public.py": {
       "role": "index",
@@ -675,6 +681,12 @@
       "size": 9367,
       "normalized_sha256": "c69e0c0632e352b6021f9b9d0f414e9b04e0cb9a3a81c3e4aa572990e0458314"
     },
+    "tests/test_websearch.py": {
+      "role": "observe",
+      "sha256": "c2c185cecab3bb3335440e4dc01676ac57016570634131d753266fd61e2e7122",
+      "size": 7584,
+      "normalized_sha256": "c2c185cecab3bb3335440e4dc01676ac57016570634131d753266fd61e2e7122"
+    },
     "tests/test_wechat3_public.py": {
       "role": "observe",
       "sha256": "71934d43ed10714bdf4b5f0b895ae42c56669dc5c8df57975db8c42ed2b751b6",
@@ -791,9 +803,9 @@
     },
     "web/assistant.js": {
       "role": "index",
-      "sha256": "e8eab42acc4896e5d8b8e23f1cdd05a5c27b4ed8a8a84c13fa38549c21b98998",
-      "size": 33490,
-      "normalized_sha256": "e8eab42acc4896e5d8b8e23f1cdd05a5c27b4ed8a8a84c13fa38549c21b98998"
+      "sha256": "a102b513689e741d029ccc632553b23cd5b650b6ba703a1efc6bb1e561c3e41a",
+      "size": 33695,
+      "normalized_sha256": "a102b513689e741d029ccc632553b23cd5b650b6ba703a1efc6bb1e561c3e41a"
     },
     "web/index.html": {
       "role": "index",
