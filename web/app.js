@@ -856,24 +856,53 @@ $('#copyPapers').onclick=async()=>{let all=[];try{all=await api('/api/papers?sta
 $('#llmProvider').onchange=()=>{const provider=$('#llmProvider').value,local=provider==='ollama',cloud=provider==='workbuddy_cloud',base=$('#llmBase'),model=$('#llmModel');base.disabled=provider!=='openai_compatible';$('#llmKey').disabled=provider!=='openai_compatible';if(cloud||local){base.dataset.remote=base.value.includes('127.0.0.1')?'https://api.deepseek.com/v1':base.value;model.dataset.remote=model.value}if(cloud){model.value='hy4free';$('#llmKey').value=''}else if(local){base.value='http://127.0.0.1:11434/v1';model.value='qwen3:8b';$('#llmKey').value=''}else{base.value=base.dataset.remote||'https://api.deepseek.com/v1';model.value=model.dataset.remote||'deepseek-chat'}};
 $('#loadWorkbuddyModels').onclick=async()=>{try{$('#workbuddyModelInfo').textContent='正在读取官方目录……';const r=await api('/api/llm/workbuddy/models');$('#workbuddyModelInfo').textContent=`共 ${r.models.length} 个可用模型`;$('#detailContent').innerHTML=`<h1>WorkBuddy 可用模型</h1><p class="muted">倍率仅为目录展示信息，实际扣减以每次调用记录为准。</p><div class="table-wrap"><table><thead><tr><th>模型</th><th>ID</th><th>积分倍率</th><th>图片</th><th>选择</th></tr></thead><tbody>${r.models.map(m=>`<tr><td>${esc(m.name)}</td><td><code>${esc(m.id)}</code></td><td>${esc(m.credits||'未标注')}</td><td>${m.supportsImages===true?'支持':m.supportsImages===false?'不支持':'未知'}</td><td><button data-cloud-model="${esc(m.id)}">使用</button></td></tr>`).join('')}</tbody></table></div>`;openDetail()}catch(e){$('#workbuddyModelInfo').textContent='读取失败';toast(e.message)}};
 $('#settingsForm').onsubmit=async e=>{e.preventDefault();try{const patch={llm:{enabled:$('#llmEnabled').value==='true',provider:$('#llmProvider').value,base_url:$('#llmBase').value,model:$('#llmModel').value,vision_enabled:$('#visionEnabled').value==='true',daily_call_limit:Number($('#llmDaily').value),min_local_relevance:Number($('#llmPrefilter').value),long_material_strategy:$('#llmLongMaterial').value,accounts:window.collectAccounts?collectAccounts():undefined},analysis:{custom_reading_prompt:$('#readingPrompt').value,concurrency:Number($('#llmConcurrency').value)},notifications:{channel:$('#notifyChannel').value,instant_threshold:Number($('#instantThreshold').value),batch_size:Number($('#batchSize').value),max_wait_minutes:Number($('#maxWait').value),min_relevance:Number($('#minRelevance').value),quiet_start:$('#quietStart').value,quiet_end:$('#quietEnd').value,quiet_allow_critical:$('#quietCritical').value==='true',max_per_day:Number($('#maxPerDay').value),send_windows:$('#sendWindows').value.split(',').map(x=>x.trim()).filter(Boolean),highlight_threshold:Number($('#highlightThreshold').value),digest_limit:Number($('#digestLimit').value)},papers:{email:$('#paperEmail').value},video:{asr_enabled:$('#asrEnabled').value==='true',asr_model:$('#asrModel').value,max_duration_minutes:Number($('#asrDuration').value)}};await api('/api/settings',{method:'PUT',body:patch});for(const [id,name] of [['llmKey','llm_api_key'],['dataxKey','datax_api_key'],['notifyWebhook','notification_webhook'],['wecomKfSecret','wecom_kf_secret']]){if($('#'+id).value){await api('/api/settings/secrets',{method:'POST',body:{name,value:$('#'+id).value}});$('#'+id).value=''}}$('#settingsResult').textContent='已保存';toast('设置已安全保存')}catch(err){toast(err.message)}};
+/* ---------- 模态栈 ---------- */
+// showModal() 会让 dialog 子树外的一切变成 inert：浮层（对话抽屉、笔记、划词条）光待在
+// top layer 上层没用，鼠标事件会穿透到遮罩上——点「对话的关闭」先把精读页关了就是这么来的。
+// 所以浮层要挂在「最上面那层 modal」的子树里。这里记下入栈顺序，assistant.js 的
+// overlayHome() 会来问最上面是谁。
+const modalStack=[];
+const _showModal=HTMLDialogElement.prototype.showModal;
+HTMLDialogElement.prototype.showModal=function(){
+  _showModal.call(this);
+  const at=modalStack.indexOf(this);if(at>=0)modalStack.splice(at,1);
+  modalStack.push(this);
+  document.dispatchEvent(new CustomEvent('modal:open',{detail:this}));
+};
+document.addEventListener('close',e=>{
+  const at=modalStack.indexOf(e.target);
+  if(at<0)return;
+  modalStack.splice(at,1);
+  document.dispatchEvent(new CustomEvent('modal:close',{detail:e.target}));
+},true);
+window.topModal=()=>modalStack.length?modalStack[modalStack.length-1]:null;
+
 function openDetail(){
   // 精读页也必须走 showModal：公众号推文面板是 showModal 打开的，待在 top layer 里。
   // 只有 showModal 才能叠到它上面，关闭后又正好回到下面那层——列表不用重新加载。
   // show() 是非模态，z-index 再高也压不过 top layer，所以以前只能先把面板关掉。
   const d=$('#detailDialog');
   if(!d.open)d.showModal();
-  document.body.classList.add('modal-open')}
+  if(!document.body.classList.contains('modal-open')){
+    // 锁滚动会让页面滚动条消失，right:0 的抽屉会跟着横移 15px；先把槽位宽度记下来顶住，
+    // 关精读时再撤掉，抽屉就始终停在同一处（见 styles.css 的 --sbw）。
+    document.documentElement.style.setProperty('--sbw',(window.innerWidth-document.documentElement.clientWidth)+'px')}
+  document.body.classList.add('modal-open');}
 function closeDetail(){const d=$('#detailDialog');if(d.open)d.close()}
 $('#closeDialog').onclick=closeDetail;
 $('#detailDialog').addEventListener('close',()=>{stopItemWatch();closeCollectPop()});
 // 任何一层模态关掉后，只要底下没有别的模态了才解锁滚动；否则关掉精读页会把
 // 还开着的推文面板一起解锁。
-document.addEventListener('close',e=>{if(e.target.tagName==='DIALOG'&&!$$('dialog[open]').length)document.body.classList.remove('modal-open')},true);
+document.addEventListener('close',e=>{if(e.target.tagName==='DIALOG'&&!$$('dialog[open]').length){document.body.classList.remove('modal-open');document.documentElement.style.removeProperty('--sbw')}},true);
 // 点对话框外面那圈遮罩才关；点在面板内边距上不算。
 $('#detailDialog').addEventListener('click',e=>{
   if(e.target!==e.currentTarget)return;
   const r=e.currentTarget.getBoundingClientRect();
-  if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)closeDetail();
+  if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom){
+    // 对话抽屉开着时点暗处：先关抽屉（它才是最上面那层），别一下把精读页也关了。
+    if(window.chatIsOpen&&window.chatIsOpen()){window.closeChat();return}
+    closeDetail();
+  }
 });
 document.addEventListener('keydown',e=>{if(e.key!=='Escape')return;// 收藏弹层的 Esc 交给浏览器：它会先关最上层，手动 preventDefault 会连带把下一层一起关掉
 if($('#collectionPop').open)return;if($('#chatDrawer').classList.contains('open')){e.preventDefault();$('#chatClose').click()}});

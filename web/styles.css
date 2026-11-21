@@ -90,9 +90,13 @@
 .note-pop textarea{width:100%;font:inherit;font-size:14px;padding:9px 11px;border:1px solid var(--line);border-radius:8px;resize:vertical}
 
 /* ---------- 对话抽屉 ---------- */
+/* 宽度只认这一个值：抽屉开着时不管精读页在不在，都不许变宽变窄。
+   --sbw 是精读页锁滚动时被吃掉的那条滚动条宽度（openDetail 量好写进来），
+   不补回来的话 right:0 会带着整块抽屉右移 15px，关掉精读再弹回左边。 */
+:root{--chat-drawer-w:460px;--sbw:0px}
 .chat-backdrop{position:fixed;inset:0;background:rgba(20,30,38,.28);opacity:0;pointer-events:none;transition:opacity .2s;z-index:60}
 .chat-backdrop.open{opacity:1;pointer-events:auto}
-.chat-drawer{position:fixed;inset:0 0 0 auto;margin:0;height:100vh;max-height:none;width:min(460px,96vw);background:#fff;border:0;border-left:1px solid var(--line);padding:0;overflow:hidden;max-width:100vw;box-shadow:-14px 0 40px rgba(20,35,45,.12);display:flex;flex-direction:column;transform:translateX(102%);transition:transform .24s ease;z-index:61}
+.chat-drawer{position:fixed;inset:0 0 0 auto;right:var(--sbw);margin:0;height:100vh;max-height:none;width:var(--chat-drawer-w);max-width:96vw;background:#fff;border:0;border-left:1px solid var(--line);padding:0;overflow:hidden;box-shadow:-14px 0 40px rgba(20,35,45,.12);display:flex;flex-direction:column;transform:translateX(102%);transition:transform .24s ease;z-index:61}
 .chat-drawer.open{transform:translateX(0)}
 .chat-head{padding:14px 16px 10px;border-bottom:1px solid #eef2f4}
 .chat-title-row{display:flex;gap:7px;align-items:center}

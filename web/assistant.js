@@ -2,6 +2,33 @@
 (function () {
   const q = (s) => document.querySelector(s);
   const money = (v) => Number(v || 0).toFixed(Number(v) >= 100 ? 1 : 2);
+
+  /* ---------------- 浮层挂在谁身上 ----------------
+     精读页是 showModal() 的 <dialog>：只有它自己的子树能收到事件，外面的元素全部 inert。
+     浮层留在 body 里照样画在最上层（top layer），但点哪儿都点不动——鼠标事件直接穿透到
+     遮罩上，结果就是「点对话的关闭，先把精读页关了」。所以精读页开着时，要把可点的浮层
+     挂进 dialog 子树；精读页一关，它们又会跟着 display:none，需要搬回 body 重新上顶层。 */
+  function overlayHome() {
+    // app.js 的模态栈：最上面那层 modal 才是唯一能收事件的容器。
+    const top = window.topModal ? window.topModal() : null;
+    if (top && top.open) return top;
+    const detail = q('#detailDialog');
+    return detail && detail.open ? detail : document.body;
+  }
+  function remountOverlay(el) {
+    if (!el) return;
+    const target = overlayHome();
+    if (el.parentElement === target) return;
+    const shown = el.matches(':popover-open');
+    if (shown) { try { el.hidePopover(); } catch (e) {} }
+    target.appendChild(el);
+    if (shown) { try { el.showPopover(); } catch (e) {} }
+  }
+  function returnOverlays() {
+    remountOverlay(q('#chatDrawer'));
+    remountOverlay(q('#notePop'));
+    remountOverlay(q('#selectionBar'));
+  }
   let ideaTab = 'ideas';
   let notesAll = [];
   let currentItemId = null;
@@ -116,6 +143,8 @@
     const pop = q('#notePop');
     pop.hidden = false;
     // popover 才能压在精读页上面：精读页是 modal，普通 div 的 z-index 再高也没用。
+    // 但 popover 只有在 dialog 子树里才点得动，见 overlayHome()。
+    remountOverlay(pop);
     if (pop.showPopover && !pop.matches(':popover-open')) pop.showPopover();
     q('#notePopBody').focus();
   }
@@ -335,6 +364,9 @@
     // 必须是 popover：精读页用 showModal() 进了 top layer，抽屉留在普通层里会被压在
     // 对话框背后，「看着能点、其实点不到」。popover 只占 top layer、不锁死底下那层，
     // 所以还能一边滚文章一边问。
+    // 还要挂进精读页的子树：modal 会让子树外的元素全部 inert，光在 top layer 上层没用，
+    // 点击会穿透到遮罩，把精读页关掉。
+    remountOverlay(drawer);
     if (drawer.showPopover && !drawer.matches(':popover-open')) drawer.showPopover();
     requestAnimationFrame(() => drawer.classList.add('open'));
     q('#chatBackdrop').classList.add('open');
@@ -354,7 +386,10 @@
     drawer.setAttribute('aria-hidden', 'true');
     // 等滑出动画走完再退出 top layer；这期间又点开就别关。
     setTimeout(() => {
-      if (!chat.open && drawer.matches(':popover-open')) drawer.hidePopover();
+      if (chat.open) return;
+      if (drawer.matches(':popover-open')) drawer.hidePopover();
+      // 关掉后从精读页子树里搬回 body：否则下次精读页一关，它会跟着一起消失。
+      if (drawer.parentElement !== document.body) document.body.appendChild(drawer);
     }, 220);
     q('#chatSessionsPanel').hidden = true;
     // 关闭后释放锁定，下一次重新选中段落时按钮才会更新。
@@ -644,6 +679,8 @@
     fab.textContent = `问这段（${chat.selection.length} 字）`;
     const bar = q('#selectionBar');
     bar.hidden = false;
+    // 划词工具条要能点，同样得在精读页子树里。
+    remountOverlay(bar);
     if (bar.showPopover && !bar.matches(':popover-open')) bar.showPopover();
     q('#selectionInfo').textContent = `${picked.block ? picked.block + ' · ' : ''}${picked.text.length} 字：${picked.text.slice(0, 26)}${picked.text.length > 26 ? '…' : ''}`;
     const rect = picked.range.getBoundingClientRect();
@@ -687,7 +724,17 @@
 
   window.loadNotes = loadNotes;
   window.openChat = openChat;
+  window.closeChat = closeChat;
+  window.chatIsOpen = () => chat.open;
   window.__chatState = chat;
+
+  // 模态一开一关都要重新安置浮层：开着时得挂进它的子树（否则整块 inert，点不动），
+  // 关掉后要搬回 body（否则跟着 dialog 的 display:none 一起消失）。
+  document.addEventListener('modal:open', () => returnOverlays());
+  document.addEventListener('modal:close', () => {
+    returnOverlays();
+    if (!q('#detailDialog').open) hideSelectionBar();
+  });
 
   // Seed the model selector as soon as the page is interactive.
   loadAccounts().catch(() => {});

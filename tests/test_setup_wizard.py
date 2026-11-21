@@ -114,7 +114,7 @@ class SnapshotCacheTests(unittest.TestCase):
 
 
 class SettingsPageTests(unittest.TestCase):
-    """界面上的两条硬约定，用文本锁住，避免以后又被改回去。"""
+    """界面上的几条硬约定，用文本锁住，避免以后又被改回去。"""
 
     @classmethod
     def setUpClass(cls):
@@ -137,6 +137,27 @@ class SettingsPageTests(unittest.TestCase):
     def test_reader_has_its_own_ask_entry(self):
         # 「问 AI」浮钮在 modal 底下点不到，精读页顶栏要有一条能点的入口。
         self.assertIn('id="detailAsk"', self.html)
+
+    def test_floating_layers_are_remounted_into_the_top_modal(self):
+        # 只进 top layer 不够：showModal() 会让 dialog 子树外的一切变成 inert，
+        # 浮层照样画在最上面，但点击会穿透到遮罩——点「对话的关闭」先把精读页关了。
+        # 所以浮层要认最上面那层 modal 当爹，模态开关时搬进去 / 搬回 body。
+        assistant = (ROOT / "web" / "assistant.js").read_text(encoding="utf-8")
+        app_js = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+        self.assertIn("function remountOverlay", assistant)
+        self.assertIn("window.topModal", assistant)
+        self.assertIn("modal:open", assistant)
+        self.assertIn("modal:close", assistant)
+        self.assertIn("window.topModal=", app_js)
+
+    def test_chat_drawer_geometry_ignores_the_scrollbar(self):
+        # 精读页锁滚动会让页面滚动条消失，right:0 的抽屉跟着横移 15px；
+        # 宽度也只允许有一个出口，改一处就全局一致。
+        css = (ROOT / "web" / "styles.css").read_text(encoding="utf-8")
+        app_js = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+        self.assertIn("--chat-drawer-w", css)
+        self.assertIn("right:var(--sbw)", css)
+        self.assertIn("'--sbw'", app_js)
 
 
 if __name__ == "__main__":
