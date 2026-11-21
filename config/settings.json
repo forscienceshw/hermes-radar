@@ -61,6 +61,7 @@
     "provider": "workbuddy_cloud",
     "base_url": "https://api.deepseek.com/v1",
     "model": "hy4flash-free",
+    "auto_cheapest": true,
     "vision_enabled": true,
     "timeout_seconds": 900,
     "stall_seconds": 300,

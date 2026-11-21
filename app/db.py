@@ -845,10 +845,20 @@ class Database:
 
     # ---------------- 收藏夹 ----------------
     def collections(self, scope: str = "") -> list[dict[str, Any]]:
+        """收藏夹列表，默认按「最近用过」排序。
+
+        原来按 created_at 排，夹子一多就变成「越老的越靠前、新收藏的沉在下面」，
+        用户翻不到就会再建一个同名的。最近往哪个夹子放过东西，哪个就浮上来。
+        last_used 取最后一次加入条目的时间；从没放过的退回创建时间。
+        """
         where, params = ("WHERE scope=?", [scope]) if scope else ("", [])
         return self.query(f"""SELECT c.*, (SELECT COUNT(*) FROM collection_entries e
-            WHERE e.collection_id=c.id) AS count FROM collections c {where}
-            ORDER BY c.created_at""", params)
+            WHERE e.collection_id=c.id) AS count,
+            (SELECT MAX(e.created_at) FROM collection_entries e
+             WHERE e.collection_id=c.id) AS last_used
+            FROM collections c {where}
+            ORDER BY COALESCE((SELECT MAX(e.created_at) FROM collection_entries e
+                WHERE e.collection_id=c.id), c.created_at) DESC""", params)
 
     def collection_create(self, name: str, scope: str = "library") -> dict[str, Any]:
         name = (name or "").strip()[:60]

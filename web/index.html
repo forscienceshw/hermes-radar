@@ -89,7 +89,8 @@
       <select id="searchKind"><option value="">全部类型</option><option value="article">文章</option><option value="video">视频</option></select>
       <select id="searchStatus"><option value="">全部状态</option><option value="ready">已精读</option><option value="archived">已归档</option><option value="filtered">低相关</option><option value="discovered">仅历史索引</option><option value="insufficient">无法详细归档</option><option value="error">失败</option></select>
       <select id="searchRange" title="按发布时间筛选"><option value="">全部时间</option><option value="1">今天</option><option value="3">近 3 天</option><option value="7">近 7 天</option><option value="30">近 30 天</option><option value="90">近 90 天</option><option value="365">近一年</option></select>
-      <select id="searchCollection" title="按收藏夹筛选"><option value="">全部收藏夹</option><option value="__none__">未收藏</option></select>
+      <input id="searchCollectionFilter" type="search" class="mini-filter" placeholder="找收藏夹" title="输入关键字过滤下面的收藏夹列表" autocomplete="off">
+      <select id="searchCollection" title="按收藏夹筛选（最近使用的排在前面）"><option value="">全部收藏夹</option><option value="__none__">未收藏</option></select>
       <label class="check" title="只看相关度达标的条目"><input id="hideLow" type="checkbox"> 隐藏低相关</label>
       <label class="check"><input id="searchExcluded" type="checkbox"> 含已删除</label>
       <div class="filter-actions">
@@ -331,7 +332,7 @@
   <div class="subview" id="subtab-params">
   <form id="settingsForm">
     <h2 class="group-title">常用参数</h2>
-    <div class="panel"><h2>大模型精读</h2><div class="form-grid four"><label>启用语义精读<select id="llmEnabled"><option value="false">关闭，仅规则初筛</option><option value="true">启用</option></select></label><label>调用方式<select id="llmProvider"><option value="workbuddy_cloud">WorkBuddy 点数（复用本机登录）</option><option value="openai_compatible">OpenAI 兼容 API</option><option value="ollama">Ollama 本地模型（免 Key）</option></select></label><label>Base URL<input id="llmBase" placeholder="https://api.deepseek.com/v1"></label><label>模型<input id="llmModel"></label></div><p class="muted">WorkBuddy 点数模式已实测可由后台调用，默认 hy4free，也可填 deepseek-v4-pro 等目录内模型 ID。Ollama 默认地址为 http://127.0.0.1:11434/v1。</p><div class="actions"><button id="loadWorkbuddyModels" type="button">查看 WorkBuddy 可用模型</button><span id="workbuddyModelInfo" class="muted"></span></div><div class="accounts-head"><h3>对话模型账户</h3><button id="addAccount" type="button">添加账户</button></div><p class="muted">用于右侧「问 Hermes」对话。默认账户沿用上面的精读模型；也可以在这里加 DeepSeek、Kimi、通义等 OpenAI 兼容端点。</p><div id="accountList" class="account-list"></div><div class="form-grid three"><label>API Key（留空保持不变）<input id="llmKey" type="password" autocomplete="off"><small id="llmKeyStatus"></small></label><label>启用图片理解<select id="visionEnabled"><option value="false">关闭</option><option value="true">启用（需模型支持）</option></select></label><label>每日调用上限<input id="llmDaily" type="number" min="1"></label><label>同时精读几篇<input id="llmConcurrency" type="number" min="1" max="8"><small>默认3；精读在等网络，3-5 篇最划算，改完立刻生效</small></label><label>云精读本地初筛门槛<input id="llmPrefilter" type="number" min="0" max="100"><small>默认40；手动强制精读不受限制</small></label><label>长材料策略<select id="llmLongMaterial"><option value="head_tail">首尾证据压缩（单次，省点）</option><option value="chunked">分段笔记后综合（更慢更费点）</option></select></label></div><label>你的既往精读标准 / 额外要求<textarea id="readingPrompt" rows="5" placeholder="可粘贴你认可的精读范例或特别强调的检查项"></textarea></label></div>
+    <div class="panel"><h2>大模型精读</h2><div class="form-grid four"><label>启用语义精读<select id="llmEnabled"><option value="false">关闭，仅规则初筛</option><option value="true">启用</option></select></label><label>调用方式<select id="llmProvider"><option value="workbuddy_cloud">WorkBuddy 点数（复用本机登录）</option><option value="openai_compatible">OpenAI 兼容 API</option><option value="ollama">Ollama 本地模型（免 Key）</option></select></label><label>Base URL<input id="llmBase" placeholder="https://api.deepseek.com/v1"></label><label>模型<input id="llmModel"><small>自动模式下这里只作兜底</small></label><label>选型策略<select id="llmAutoCheapest"><option value="true">自动选最便宜的（推荐）</option><option value="false">固定用上面的模型</option></select><small>免费优先，失败自动升一档</small></label></div><p class="muted">WorkBuddy 点数模式下，自动选型会按客户端模型目录的实时单价挑最便宜的对话模型：现在免费档是 hy4flash-free，其次 hy4flash（x0.03）、GLM-5.3-Flash（x0.08）。免费档返回不了 JSON 时会自动换次便宜的重试一次。Ollama 默认地址为 http://127.0.0.1:11434/v1。</p><div class="actions"><button id="loadWorkbuddyModels" type="button">查看 WorkBuddy 可用模型</button><span id="workbuddyModelInfo" class="muted"></span></div><div class="accounts-head"><h3>对话模型账户</h3><button id="addAccount" type="button">添加账户</button></div><p class="muted">用于右侧「问 Hermes」对话。默认账户沿用上面的精读模型；也可以在这里加 DeepSeek、Kimi、通义等 OpenAI 兼容端点。</p><div id="accountList" class="account-list"></div><div class="form-grid three"><label>API Key（留空保持不变）<input id="llmKey" type="password" autocomplete="off"><small id="llmKeyStatus"></small></label><label>启用图片理解<select id="visionEnabled"><option value="false">关闭</option><option value="true">启用（需模型支持）</option></select></label><label>每日调用上限<input id="llmDaily" type="number" min="1"></label><label>同时精读几篇<input id="llmConcurrency" type="number" min="1" max="8"><small>默认3；精读在等网络，3-5 篇最划算，改完立刻生效</small></label><label>云精读本地初筛门槛<input id="llmPrefilter" type="number" min="0" max="100"><small>默认40；手动强制精读不受限制</small></label><label>长材料策略<select id="llmLongMaterial"><option value="head_tail">首尾证据压缩（单次，省点）</option><option value="chunked">分段笔记后综合（更慢更费点）</option></select></label></div><label>你的既往精读标准 / 额外要求<textarea id="readingPrompt" rows="5" placeholder="可粘贴你认可的精读范例或特别强调的检查项"></textarea></label></div>
     <div class="panel"><h2>自动汇报</h2><div class="form-grid three"><label>渠道<select id="notifyChannel"><option value="inbox">站内收件箱</option><option value="wecom_webhook">企业微信群机器人 Webhook</option><option value="serverchan">Server酱（个人微信）</option><option value="generic_webhook">通用 JSON Webhook</option></select></label><label>Webhook（留空保持不变）<input id="notifyWebhook" type="password" autocomplete="off"><small id="webhookStatus"></small></label><label>即时汇报阈值（0-100）<input id="instantThreshold" type="number" min="0" max="100"></label></div><div class="form-grid four"><label>每次至少积攒<input id="batchSize" type="number" min="1"></label><label>最长等待（分钟）<input id="maxWait" type="number" min="1"></label><label>最低科研相关度<input id="minRelevance" type="number" min="0" max="100"></label><label>每日最多汇报次数<input id="maxPerDay" type="number" min="1" max="12"></label></div><div class="form-grid three"><label>发送时段（逗号分隔）<input id="sendWindows" placeholder="08:30,13:00,20:30"><small>只在时段前后发送；其余时间自动攒着</small></label><label>重点方向细讲阈值<input id="highlightThreshold" type="number" min="0" max="100"><small>达到阈值的重点方向文章用三段讲清，其余只列一行</small></label><label>速览最多列几条<input id="digestLimit" type="number" min="3" max="30"></label></div><div class="form-grid three"><label>免打扰开始<input id="quietStart" type="time"></label><label>免打扰结束<input id="quietEnd" type="time"></label><label>重要内容可突破免打扰<select id="quietCritical"><option value="true">允许</option><option value="false">不允许</option></select></label></div><p class="muted">Server酱填写完整发送地址：https://sctapi.ftqq.com/你的SendKey.send。免费版每天 5 条，请用合并汇报控制条数。企业微信机器人 Webhook 通常为 https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...</p></div>
     <div class="panel"><h2>公众号与论文</h2><div class="form-grid two"><label>DataXAPI Key（可选，留空保持不变）<input id="dataxKey" type="password" autocomplete="off"><small id="dataxKeyStatus"></small></label><label>学术 API 联系邮箱<input id="paperEmail" type="email" placeholder="用于 Crossref / Unpaywall 礼貌调用"></label></div><p class="muted">这里只存凭据。装了哪些来源、哪个在报错、要改检查间隔，都去「采集来源」页看。<button type="button" class="link" id="gotoSources">去采集来源 →</button></p></div>
     <h2 class="group-title">高级与诊断</h2>
@@ -345,6 +346,15 @@
       <div class="actions">
         <button id="proxyProbe" type="button">重新检测</button>
         <span id="proxyResult" class="muted"></span>
+      </div>
+    </div>
+    <div class="panel" id="embedPanel">
+      <h2>本地语义重排</h2>
+      <p class="muted">联网检索除了字面匹配，还会用本地向量模型判断「是不是同一个意思」——搜「ADC」时能认出标题写「抗体药物偶联物」的文章。模型 24MB，纯 CPU 推理，不联网、不花点数；没下载也能正常搜，只是同义改写会漏。</p>
+      <div id="embedStatus" class="muted">正在检测…</div>
+      <div class="actions">
+        <button id="embedFetch" type="button">下载语义模型</button>
+        <span id="embedResult" class="muted"></span>
       </div>
     </div>
     <div class="panel"><h2>原文删除识别自检</h2><p class="muted">拿资料库里已经确认被删除的文章、一篇正常文章、一个必然 404 的地址各探测一次，直接告诉你这套判断到底管不管用。也可以在任意条目详情页点「检查原文」单独验证。</p><div class="actions"><button id="goneSelfCheck" type="button">运行自检</button><span id="goneSelfCheckInfo" class="muted"></span></div><div id="goneSelfCheckResult"></div></div>
@@ -493,11 +503,20 @@
 </div>
 <dialog id="collectionPop" class="collection-pop" aria-label="收藏到收藏夹">
   <div class="collection-pop-head"><b>收藏到</b><button id="collectionPopClose" type="button">×</button></div>
+  <div class="collection-pop-tools">
+    <input id="collectionPopSearch" type="search" placeholder="搜索收藏夹…" autocomplete="off">
+    <select id="collectionPopSort" title="排序方式">
+      <option value="recent">最近使用</option>
+      <option value="count">条目最多</option>
+      <option value="name">名称 A-Z</option>
+    </select>
+  </div>
   <div id="collectionPopList" class="collection-pop-list"></div>
   <div class="collection-pop-new">
     <input id="collectionNewName" placeholder="新建收藏夹">
     <button id="collectionCreate" type="button">新建并加入</button>
   </div>
+  <div id="collectionPopHint" class="collection-pop-hint"></div>
 </dialog>
 <dialog id="collectionDialog" class="mini-dialog">
   <div class="dialog-head"><b id="collectionDialogTitle">管理收藏夹</b><button id="collectionDialogClose" type="button">关闭</button></div>

@@ -18,13 +18,23 @@ from ..paths import DATA_DIR
 USAGE_LOG = DATA_DIR / "llm-usage.jsonl"
 
 
-def _credit(usage: dict[str, Any]) -> tuple[float, float]:
+def _is_free_model(model: str) -> bool:
+    """名字里带 free 的就是免费档，别去猜 token 折算。"""
+    return "free" in (model or "").lower()
+
+
+def _credit(usage: dict[str, Any], model: str = "") -> tuple[float, float]:
     """Return (points actually charged, catalogue reference price).
 
     The gateway reports the two differently per model: a free model returns
     `credit=0` plus a non-zero `original_credit`, a paid model returns the real
-    `credit` and often leaves `original_credit` at zero.  Charging the first and
-    keeping the second as reference is the only reading that survives both.
+    `credit` and often leaves `original_credit` at zero.
+
+    **判断依据必须是「字段在不在」，不是「值是不是 0」。** 旧写法用
+    `if not charged and not reference` 兜底老数据，结果免费模型明确返回的
+    `credit=0` 被当成缺字段，按 `total_tokens/1000` 折算——一天 283 次
+    hy4-flash-free 就这样凭空记出 3082 点，把真实的 46 点淹掉了。
+    免费模型的 0 是结论，不是缺失。
     """
     def number(value: Any) -> float:
         try:
@@ -34,10 +44,22 @@ def _credit(usage: dict[str, Any]) -> tuple[float, float]:
 
     charged = number(usage.get("credit"))
     reference = number(usage.get("original_credit"))
-    if not charged and not reference:
-        # Older rows may only carry token counts; approximate so the chart is never blank.
-        charged = reference = number(usage.get("total_tokens")) / 1000
-    return charged, reference
+    has_charge = "credit" in usage
+    has_reference = "original_credit" in usage
+
+    if _is_free_model(model):
+        # 免费档一律 0；原价只作展示，没有就不展示，绝不折回实扣。
+        return 0.0, reference
+
+    if has_charge or has_reference:
+        if not has_charge:
+            # 只有原价字段：说明这一档按目录价走，没有优惠。
+            return reference, reference
+        return charged, (reference or charged)
+
+    # 两个字段都没有才是真的老数据，按 token 折算让图表不至于空白。
+    approximate = number(usage.get("total_tokens")) / 1000
+    return approximate, approximate
 
 
 def _rows() -> list[dict[str, Any]]:
@@ -56,17 +78,20 @@ def _rows() -> list[dict[str, Any]]:
             usage = entry.get("usage") or {}
             if not isinstance(usage, dict):
                 continue
-            charged, reference = _credit(usage)
+            model = entry.get("model") or ""
+            charged, reference = _credit(usage, model)
             # Before the task label existed every logged call was a reading.
             task = entry.get("task") or "analyze"
             rows.append({
                 "time": entry.get("time") or "",
-                "model": entry.get("model") or "",
+                "model": model,
                 "task": task,
                 "elapsed_ms": entry.get("elapsed_ms"),
                 "prompt_tokens": int(usage.get("prompt_tokens") or 0),
                 "completion_tokens": int(usage.get("completion_tokens") or 0),
                 "reasoning_tokens": int((usage.get("completion_tokens_details") or {}).get("reasoning_tokens") or 0),
+                "total_tokens": int(usage.get("total_tokens") or 0),
+                "free": _is_free_model(model),
                 "points": round(charged, 4),
                 "reference": round(reference, 4),
                 "cached_tokens": int(usage.get("prompt_cache_hit_tokens") or usage.get("cached_tokens") or 0),
@@ -100,13 +125,14 @@ def summary(days: int = 30) -> dict[str, Any]:  # noqa: C901 - flat aggregation 
     chats = [row for row in recent if row["task"] != "analyze"]
     today_rows = [row for row in rows if (row["time"] or "").startswith(today)]
 
-    models: dict[str, dict[str, float]] = defaultdict(lambda: {"calls": 0, "points": 0.0, "reference": 0.0, "seconds": 0.0})
+    models: dict[str, dict[str, float]] = defaultdict(lambda: {"calls": 0, "points": 0.0, "reference": 0.0, "seconds": 0.0, "tokens": 0})
     for row in recent:
         bucket = models[row["model"] or "unknown"]
         bucket["calls"] += 1
         bucket["points"] += row["points"]
         bucket["reference"] += row["reference"]
         bucket["seconds"] += (row["elapsed_ms"] or 0) / 1000
+        bucket["tokens"] += row["total_tokens"]
 
     daily: dict[str, float] = defaultdict(float)
     daily_calls: dict[str, int] = defaultdict(int)
@@ -119,14 +145,24 @@ def summary(days: int = 30) -> dict[str, Any]:  # noqa: C901 - flat aggregation 
     def average(subset: list[dict[str, Any]]) -> float:
         return round(sum(row["points"] for row in subset) / len(subset), 2) if subset else 0.0
 
+    def tokens(subset: list[dict[str, Any]]) -> int:
+        return sum(row["total_tokens"] for row in subset)
+
+    free_rows = [row for row in recent if row["free"]]
+
     return {
         "total_points": round(sum(row["points"] for row in rows), 2),
         "total_reference": round(sum(row["reference"] for row in rows), 2),
         "total_calls": len(rows),
+        "total_tokens": tokens(rows),
         "today_points": round(sum(row["points"] for row in today_rows), 2),
         "today_calls": len(today_rows),
+        "today_tokens": tokens(today_rows),
+        "today_free_calls": sum(1 for row in today_rows if row["free"]),
+        "today_free_tokens": tokens([row for row in today_rows if row["free"]]),
         "window_days": days,
         "window_points": round(sum(row["points"] for row in recent), 2),
+        "window_tokens": tokens(recent),
         "by_task": by_task,
         "reading_calls": len(readings),
         "reading_points": round(sum(row["points"] for row in readings), 2),
@@ -137,11 +173,14 @@ def summary(days: int = 30) -> dict[str, Any]:  # noqa: C901 - flat aggregation 
         "chat_avg": average(chats),
         "by_model": [{"model": key, "calls": int(value["calls"]), "points": round(value["points"], 2),
                       "reference": round(value["reference"], 2),
+                      "tokens": int(value["tokens"]),
                       "avg_seconds": round(value["seconds"] / max(1, value["calls"]), 1)}
                      for key, value in sorted(models.items(), key=lambda kv: kv[1]["calls"], reverse=True)],
         "daily": [{"day": day, "points": round(daily[day], 2), "calls": daily_calls[day]}
                   for day in sorted(daily)],
         "paid_share": round(100 * sum(1 for row in recent if row["points"] > 0) / max(1, len(recent)), 1),
+        "free_calls": len(free_rows),
+        "free_tokens": tokens(free_rows),
     }
 
 

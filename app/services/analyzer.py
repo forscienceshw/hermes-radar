@@ -554,6 +554,32 @@ def _progress_sink(db: Database, item_id: str) -> Callable[[dict[str, Any]], Non
     return write
 
 
+def _model_chain(settings: dict[str, Any]) -> list[str]:
+    """精读要用的模型序列：默认从最便宜的往上报。
+
+    价格来自客户端缓存的官方模型目录，不是写死的。免费档（hy4flash-free）
+    排第一；它挂了或返回不了 JSON 就自动换次便宜的（hy4flash 0.03 →
+    glm-5.3-flash 0.08），不会为了一次读还去用 0.69 的 GLM-5.3。
+
+    关掉 auto_cheapest 就只认设置里那个模型，一次都不换——有人就是要用固定档。
+    """
+    configured = str(settings.get("model") or "").strip()
+    if not settings.get("auto_cheapest"):
+        return [configured] if configured else []
+    try:
+        from .workbuddy_direct import cheapest_model, fallback_models
+        best = cheapest_model()
+    except Exception:                                    # noqa: BLE001 - 目录读不到就走原设置
+        best = None
+    if not best:
+        return [configured] if configured else []
+    chain = [str(best["id"])]
+    for candidate in fallback_models(chain[0], 1):
+        if candidate not in chain:
+            chain.append(candidate)
+    return chain
+
+
 async def _llm_call(db: Database, messages: list[dict[str, Any]], item_id: str = "",
                     material_chars: int = 0) -> dict[str, Any]:
     settings = get_settings()["llm"]
@@ -581,13 +607,28 @@ async def _llm_call(db: Database, messages: list[dict[str, Any]], item_id: str =
         base = float(settings["timeout_seconds"])
         # Longer material legitimately takes longer; do not report a "stall" for a big article.
         timeout = min(1800.0, max(300.0, base + max(0, material_chars - 20000) / 2000 * 20))
-        return await call_workbuddy_full(messages, settings["model"], timeout, 0.2,
-                                         on_progress=_progress_sink(db, item_id) if item_id else None,
-                                         stall_seconds=float(settings.get("stall_seconds", 300)))
+        chain = _model_chain(settings)
+        if not chain:
+            raise RuntimeError("没有可用的 WorkBuddy 模型：先到设置里点「查看可用模型」确认登录态")
+        progress = _progress_sink(db, item_id) if item_id else None
+        stall = float(settings.get("stall_seconds", 300))
+        for index, model in enumerate(chain):
+            started = time.monotonic()
+            try:
+                return await call_workbuddy_full(messages, model, timeout, 0.2,
+                                                 on_progress=progress, stall_seconds=stall)
+            except Exception:                            # noqa: BLE001 - 换下一个便宜档
+                # 只对"快速失败"换模型：模型不存在、参数不支持这类几十秒内就报错；
+                # 要是已经等了五分钟才超时，再换一个只是让用户再等五分钟。
+                if index + 1 >= len(chain) or time.monotonic() - started > 90:
+                    raise
+        raise RuntimeError("WorkBuddy 精读失败（候选模型已全部尝试）")
     if provider == "ollama":
         import httpx
         timeout = max(600.0, float(settings["timeout_seconds"]))
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+        # 本机回环，绝不能交给环境变量里的代理：某些桌面环境把 HTTP_PROXY 指向
+        # 一个只放行白名单的端口，Ollama 请求会被它吃掉，报的却是"连不上模型"。
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False, trust_env=False) as client:
             result = await client.post(endpoint, json=payload)
             result.raise_for_status()
             if len(result.content) > 20_000_000:
@@ -825,7 +866,10 @@ async def analyze_item(db: Database, item_id: str, force: bool = False) -> None:
                 raise RuntimeError(f"{second}（已跳过图片重试仍失败；原请求：{payload_summary({'messages': [{'role': 'user', 'content': user_content}]})}）") from None
         analysis = _normalise_analysis(_parse_json(response["content"]))
         usage = response.get("usage") or {}
-        analysis.update({"analysis_mode": "llm", "model": settings["llm"]["model"],
+        # 记实际出活的模型，不是设置里那个：自动省钱模式下两者不是一回事，
+        # 事后看「这篇是用免费档读的」只能靠这个字段。
+        actual_model = str(response.get("model") or "").strip() or settings["llm"]["model"]
+        analysis.update({"analysis_mode": "llm", "model": actual_model,
                          "evidence_completeness": completeness, "ideas_considered": [x["id"] for x in ideas],
                          "papers_considered": [{"doi": p["doi"], "status": p["status"]} for p in papers],
                          "llm_meta": {"elapsed_ms": response.get("elapsedMs"),

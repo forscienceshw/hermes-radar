@@ -198,7 +198,10 @@ class CoreTests(unittest.TestCase):
     def test_workbuddy_provider_needs_no_api_key(self):
         from app.services.analyzer import _llm_call
         settings = copy.deepcopy(get_settings())
-        settings["llm"].update({"provider": "workbuddy_cloud", "model": "hy4free"})
+        settings["llm"].update({"provider": "workbuddy_cloud", "model": "hy4free",
+                                # 这里测的是"配置的模型被原样传给网关"，不是自动选型；
+                                # 开着 auto_cheapest 会换成当前最便宜的免费档，断言就失去意义。
+                                "auto_cheapest": False})
         with patch("app.services.analyzer.get_settings", return_value=settings), patch("app.services.workbuddy_llm.call_workbuddy_full", new=AsyncMock(return_value={"content": '{"ok":true}'})) as cloud:
             result = asyncio.run(_llm_call(self.db, [{"role": "system", "content": "test"}]))
         self.assertEqual(result["content"], '{"ok":true}')
@@ -573,7 +576,9 @@ class CoreTests(unittest.TestCase):
             credits.USAGE_LOG = original
             path.unlink()
         self.assertEqual(data["total_points"], 0.4)
-        self.assertEqual(data["total_reference"], 7.5)
+        # 付费行没给 original_credit 时，原价按实扣算（0.4）；免费行那 7.5 才是目录原价。
+        # 旧实现把付费行的原价记成 0，界面上会出现"实扣 0.4 / 原价 0"这种怪数字。
+        self.assertEqual(data["total_reference"], 7.9)
         self.assertEqual(data["reading_avg"], 0.2)
         self.assertEqual(recent[0]["model"], "free")
 

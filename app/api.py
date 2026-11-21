@@ -327,6 +327,24 @@ def net_status(refresh: int = 0) -> dict[str, Any]:
             "configured": (net._configured_proxy() or "").strip()}
 
 
+@app.get("/api/embedding/status")
+def embedding_status() -> dict[str, Any]:
+    """本地语义模型在不在、多大、为什么没启用。
+
+    普通 def：首次调用要加载 24MB 的 ONNX（约 0.2 秒），别塞进事件循环。
+    """
+    from .services import embedding
+    return {"available": embedding.available(), "reason": embedding.reason(),
+            "size": embedding.model_size()}
+
+
+@app.post("/api/embedding/fetch")
+def embedding_fetch() -> dict[str, Any]:
+    """补下语义模型。24MB，走 hf-mirror；失败会如实返回原因而不是抛 500。"""
+    from .services import embedding
+    return embedding.fetch()
+
+
 @app.get("/api/health")
 def health() -> dict[str, Any]:
     stats = db.stats()
@@ -1217,7 +1235,7 @@ async def wechat_cover(u: str) -> Response:
         return FileResponse(cache_path, media_type=cached_type, headers=headers)
     try:
         import httpx
-        async with httpx.AsyncClient(timeout=12, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=12, follow_redirects=True, trust_env=False) as client:
             resp = await client.get(target, headers={"User-Agent": "Mozilla/5.0", "Accept": "image/*,*/*"})
         content_type = (resp.headers.get("content-type") or "").split(";")[0].strip()
         if resp.status_code != 200 or not content_type.startswith("image/") or not resp.content:

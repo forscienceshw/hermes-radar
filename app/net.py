@@ -260,8 +260,12 @@ async def request(url: str, method: str = "GET", max_bytes: int = 25_000_000,
     original_host = urlsplit(current).hostname
     timeout = timeout or float(get_settings()["request_timeout_seconds"])
     options = _client_options(current)
+    # trust_env=False 不是可选项。httpx 默认会读 HTTP_PROXY/HTTPS_PROXY，而不少
+    # 桌面环境（含 WorkBuddy 自身沙箱）会把这些变量指向一个只放行白名单的本地端口：
+    # 我们明明决定直连 360 / Europe PMC，流量却被它劫走，每个源都超时到十几秒，
+    # 表现就是「所有源都挂了」。代理只由 _client_options 按域名决定，别让环境接管。
     async with httpx.AsyncClient(follow_redirects=False, timeout=timeout,
-                                 **options) as client:
+                                 trust_env=False, **options) as client:
         for _ in range(max_redirects + 1):
             await asyncio.to_thread(validate_public_url, current, not options)
             async with client.stream(method, current, headers=current_headers, json=json_body, data=form_body) as response:
@@ -319,7 +323,7 @@ async def download_file(url: str, dest, max_bytes: int = 100_000_000,
         try:
             options = _client_options(current)
             async with httpx.AsyncClient(follow_redirects=False, timeout=timeout,
-                                         **options) as client:
+                                         trust_env=False, **options) as client:
                 for _ in range(6):
                     await asyncio.to_thread(validate_public_url, current, not options)
                     async with client.stream("GET", current, headers=current_headers) as response:

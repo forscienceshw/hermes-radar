@@ -47,9 +47,9 @@ DUCK_HEADERS = {
 
 SNIPPET_CHARS = 300
 # 召回阶段的整体预算。Europe PMC 从国内出去有时 3 秒、有时 14 秒（国际链路抖动，
-# 与 DNS 无关，实测解析只要 20ms）。等它等于让用户干等；到点就用手上已有的，
-# 慢的源记一条说明——Crossref 已经能覆盖绝大多数 DOI，缺一个源不算缺内容。
-SEARCH_BUDGET = 6.5
+# 与 DNS 无关，实测解析只要 20ms）。6.5 秒时它经常被整条跳过，而它恰恰是学术质量
+# 最高的源；放到 8 秒能覆盖大部分抖动。仍到点就用手上已有的，慢的记一条说明。
+SEARCH_BUDGET = 8.0
 # 拉丁字母技术词（蛋白名、基因名、方法名），用来拼第二条更"学术"的查询。
 LATIN_TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9\-]{2,}")
 CJK_RUN = re.compile(r"[\u4e00-\u9fff]{2,}")
@@ -87,6 +87,78 @@ CHINESE_QUESTION_WORDS = ("帮我搜一下", "帮我查一下", "帮我找一下
                           "能不能", "可不可以", "有没有", "还有", "具体", "到底", "用了",
                           "哪种", "哪个", "哪些", "什么", "怎么", "可以", "告诉", "这个",
                           "那个", "一下", "以及")
+
+# 缩写 ↔ 全称。同一个东西两种写法，搜索引擎只覆盖其中一种：
+# 搜「ADC」回来的全是英文综述，而写「抗体药物偶联物」的中文页面一条都进不来。
+# 这一层不调模型，纯查表，多一条查询只多一次并发请求（不进关键路径）。
+ABBREVIATIONS = {
+    "adc": ("antibody-drug conjugate", "抗体药物偶联物"),
+    "vhh": ("nanobody", "single-domain antibody", "纳米抗体"),
+    "nanobody": ("VHH", "single-domain antibody", "纳米抗体"),
+    "car-t": ("chimeric antigen receptor", "嵌合抗原受体"),
+    "protac": ("proteolysis targeting chimera", "蛋白降解靶向嵌合体"),
+    "crispr": ("CRISPR-Cas9", "基因编辑"),
+    "mrna": ("messenger RNA", "信使RNA"),
+    "sirna": ("small interfering RNA", "小干扰RNA"),
+    "llps": ("liquid-liquid phase separation", "液液相分离"),
+    "cryo-em": ("cryo-electron microscopy", "冷冻电镜"),
+    "aav": ("adeno-associated virus", "腺相关病毒"),
+    "tme": ("tumor microenvironment", "肿瘤微环境"),
+    "egfr": ("epidermal growth factor receptor", "表皮生长因子受体"),
+    "pd-l1": ("programmed death-ligand 1", "程序性死亡配体1"),
+}
+
+
+def _expand_queries(base: str, science: list[str], limit: int = 2) -> list[str]:
+    """从已知查询派生变体：缩写展开、全称收回、英文问题补一条中文。
+
+    这三条都是「同一个意思换个说法」的具体形态，命中率提升来自覆盖面而不是
+    排序技巧。规则很朴素，但比让模型改写省 1–2 秒，也不会把查询改跑偏。
+
+    **顺序按语言互补排**：中文问题先给英文全称（补文献库），英文问题先给中文
+    （补中文网页）。两种都塞进同一队列再截断，会出现「英文问题拿到两条英文
+    变体、中文网页一条都没覆盖」的情况——那等于没扩展。
+    """
+    pool = f"{base} {' '.join(science)}".strip()
+    low = pool.lower()
+    english: list[str] = []
+    chinese: list[str] = []
+
+    def add(item: str) -> None:
+        item = re.sub(r"\s+", " ", str(item or "")).strip()
+        if not item or item.lower() in low:
+            return
+        bucket = chinese if CJK_RUN.search(item) else english
+        if item not in bucket:
+            bucket.append(item)
+
+    def has(token: str) -> bool:
+        return bool(re.search(rf"(?<![a-z0-9]){re.escape(token)}(?![a-z0-9])", low))
+
+    for short, longs in ABBREVIATIONS.items():
+        if has(short):
+            for long in longs:
+                add(long)
+
+    for short, longs in ABBREVIATIONS.items():
+        if has(short):
+            continue
+        if any(long.lower() in low for long in longs):
+            add(short.upper() if len(short) <= 3 else short)
+
+    # 英文问题补一条中文：中文网页里"纳米抗体 亲和标签"这种写法，英文词搜不到。
+    if not CJK_RUN.search(base):
+        zh = [key for key, value in GLOSSARY.items()
+              if len(value) > 3 and value.lower() in low and CJK_RUN.search(key)]
+        if zh:
+            add(" ".join(dict.fromkeys(zh))[:60])
+
+    ordered = (english + chinese) if CJK_RUN.search(base) else (chinese + english)
+    cleaned: list[str] = []
+    for item in ordered:
+        if item.lower() != base.lower() and item not in cleaned:
+            cleaned.append(item)
+    return cleaned[:limit]
 
 
 def _clean(text: Any, limit: int = SNIPPET_CHARS) -> str:
@@ -170,6 +242,21 @@ JUNK_HOSTS = {"pic.360.com", "image.so.com", "sou.360.cn", "www.so.com", "so.com
 # 360 每条结果尾巴上挂一行「cdmd.cnki.com.cn 反馈」，纯粹是站点标注，不是摘要。
 # 这行经常和摘要挤在同一个 <p> 里，所以必须从文本尾部剥掉，不能整段匹配。
 SITE_FEEDBACK = re.compile(r"\s*[\w.-]+\.[a-z]{2,}(?::\d+)?\s*反\s*馈\s*$", re.I)
+# 360 的风控是间歇性的：同一个出口连搜几次后改返回 ~6KB 的验证页，HTTP 仍 200。
+# 正常结果页都在 100KB 以上。用体积加关键词双重判断，命中就熔断，别反复白等。
+SO360_COOLDOWN = 300.0
+SO360_COOLDOWN_UNTIL = 0.0
+SO360_BLOCK_MARKERS = ("captcha", "verify", "安全检查", "人机")
+
+
+def _so360_blocked(html: str) -> bool:
+    text = html or ""
+    if len(text) < 20_000:
+        return True
+    if "res-list" in text:
+        return False
+    low = text.lower()
+    return any(marker in low for marker in SO360_BLOCK_MARKERS)
 
 
 def _squash(text: Any, limit: int = SNIPPET_CHARS) -> str:
@@ -225,10 +312,21 @@ async def so360(query: str, limit: int = 6) -> list[dict[str, Any]]:
     Bing 的 RSS 出口在中文查询上会退化成"只按第一个词出结果"——搜「纳米抗体 亲和标签」
     返回的全是"纳米是什么长度单位"；360 不会。它的结果页是纯服务端渲染，不需要 JS，
     也不需要 cookie。百度会跳验证码、搜狗只返回 JS 空壳，两者都当不了主力。
+
+    但它会限流，而且是**间歇性**的：连续搜几次之后，改返回一个 6KB 左右的页面
+    （带 captcha 脚本、一条 res-list 都没有），HTTP 状态还是 200。这种页面解析出来
+    当然是空，"失败"和"没有结果"在界面上无法区分。所以这里显式识别并熔断五分钟，
+    期间不再请求它——省下每次四五秒，交给 Bing 兜底。
     """
+    global SO360_COOLDOWN_UNTIL
+    if time.monotonic() < SO360_COOLDOWN_UNTIL:
+        raise RuntimeError("360 刚触发过风控，冷却五分钟内跳过该源")
     params = urlencode({"q": query, "pn": "1"})
     response = await request(f"{SO360_ENDPOINT}?{params}", headers=BROWSER_HEADERS,
                              timeout=18, max_bytes=3_000_000)
+    if _so360_blocked(response.text):
+        SO360_COOLDOWN_UNTIL = time.monotonic() + SO360_COOLDOWN
+        raise RuntimeError("360 返回的是风控拦截页（本机出口被限流），五分钟内跳过该源")
     return _parse_so360(response.text, limit)
 
 
@@ -424,11 +522,23 @@ async def europe_pmc(query: str, limit: int = 4) -> list[dict[str, Any]]:
     return hits
 
 
+ARXIV_COOLDOWN_UNTIL = 0.0
+
+
 async def arxiv(query: str, limit: int = 3) -> list[dict[str, Any]]:
+    global ARXIV_COOLDOWN_UNTIL
+    if time.monotonic() < ARXIV_COOLDOWN_UNTIL:
+        raise RuntimeError("arXiv 刚返回过 429，冷却两分钟内不再请求")
     search = quote_plus(query)
     url = (f"https://export.arxiv.org/api/query?search_query=all:{search}"
            f"&start=0&max_results={max(limit, 3)}&sortBy=relevance")
-    response = await request(url, timeout=15, max_bytes=4_000_000)
+    try:
+        response = await request(url, timeout=8, max_bytes=4_000_000)
+    except Exception as exc:                          # noqa: BLE001 - 429 要单独认
+        if "429" in str(exc):
+            ARXIV_COOLDOWN_UNTIL = time.monotonic() + 120
+            raise RuntimeError("arXiv 限流（429），两分钟内跳过该源") from exc
+        raise
     soup = BeautifulSoup(response.text, "xml")
     hits: list[dict[str, Any]] = []
     for entry in soup.find_all("entry"):
@@ -535,7 +645,7 @@ def plan_queries(question: str, item_title: str = "",
     """
     base = re.sub(r"\s+", " ", question or "").strip()[:120]
     if not base:
-        return {"science": [], "web": ""}
+        return {"science": [], "web": "", "variants": []}
     terms_all = [str(t) for t in (item_terms or []) if t]
     blob = " ".join([question, item_title, " ".join(terms_all)])
     science: list[str] = []
@@ -569,7 +679,14 @@ def plan_queries(question: str, item_title: str = "",
         topic = _topic_terms(terms_all)
         if topic:
             web = " ".join(dict.fromkeys(topic + [web]))[:80]
-    return {"science": science[:2], "web": web}
+    variants = _expand_queries(base, science)
+    # 三四个字母的查询在文献库里歧义极大：ADC 同时是模数转换器、阿拉伯裔美国人
+    # 协会、抗体偶联药物；搜「ADC 偶联」时前两者的论文会占满结果。这种情况下用
+    # 展开的全称替换掉短查询，而不是两条都发——短的那条会把噪声顶上来。
+    long_forms = [item for item in variants if not CJK_RUN.search(item) and len(item) > 8]
+    if long_forms and science and len(science[0]) <= 4:
+        science[0] = long_forms[0]
+    return {"science": science[:2], "web": web, "variants": variants}
 
 
 SOURCE_WEIGHT = (("Europe PMC", 1.05), ("Crossref", 1.0), ("维基百科", 0.95), ("arXiv", 0.9))
@@ -655,6 +772,38 @@ def _source_weight(hit: dict[str, Any]) -> float:
     return 0.75 if hit["source"].startswith("网页") else 0.6
 
 
+# 语义相关的下限，低于它仍按字面判。这两个数是拿真实查询试出来的：
+# bge-small-zh 上同主题标题 0.62–0.75，不相干的 0.28–0.38。定太高会漏，
+# 定太低会让「同领域但不同问题」的文章挤进来，靠 _rank 排序也压不住。
+SEMANTIC_FLOOR = {"science": 0.62, "web": 0.55}
+
+
+def _semantic_scores(collected: list[tuple[str, str, dict[str, Any]]]) -> list[float] | None:
+    """给每条候选算「和查询的语义相似度」。算不了就返回 None。
+
+    这一步专门治字面匹配的死角：搜「ADC 偶联」时，标题写「抗体药物偶联物」
+    的论文 bigram 覆盖率是 0，会被判成不相关直接扔掉；语义分能到 0.7 以上。
+    """
+    if not collected:
+        return None
+    try:
+        from . import embedding
+        if not embedding.available():
+            return None
+        queries = list(dict.fromkeys(query for _, query, _ in collected))
+        texts = [f"{hit.get('title') or ''}。{str(hit.get('snippet') or '')[:300]}"
+                 for _, _, hit in collected]
+        vectors = embedding.encode(queries + texts)
+        if not vectors or len(vectors) != len(queries) + len(texts):
+            return None
+        by_query = {query: vectors[index] for index, query in enumerate(queries)}
+        base = len(queries)
+        return [embedding.cosine(by_query[query], vectors[base + index])
+                for index, (_, query, _) in enumerate(collected)]
+    except Exception:                            # noqa: BLE001 - 语义只是加分项
+        return None
+
+
 def _unique_queries(queries: list[str]) -> list[str]:
     """合并被包含的查询。
 
@@ -696,6 +845,9 @@ async def gather(question: str, *, item_title: str = "", limit: int = 10,
     started = time.monotonic()
     plan = plan_queries(question, item_title, item_terms)
     plan["science"] = _unique_queries(plan["science"])
+    web_base = (plan["web"] or "").lower()
+    plan["variants"] = [item for item in _unique_queries(plan.get("variants") or [])
+                        if item.lower() != web_base]
     if not plan["science"] and not plan["web"]:
         return {"queries": [], "results": [], "errors": [], "notes": [],
                 "elapsed_ms": 0, "fetched": 0}
@@ -709,7 +861,12 @@ async def gather(question: str, *, item_title: str = "", limit: int = 10,
         # 两个通用网页源分工不同：360 扛中文多词，Bing 扛英文与站点直达。
         # 谁挂了都不影响另一个，errors 里会留下原因。
         tasks.append(("web", plan["web"], f"360:{plan['web']}", so360(plan["web"], 6)))
-        tasks.append(("web", plan["web"], f"Bing:{plan['web']}", bing(plan["web"], 4)))
+        tasks.append(("web", plan["web"], f"Bing:{plan['web']}", bing(plan["web"], 6)))
+        # 变体交给 Bing 而不是 360：Bing 稳定（360 会限流），而且换一种说法
+        # 正好绕开「Bing 中文多词只看首词」那个老毛病——首词换了，结果集就换了。
+        if plan["variants"]:
+            tasks.append(("web", plan["variants"][0], f"Bing变体:{plan['variants'][0]}",
+                          bing(plan["variants"][0], 4)))
         # 海外源按本机连通性挂载：有代理（或本机本来就在墙外）才加 DDG 与维基。
         # 探测结果缓存 3 分钟；没代理的机器这里只是一次毫秒级的端口扫描，
         # 不会因为"没有梯子"就让整条检索链失败。
@@ -740,8 +897,9 @@ async def gather(question: str, *, item_title: str = "", limit: int = 10,
         await asyncio.gather(*pending, return_exceptions=True)
 
     errors: list[str] = []
-    buckets: dict[str, list[dict[str, Any]]] = {"science": [], "web": []}
-    weak: list[dict[str, Any]] = []
+    # 先只做去重和收集，打分放到后面统一算：语义向量要一次性批量编码，
+    # 逐条调 encode 会把「40 条标题」拆成 40 次推理，白白多花一个数量级的时间。
+    collected: list[tuple[str, str, dict[str, Any], str]] = []
     seen: set[str] = set()
     for (bucket, query, label, _), future in zip(tasks, futures):
         name = label.split(":", 1)[0]
@@ -757,8 +915,9 @@ async def gather(question: str, *, item_title: str = "", limit: int = 10,
             if name not in OPTIONAL_SOURCES:
                 errors.append(f"{name} 没有返回结果")
             continue
-        latin_head = [w.lower() for w in LATIN_TOKEN.findall(query)
+        head_words = [w.lower() for w in LATIN_TOKEN.findall(query)
                       if w.lower() not in STOP_TOKENS][:1]
+        head = head_words[0] if head_words else ""
         for hit in rows:
             # arXiv 同一篇有带版本号和不带版本号两种写法，不归一就会重复占位。
             key = re.sub(r"v\d+$", "", re.sub(r"^https?://(www\.)?", "",
@@ -770,19 +929,34 @@ async def gather(question: str, *, item_title: str = "", limit: int = 10,
             seen.add(key)
             if title_key:
                 seen.add(title_key)
-            overlap = _overlap(hit, query)
-            text = f"{hit['title']} {hit['snippet']}".lower()
-            if bucket == "science":
-                # 文献库是相关性打分：词越多越糊，太低的确实不是同一件事。
-                ok = overlap >= 0.45 and (not latin_head or latin_head[0] in text)
-            else:
-                # 网页源放到 0.25：360 的标题里常把关键词改写或拆开，门槛一高就全没了。
-                ok = overlap >= 0.25
-            row = {**hit, "_rank": overlap * _source_weight(hit) * _authority(hit["url"])}
-            if ok:
-                buckets[bucket].append(row)
-            else:
-                weak.append(row)
+            collected.append((bucket, query, hit, head))
+
+    semantic = await asyncio.to_thread(_semantic_scores, [(b, q, h) for b, q, h, _ in collected])
+
+    buckets: dict[str, list[dict[str, Any]]] = {"science": [], "web": []}
+    weak: list[dict[str, Any]] = []
+    for index, (bucket, query, hit, head) in enumerate(collected):
+        overlap = _overlap(hit, query)
+        text = f"{hit['title']} {hit['snippet']}".lower()
+        similar = semantic[index] if semantic else 0.0
+        floor = SEMANTIC_FLOOR.get(bucket, 0.6)
+        if bucket == "science":
+            # 文献库是相关性打分：词越多越糊，太低的确实不是同一件事。
+            ok = overlap >= 0.45 and (not head or head in text)
+        else:
+            # 网页源放到 0.25：360 的标题里常把关键词改写或拆开，门槛一高就全没了。
+            ok = overlap >= 0.25
+        # 字面判死不代表不是同一件事：ADC ↔ 抗体药物偶联物、VHH ↔ 纳米抗体
+        # 在 bigram 上覆盖率是 0，语义分却很高。任一路径过关就留下。
+        if not ok and similar >= floor:
+            ok = True
+        combined = overlap if not semantic else (0.45 * overlap + 0.55 * similar)
+        row = {**hit, "_rank": combined * _source_weight(hit) * _authority(hit["url"]),
+               "semantic": round(similar, 3) if semantic else None}
+        if ok:
+            buckets[bucket].append(row)
+        else:
+            weak.append(row)
 
     for bucket in buckets.values():
         bucket.sort(key=lambda h: h["_rank"], reverse=True)
@@ -801,9 +975,9 @@ async def gather(question: str, *, item_title: str = "", limit: int = 10,
 
     results: list[dict[str, Any]] = []
     used = 0
-    # 抓过正文的条目一条就有一千字上下，预算按"能装下 limit 条正文"来定。
-    # 卡在 6000 时后半截会被整体挤掉，等于白抓。
-    budget = 10000
+    # 抓过正文的条目一条就有一千多字，预算按"能装下 limit 条正文"来定。
+    # 卡在 10000 时后半截会被整体挤掉，等于白抓——现在最多 8 页，放到 16000。
+    budget = 16000
     for hit in ordered:
         cost = len(hit["title"]) + len(hit["snippet"])
         if used + cost > budget and results:

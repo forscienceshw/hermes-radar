@@ -352,7 +352,10 @@ async def call_gateway(messages: list[dict[str, Any]], model: str, timeout_secon
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json",
                    "Accept": "text/event-stream"}
         try:
-            async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+            # 网关在国内可直连，别让 HTTP_PROXY 环境变量把请求劫到只放行白名单的
+            # 本地端口上去（那会表现成"登录态失效"或长时间无响应）。
+            async with httpx.AsyncClient(timeout=timeout, follow_redirects=False,
+                                         trust_env=False) as client:
                 async with client.stream("POST", GATEWAY_URL, json=payload, headers=headers) as response:
                     if response.status_code == 401:
                         await response.aread()
@@ -433,6 +436,81 @@ def client_model_catalog() -> list[dict[str, Any]]:
         if picked:
             best, stamp = picked, mtime
     return best
+
+
+_PRICE_RE = re.compile(r"([0-9]+(?:\.[0-9]+)?)")
+# 目录里混着视频、图像、补全、向量这些非对话模型，价格再低也不能拿来精读。
+_NON_CHAT_MARKERS = ("video", "image", "embed", "rerank", "tts", "asr", "completion")
+# fast/balanced/deep 是客户端的档位别名，不是网关认的模型 ID。
+_ALIAS_IDS = {"fast-model", "balanced-model", "deep-model"}
+
+_MODEL_CACHE: dict[str, Any] = {"at": 0.0, "rows": []}
+MODEL_CACHE_TTL = 120.0
+
+
+def model_price(entry: dict[str, Any]) -> float | None:
+    """把目录里的 `x0.15` 读成 0.15；没标价返回 None。
+
+    没标价不等于免费——那几个是补全/试验模型，网关照样可能计费，只是目录
+    没写。拿它当"最便宜"会出事，所以一律排除。
+    """
+    raw = str(entry.get("credits") or "").strip()
+    if not raw:
+        return None
+    match = _PRICE_RE.search(raw)
+    if not match:
+        return None
+    try:
+        return float(match.group(1))
+    except ValueError:
+        return None
+
+
+def is_chat_model(entry: dict[str, Any]) -> bool:
+    model_id = str(entry.get("id") or "").strip().lower()
+    if not model_id or model_id in _ALIAS_IDS:
+        return False
+    if any(marker in model_id for marker in _NON_CHAT_MARKERS):
+        return False
+    return model_price(entry) is not None
+
+
+def ranked_chat_models(force: bool = False) -> list[dict[str, Any]]:
+    """按单价从低到高排好的对话模型，免费的排最前。
+
+    价格来自客户端自己缓存的模型目录（`acc-product-config-v3-*.json`），
+    不是硬编码；官方调价或新增模型，这里跟着变，不用改代码。
+    """
+    now = time.monotonic()
+    if not force and _MODEL_CACHE["rows"] and now - float(_MODEL_CACHE["at"]) < MODEL_CACHE_TTL:
+        return [dict(row) for row in _MODEL_CACHE["rows"]]
+    rows: list[dict[str, Any]] = []
+    for entry in client_model_catalog():
+        if not is_chat_model(entry):
+            continue
+        rows.append({"id": entry["id"], "name": entry.get("name") or entry["id"],
+                     "price": model_price(entry)})
+    rows.sort(key=lambda row: (row["price"], row["id"]))
+    _MODEL_CACHE.update({"at": now, "rows": rows})
+    return [dict(row) for row in rows]
+
+
+def cheapest_model() -> dict[str, Any] | None:
+    """当前单价最低的对话模型；目录读不到时返回 None，调用方回退原设置。"""
+    try:
+        rows = ranked_chat_models()
+    except Exception:                          # noqa: BLE001 - 目录只是优化项
+        return None
+    return rows[0] if rows else None
+
+
+def fallback_models(primary: str, limit: int = 2) -> list[str]:
+    """主模型之外，从便宜到贵再给几个备选，用于失败后自动升级。"""
+    try:
+        rows = ranked_chat_models()
+    except Exception:                          # noqa: BLE001
+        return []
+    return [row["id"] for row in rows if row["id"] != primary][:max(0, limit)]
 
 
 async def probe(model: str, timeout_seconds: float = 60) -> dict[str, Any]:

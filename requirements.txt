@@ -15,3 +15,7 @@ pycryptodome>=3.21,<4; sys_platform == "win32"
 lz4>=4.3,<5; sys_platform == "win32"
 zstandard>=0.23,<1; sys_platform == "win32"
 sqlcipher3-wheels==0.5.7; sys_platform == "win32"
+# 本地语义重排（bge-small-zh int8）。装了才能在字面匹配之外认出同义改写；
+# 没装或模型没下载时自动退回 bigram 打分，检索照常工作。
+onnxruntime>=1.18,<2
+numpy>=1.26,<3

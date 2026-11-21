@@ -3,6 +3,8 @@
 这些断言存在的理由都是同一类事故：改动看起来无害，但让"网页结果被整批丢弃"或
 "抓不到正文就整条消失"重新发生，用户看到的就是"联网搜索不好使"。
 """
+import asyncio
+import time
 import unittest
 from unittest import mock
 
@@ -258,6 +260,83 @@ class RenderBlockTests(unittest.TestCase):
                          "source": "网页 · a.cn", "snippet": "s"}],
         })
         self.assertIn("覆盖可能不完整", block)
+
+
+class QueryVariantTests(unittest.TestCase):
+    """同一个东西换个说法，搜索引擎的覆盖完全不一样。
+
+    「ADC」只能搜到英文综述，写「抗体药物偶联物」的中文页面一条都进不来；
+    反过来纯英文的问题也搜不到中文写的经验帖。这一层不调模型，全靠查表。
+    """
+
+    def test_abbreviation_is_expanded(self):
+        variants = websearch._expand_queries("ADC 偶联 最新进展", ["ADC"])
+        self.assertIn("antibody-drug conjugate", variants)
+        # 中文写法是「抗体药物偶联物」，中间隔着「药物」，不能用「抗体偶联」去匹配。
+        self.assertTrue(any("偶联物" in item for item in variants), variants)
+
+    def test_full_name_collapses_back_to_short_form(self):
+        variants = websearch._expand_queries("nanobody affinity maturation", ["nanobody"])
+        self.assertTrue(any(item.upper() == "VHH" for item in variants))
+
+    def test_english_question_gets_a_chinese_variant(self):
+        variants = websearch._expand_queries("cryo-EM structure of nanobody", ["nanobody"])
+        self.assertTrue(any(websearch.CJK_RUN.search(item or "") for item in variants),
+                        variants)
+
+    def test_variants_never_repeat_the_original_query(self):
+        variants = websearch._expand_queries("ADC", ["ADC"])
+        self.assertNotIn("ADC", variants)
+
+    def test_short_abbreviation_is_replaced_by_full_name_in_science_queries(self):
+        # 搜「ADC 偶联」时，文献查询只留 ADC 会把模数转换器、阿拉伯裔美国人协会
+        # 的论文全带进来；换成全称才落在抗体偶联药物上。
+        plan = websearch.plan_queries("ADC 偶联 最新进展")
+        self.assertEqual(plan["science"][0], "antibody-drug conjugate")
+
+    def test_long_query_is_not_replaced(self):
+        plan = websearch.plan_queries("nanobody affinity maturation")
+        self.assertIn("nanobody", plan["science"][0].lower())
+
+
+class So360BlockTests(unittest.TestCase):
+    """360 被限流时返回的是 200 + 6KB 验证页，必须认出来，不能当成"没搜到"。"""
+
+    def test_tiny_page_is_treated_as_blocked(self):
+        self.assertTrue(websearch._so360_blocked("<html><title>360搜索</title></html>"))
+
+    def test_captcha_marker_without_results_is_blocked(self):
+        body = "<html>" + "x" * 25_000 + "<script>captcha()</script></html>"
+        self.assertTrue(websearch._so360_blocked(body))
+
+    def test_real_result_page_is_not_blocked(self):
+        body = "<html>" + "x" * 120_000 + '<li class="res-list">ok</li></html>'
+        self.assertFalse(websearch._so360_blocked(body))
+
+    def test_cooldown_error_is_raised_instead_of_requesting_again(self):
+        websearch.SO360_COOLDOWN_UNTIL = time.monotonic() + 60
+        try:
+            with self.assertRaises(RuntimeError) as caught:
+                asyncio.run(websearch.so360("anything"))
+            self.assertIn("冷却", str(caught.exception))
+        finally:
+            websearch.SO360_COOLDOWN_UNTIL = 0.0
+
+
+class SemanticScoringTests(unittest.TestCase):
+    """语义重排是加分项，不是必需项：模型不在时必须原样退回字面打分。"""
+
+    def test_missing_model_returns_none_instead_of_raising(self):
+        from app.services import embedding
+        with mock.patch.object(embedding, "available", return_value=False):
+            self.assertIsNone(websearch._semantic_scores([("web", "q", {"title": "t"})]))
+
+    def test_empty_input_short_circuits(self):
+        self.assertIsNone(websearch._semantic_scores([]))
+
+    def test_semantic_floor_is_lower_for_web_than_for_papers(self):
+        # 网页标题常被改写，阈值定得和文献一样高会全被扔；文献则相反。
+        self.assertLess(websearch.SEMANTIC_FLOOR["web"], websearch.SEMANTIC_FLOOR["science"])
 
 
 if __name__ == "__main__":

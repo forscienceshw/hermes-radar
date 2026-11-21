@@ -190,6 +190,14 @@ dialog{position:fixed;inset:0;margin:auto;z-index:40;overflow:auto}
 .collection-pop-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
 .collection-pop-head button{border:0;background:transparent;font-size:18px;color:var(--muted);cursor:pointer}
 .collection-pop-list{display:grid;gap:4px;max-height:240px;overflow:auto;margin-bottom:8px}
+.collection-pop-tools{display:flex;gap:6px;margin-bottom:8px}
+.collection-pop-tools input{flex:1;margin:0;padding:5px 8px;font-size:12.5px}
+.collection-pop-tools select{width:auto;margin:0;padding:5px 6px;font-size:12px}
+.collection-pop-hint{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:8px;font-size:12px;color:var(--muted)}
+.collection-pop-hint:empty{display:none}
+.collection-pop-hint button{border:1px solid var(--line);background:#fff;border-radius:999px;padding:3px 10px;font-size:12px;cursor:pointer;color:var(--accent)}
+.collection-pop-hint button:hover{background:#f4f8f8}
+.mini-filter{width:96px;margin:0;padding:4px 8px;font-size:12.5px}
 .collection-pop-list label{display:flex;align-items:center;gap:8px;font-weight:400;font-size:13px;padding:5px 6px;border-radius:6px;cursor:pointer}
 .collection-pop-list label:hover{background:#f4f8f8}
 .collection-pop-list input{width:auto;margin:0}

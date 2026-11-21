@@ -46,6 +46,9 @@ DEFAULTS: dict[str, Any] = {
         "provider": "openai_compatible",
         "base_url": "https://api.deepseek.com/v1",
         "model": "deepseek-chat",
+        # 走 WorkBuddy 点数时，精读自动挑当前单价最低的模型（免费优先）。
+        # 只对 provider=workbuddy_cloud 生效；关掉就用上面那个固定 model。
+        "auto_cheapest": True,
         "vision_enabled": False,
         "timeout_seconds": 900,
         "stall_seconds": 300,
