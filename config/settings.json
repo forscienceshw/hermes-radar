@@ -60,7 +60,7 @@
     "enabled": true,
     "provider": "workbuddy_cloud",
     "base_url": "https://api.deepseek.com/v1",
-    "model": "glm-5.3-flash",
+    "model": "hy4flash-free",
     "vision_enabled": true,
     "timeout_seconds": 900,
     "stall_seconds": 300,

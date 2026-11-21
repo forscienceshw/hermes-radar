@@ -411,6 +411,22 @@ OpenAlex / Unpaywall 对新刊、国内刊收录滞后。Vita（10.15302/vita.20
 点「在资料库」看起来"没反应"，其实是精读页被面板盖住了。`openDetail()` 现在先
 关掉除自己以外的所有 `dialog[open]`。
 
+## 402 不是网络抖动，重试到天亮也不会好（2026-11-21 补）
+
+DataX 余额不足时每个账号都回 `402 Payment Required`，`poll_source` 原来照单全收：
+`error_count+1`、写一条 `source_error`、隔 5 分钟再来。41 个号就是 41 行红字，
+一晚上几百条，把真正要看的问题全埋了，用户只会觉得软件坏了。
+
+现在 `pipeline.source_fatal_error()` 把 401/402/403 认出来（`response.status_code`
+优先，httpx 的 `Client error '402 Payment Required'` 文案兜底；URL 里恰好出现的
+数字不算，避免误伤），命中就：
+
+- `sources.enabled=0`，不再调度；
+- `last_error` 写成一句人话加下一步（充值 / 换 Key / 查权限）；
+- 只记一条 `source_disabled` 事件，然后 `return`，不重试。
+
+500、超时、连接失败仍然算普通错误，继续退避重试——对方挂了有可能自己好。
+
 ## 失败任务不该当日志用（2026-11-20 补）
 
 `poll_source` 的 dedupe_key 带时间窗，失败一次就留一条 DEAD：一天 288 条，
@@ -447,9 +463,12 @@ OpenAlex / Unpaywall 对新刊、国内刊收录滞后。Vita（10.15302/vita.20
 现在三处共用 `wechat_panel.sync_account_rows()`：
 
 - `POST /api/wechat/accounts/sync-local`（面板上的「同步本机关注」按钮）
-- worker 的 `account_sync_loop`：每天一次（`runtime.wechat_accounts_synced_at`
-  限流 24h），只新增、不追踪
+- worker 的 `account_sync_loop`：每 30 分钟一次（`runtime.wechat_accounts_synced_at`
+  限流 `ACCOUNTS_SYNC_INTERVAL`），只新增、不追踪
 - 新装环境首次灌库
+
+间隔定 30 分钟而不是一天：解一次密读一张联系人表只要一秒，而按天同步的代价是
+用户上午关注的号要到第二天才出现——「抗体XDC」没进库就是这么来的，看着就是同步坏了。
 
 匹配顺序必须是 **gh → 名字 → 折叠键**（`name_match_key`）。只按名字的话，
 同一份关注列表每同步一次就会给 OCR 错名的号再造一条空壳。已存在的记录**不改名**
@@ -472,6 +491,10 @@ OpenAlex / Unpaywall 对新刊、国内刊收录滞后。Vita（10.15302/vita.20
   行为会接着关下一次层——精读页和推文面板一起没。模态层自带「先关最上面」的顺序。
 - `body.modal-open` 由所有 dialog 的 `close` 事件统一判断：底下还有 `dialog[open]`
   就不解锁滚动，否则关掉精读页会把还开着的面板一起解锁。
+- **锚定的小弹层也必须是 `dialog`**。「收藏到」原来是个普通 `div` + `z-index:96`，
+  从精读页点它，弹层整块长在对话框背后——看起来就是收藏夹坏了。改成 `showModal()`
+  后进 top layer 就压得住；配套要写 `inset:auto;margin:0`（否则弹层自己居中，
+  JS 算出来的 left/top 全落空），`::backdrop` 透明，点外面关掉自己判坐标。
 
 ## 重复记录要合，不要靠名字猜（2026-11-20 补）
 
