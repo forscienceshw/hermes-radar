@@ -188,12 +188,17 @@ def build_messages(db: Database, chat_id: str, question: str, *, item_id: str | 
     system_base = SYSTEM + (SYSTEM_SEARCH if web_block else "")
     body_limit = 14000
     system = ""
-    limits = (14000, 9000, 6000, 3500, 2000) if budget_scale >= 1 else (2000,)
-    for body_limit in limits:
+    # 检索材料现在动辄上万字（抓了正文），必须跟正文一起降级：只缩正文不缩材料，
+    # 小窗口模型照样会超；只缩材料不缩正文，模型又看不到当前文章。
+    limits = ((14000, 12000), (9000, 9000), (6000, 6000), (3500, 3500), (2000, 2000)) \
+        if budget_scale >= 1 else ((2000, 2000),)
+    for body_limit, web_cap in limits:
         context = item_context(db, item_id, selection, body_limit=body_limit) if item_id else ""
         system = system_base + ("\n\n以下是当前文章材料：\n" + context if context else "")
         if web_block:
-            system += "\n\n" + web_block
+            clipped = web_block if len(web_block) <= web_cap else (
+                web_block[:web_cap] + "\n…（检索材料过长，已截断）")
+            system += "\n\n" + clipped
         history = messages_for(db, chat_id, history_limit)
         messages, info = fit_messages(system, history, question, budget=budget)
         # 只有"装得下、且没折过历史"才算一步到位；没有历史可折时也要靠缩正文把预算降下来。

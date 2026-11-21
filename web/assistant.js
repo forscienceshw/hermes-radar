@@ -327,7 +327,7 @@
     const host = q('#chatMessages');
     if (!host) return;
     if (!chat.messages.length) {
-      host.innerHTML = `<div class="chat-empty"><p>问细节不用再复制背景。</p><p class="muted">打开一篇文章后，这里会自动带上标题、精读结构、关键数字和归档全文节选；选中一段再点「问 AI」，连那段话一起带上。开「联网」还会先检索 Europe PMC、arXiv 和网页。</p></div>`;
+      host.innerHTML = `<div class="chat-empty"><p>问细节不用再复制背景。</p><p class="muted">打开一篇文章后，这里会自动带上标题、精读结构、关键数字和归档全文节选；选中一段再点「问 AI」，连那段话一起带上。开「联网」会同时检索 Europe PMC、arXiv、Crossref 和网页，再把命中的网页正文抓回来读，不是只看摘要。</p></div>`;
       return;
     }
     host.innerHTML = chat.messages.map((m) => {
@@ -337,7 +337,10 @@
           `<span class="muted">${esc(meta.label || meta.model || '')}${meta.points != null && meta.points !== '' ? ` · ${money(meta.points)} 点` : ''}${meta.elapsed_ms ? ` · ${Math.round(meta.elapsed_ms / 1000)}s` : ''}</span>`;
         return `<div class="chat-msg assistant"><div class="chat-bubble">${citeHtml(m.content, meta.sources)}</div>${sourcesHtml(meta.sources)}<div class="chat-meta">${badge}${contextBadge(meta)}<button type="button" data-chat-copy="${esc(m.content).slice(0, 0)}">复制</button><button type="button" data-to-note="${esc(m.content).slice(0, 0)}">存笔记</button></div></div>`;
       }
-      const searched = meta.web_search ? `<div class="chat-note">联网检索 ${(meta.sources || []).length} 条来源</div>` : '';
+      const read = Number(meta.fetched || 0);
+      const searched = meta.web_search
+        ? `<div class="chat-note">联网检索 ${(meta.sources || []).length} 条来源${read ? ` · 已读 ${read} 篇正文` : ''}</div>`
+        : '';
       return `<div class="chat-msg user"><div class="chat-bubble">${esc(m.content).replace(/\n/g, '<br>')}</div>${searched}</div>`;
     }).join('');
     host.querySelectorAll('[data-chat-copy]').forEach((b, i) => {
@@ -415,7 +418,7 @@
     if (!chat.accounts.length) { toast('先在设置里配置一个模型'); return; }
     chat.busy = true;
     q('#chatSend').disabled = true;
-    q('#chatStatus').textContent = chat.webSearch ? '联网检索中…' : '正在请求…';
+    q('#chatStatus').textContent = chat.webSearch ? '联网检索中，命中后再抓正文…' : '正在请求…';
     const id = await ensureChat();
     const selection = chat.selection;
     input.value = '';

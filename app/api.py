@@ -1701,6 +1701,7 @@ async def send_chat_message(chat_id: str, data: ChatSendInput) -> dict[str, Any]
     append_message(db, chat["id"], "user", question,
                    {"selection": data.selection[:2000], "item_id": data.item_id,
                     "web_search": bool(data.web_search),
+                    "fetched": int(web.get("fetched") or 0),
                     "sources": [{k: h.get(k) for k in ("n", "title", "url", "source")}
                                 for h in web.get("results") or []]})
     if chat["title"] in {"", "新对话"}:
@@ -1738,7 +1739,9 @@ async def send_chat_message(chat_id: str, data: ChatSendInput) -> dict[str, Any]
             "elapsed_ms": result.get("elapsed_ms"),
             "context": info, "search": {"queries": web.get("queries") or [],
                                         "errors": web.get("errors") or [],
+                                        "notes": web.get("notes") or [],
                                         "elapsed_ms": web.get("elapsed_ms") or 0,
+                                        "fetched": int(web.get("fetched") or 0),
                                         "count": len(web.get("results") or [])},
             "messages": messages_for(db, chat["id"])}
 

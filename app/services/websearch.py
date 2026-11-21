@@ -32,6 +32,10 @@ BROWSER_HEADERS = {
 }
 
 SNIPPET_CHARS = 300
+# 召回阶段的整体预算。Europe PMC 从国内出去有时 3 秒、有时 14 秒（国际链路抖动，
+# 与 DNS 无关，实测解析只要 20ms）。等它等于让用户干等；到点就用手上已有的，
+# 慢的源记一条说明——Crossref 已经能覆盖绝大多数 DOI，缺一个源不算缺内容。
+SEARCH_BUDGET = 6.5
 # 拉丁字母技术词（蛋白名、基因名、方法名），用来拼第二条更"学术"的查询。
 LATIN_TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9\-]{2,}")
 CJK_RUN = re.compile(r"[\u4e00-\u9fff]{2,}")
@@ -81,6 +85,15 @@ def _host(url: str) -> str:
     try:
         return (urlsplit(url).hostname or "").removeprefix("www.")
     except ValueError:
+        return ""
+
+
+def _contact_email() -> str:
+    """Crossref 礼貌池要的联系方式。没填就返回空，功能照常，只是配额低。"""
+    try:
+        from ..settings import get_settings
+        return str((get_settings().get("papers") or {}).get("email") or "").strip()
+    except Exception:                                     # noqa: BLE001 - 设置读不到不该拦住检索
         return ""
 
 
@@ -136,10 +149,133 @@ async def bing(query: str, limit: int = 4) -> list[dict[str, Any]]:
     return _parse_bing_rss(response.text, limit)
 
 
+SO360_ENDPOINT = "https://www.so.com/s"
+# 360 每条结果尾巴上挂一行「cdmd.cnki.com.cn 反馈」，纯粹是站点标注，不是摘要。
+# 这行经常和摘要挤在同一个 <p> 里，所以必须从文本尾部剥掉，不能整段匹配。
+SITE_FEEDBACK = re.compile(r"\s*[\w.-]+\.[a-z]{2,}(?::\d+)?\s*反\s*馈\s*$", re.I)
+
+
+def _squash(text: Any, limit: int = SNIPPET_CHARS) -> str:
+    """合并标签缝隙里的空格。
+
+    360 把命中词包在 <em> 里，get_text(" ") 会把「纳米抗体」切成「纳米 抗体」，
+    后面按词做重叠计算时这一半词就永远匹配不上。
+    """
+    value = BeautifulSoup(str(text or ""), "lxml").get_text("")
+    value = re.sub(r"\s+", " ", value).strip()
+    return value[:limit] + ("…" if len(value) > limit else "")
+
+
+def _parse_so360(html: str, limit: int) -> list[dict[str, Any]]:
+    soup = BeautifulSoup(html or "", "lxml")
+    hits: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for block in soup.select("li.res-list"):
+        link = block.select_one("a[data-mdurl]")
+        heading = block.select_one("h3")
+        if not heading:
+            continue
+        # data-mdurl 是 360 自己塞在结果链接上的真实地址；没有它就只能拿到
+        # so.com/link?m=... 那串加密跳转，既认不出域名，也点不进原文。
+        url = (link.get("data-mdurl") if link else "") or ""
+        if not url.startswith("http") or url in seen:
+            continue
+        title = _squash(heading, 180)
+        if not title:
+            continue
+        seen.add(url)
+        snippet = ""
+        for node in block.select(".res-desc, .res-rich, .res-comm-con, p"):
+            text = SITE_FEEDBACK.sub("", _squash(node)).strip()
+            if text:
+                snippet = text
+                break
+        hits.append({
+            "title": title,
+            "url": url,
+            "snippet": snippet,
+            "source": f"网页 · {_host(url)}",
+            "published": "",
+        })
+        if len(hits) >= limit:
+            break
+    return hits
+
+
+async def so360(query: str, limit: int = 6) -> list[dict[str, Any]]:
+    """360 搜索。国内网络下唯一对「多词中文」不做降级的通用网页源。
+
+    Bing 的 RSS 出口在中文查询上会退化成"只按第一个词出结果"——搜「纳米抗体 亲和标签」
+    返回的全是"纳米是什么长度单位"；360 不会。它的结果页是纯服务端渲染，不需要 JS，
+    也不需要 cookie。百度会跳验证码、搜狗只返回 JS 空壳，两者都当不了主力。
+    """
+    params = urlencode({"q": query, "pn": "1"})
+    response = await request(f"{SO360_ENDPOINT}?{params}", headers=BROWSER_HEADERS,
+                             timeout=18, max_bytes=3_000_000)
+    return _parse_so360(response.text, limit)
+
+
+CROSSREF_COOLDOWN_UNTIL = 0.0
+
+
+async def crossref(query: str, limit: int = 3) -> list[dict[str, Any]]:
+    """Crossref：按 DOI 收录的元数据，覆盖 Europe PMC 没有的化学、物理、工程与中文期刊。"""
+    global CROSSREF_COOLDOWN_UNTIL
+    if time.monotonic() < CROSSREF_COOLDOWN_UNTIL:
+        raise RuntimeError("Crossref 刚返回过 429，冷却一分钟内不再请求")
+    params = {
+        "query.bibliographic": query,
+        "rows": str(max(limit, 3)),
+        "select": "title,DOI,abstract,issued,container-title",
+    }
+    # Crossref 有"礼貌池"：带联系方式的请求配额高得多，不带就容易 429。
+    # 复用设置里填过的论文邮箱；没填也不影响功能，只是配额低一些。
+    contact = _contact_email()
+    if contact:
+        params["mailto"] = contact
+    url = f"https://api.crossref.org/works?{urlencode(params)}"
+    try:
+        response = await request(url, timeout=12, max_bytes=4_000_000,
+                                 headers={"Accept": "application/json",
+                                          "User-Agent": (f"HermesResearchRadar/0.1 (mailto:{contact})"
+                                                         if contact else "HermesResearchRadar/0.1")})
+    except Exception as exc:                              # noqa: BLE001 - 429 要单独认，其余照抛
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        if status == 429:
+            # 撞一次就退避，别让后面每一次问答都去撞同一个墙。
+            CROSSREF_COOLDOWN_UNTIL = time.monotonic() + 60
+            raise RuntimeError("Crossref 限流（429），一分钟内跳过该源") from exc
+        raise
+    payload = json.loads(response.text)
+    hits: list[dict[str, Any]] = []
+    for row in (payload.get("message") or {}).get("items") or []:
+        doi = (row.get("DOI") or "").strip()
+        titles = row.get("title") or []
+        title = _clean(titles[0] if titles else "", 180)
+        if not doi or not title:
+            continue
+        journal = ((row.get("container-title") or [""])[0] or "").strip()
+        parts = (row.get("issued") or {}).get("date-parts") or [[""]]
+        year = str((parts[0] or [""])[0] or "")
+        hits.append({
+            "title": title,
+            # DOI 优先给 doi.org：出版商自己的链接三天两头换，DOI 才是稳定标识。
+            "url": f"https://doi.org/{doi}",
+            "snippet": _clean(row.get("abstract") or title, SNIPPET_CHARS),
+            "source": " · ".join(x for x in ("Crossref", journal, year) if x),
+            "published": year,
+        })
+        if len(hits) >= limit:
+            break
+    return hits
+
+
 async def europe_pmc(query: str, limit: int = 4) -> list[dict[str, Any]]:
     url = ("https://www.ebi.ac.uk/europepmc/webservices/rest/search?"
            f"query={quote_plus(query)}&format=json&pageSize={max(limit, 4)}&resultType=core")
-    response = await request(url, timeout=15, headers={"Accept": "application/json"},
+    # 国际链路抖动区间是 3-14 秒（快的时候 3 秒就回）。给 6 秒：拿得到就拿，
+    # 拿不到交给 Crossref 兜底；让它自己挂到 15 秒只会白占一次问答的时间。
+    response = await request(url, timeout=6, headers={"Accept": "application/json"},
                              max_bytes=12_000_000)
     payload = json.loads(response.text)
     hits: list[dict[str, Any]] = []
@@ -313,97 +449,214 @@ def plan_queries(question: str, item_title: str = "",
     return {"science": science[:2], "web": web}
 
 
-SOURCE_WEIGHT = (("Europe PMC", 1.0), ("arXiv", 0.9))
+SOURCE_WEIGHT = (("Europe PMC", 1.05), ("Crossref", 1.0), ("arXiv", 0.9))
+
+# 域名权威度。DeepSeek 的搜索 API 把 authority 单独列成一个 0-4 的字段，
+# 因为同一个查询里"微博热搜"和"学校官网通知"的字面相关度可能一模一样，
+# 差别全在可信度上。这里用一张很小的表做同义的事，不需要模型。
+LOW_AUTHORITY_HOSTS = (
+    "weibo.com", "weibo.cn", "douyin.com", "xiaohongshu.com", "zhihu.com",
+    "baijiahao.baidu.com", "toutiao.com", "csdn.net", "jianshu.com",
+    "51cto.com", "cnblogs.com", "bilibili.com", "ixigua.com", "kuaishou.com",
+)
+HIGH_AUTHORITY_HOSTS = (
+    "arxiv.org", "nature.com", "science.org", "cell.com", "nih.gov", "who.int",
+    "europepmc.org", "ncbi.nlm.nih.gov", "doi.org", "sciencedirect.com",
+    "springer.com", "wiley.com", "oup.com", "acs.org", "rsc.org",
+)
+
+
+def _authority(url: str) -> float:
+    host = _host(url)
+    if not host:
+        return 1.0
+    for blocked in LOW_AUTHORITY_HOSTS:
+        if host == blocked or host.endswith("." + blocked):
+            return 0.5
+    if host.endswith((".gov.cn", ".edu.cn", ".edu", ".gov", ".ac.uk", ".ac.jp", ".org.cn")):
+        return 1.2
+    for trusted in HIGH_AUTHORITY_HOSTS:
+        if host == trusted or host.endswith("." + trusted):
+            return 1.15
+    return 1.0
+
+
+def _cjk_grams(text: str, size: int = 2) -> list[str]:
+    """把连续汉字切成 bigram：'纳米抗体' → 纳米 / 米抗 / 抗体。
+
+    没有分词器时这是唯一稳的中文匹配单位。整段连续汉字（旧做法）要求"纳米抗体"
+    这四个字原样出现在标题里，标题写成"纳米抗体的亲和标签"能过，写成"两种纳米
+    抗体"就断成两段被判不相关——这就是网页结果常年被全部丢弃的直接原因。
+    """
+    grams: list[str] = []
+    for run in CJK_RUN.findall(text or ""):
+        if len(run) <= size:
+            grams.append(run)
+        else:
+            grams.extend(run[i:i + size] for i in range(len(run) - size + 1))
+    return list(dict.fromkeys(grams))
 
 
 def _terms_of(text: str) -> list[str]:
     words = [w.lower() for w in LATIN_TOKEN.findall(text) if w.lower() not in STOP_TOKENS]
-    words += [w for w in CJK_RUN.findall(text) if len(w) >= 2]
+    words += _cjk_grams(text)
     return list(dict.fromkeys(words))
 
 
 def _overlap(hit: dict[str, Any], query: str) -> float:
-    """这条结果到底有多贴合"发给这个源的查询"，而不是原问题。
+    """这条结果对「发给这个源的查询」的覆盖率。
 
-    用原问题算相关性时，"DNA" 这种词会让一堆无关的 DNA 论文都得高分；
-    改成对各自查询算覆盖率，再把低覆盖的条目直接丢掉。
+    拉丁词和汉字分开算再平均，不能混进同一个分母：查询「PROTAC 降解剂 最新进展」
+    里只有一个英文词，却有五个汉字 bigram，混着算时命中 PROTAC 也只是 1/6。
     """
-    terms = _terms_of(query)
-    if not terms:
-        return 0.0
-    text = f"{hit['title']} {hit['snippet']}".lower()
-    matched = sum(1 for term in terms if term in text)
-    return matched / len(terms)
+    latin = list(dict.fromkeys(w.lower() for w in LATIN_TOKEN.findall(query)
+                               if w.lower() not in STOP_TOKENS))
+    grams = _cjk_grams(query)
+    text = f"{hit.get('title') or ''} {hit.get('snippet') or ''}".lower()
+    parts: list[float] = []
+    if latin:
+        parts.append(sum(1 for word in latin if word in text) / len(latin))
+    if grams:
+        parts.append(sum(1 for gram in grams if gram in text) / len(grams))
+    return sum(parts) / len(parts) if parts else 0.0
 
 
 def _source_weight(hit: dict[str, Any]) -> float:
     for prefix, weight in SOURCE_WEIGHT:
         if hit["source"].startswith(prefix):
             return weight
-    return 0.5
+    return 0.75 if hit["source"].startswith("网页") else 0.6
 
 
-async def gather(question: str, *, item_title: str = "", limit: int = 8,
-                 allow_web: bool = True, web_limit: int = 3,
-                 item_terms: list[str] | None = None) -> dict[str, Any]:
-    """并发跑所有源，去重、排序、截断，返回可直接喂给模型的结构。"""
+def _unique_queries(queries: list[str]) -> list[str]:
+    """合并被包含的查询。
+
+    plan_queries 会给出「nanobody affinity」和「nanobody affinity tag」这种关系：
+    后者包含前者，两个都发等于对同一个文献库连发两次高度重叠的请求，命中几乎一样，
+    却把 Europe PMC 的配额和时间翻倍用掉。
+    """
+    kept: list[str] = []
+    for query in queries:
+        words = set(query.lower().split())
+        merged = False
+        for index, existing in enumerate(kept):
+            existing_words = set(existing.lower().split())
+            if words <= existing_words:
+                merged = True
+                break
+            if existing_words < words:
+                kept[index] = query          # 用信息更多的那个替换短的
+                merged = True
+                break
+        if not merged:
+            kept.append(query)
+    return kept
+
+
+async def gather(question: str, *, item_title: str = "", limit: int = 10,
+                 allow_web: bool = True, web_limit: int = 5,
+                 item_terms: list[str] | None = None,
+                 read_pages: bool = True) -> dict[str, Any]:
+    """并发跑所有源，去重、排序、抓正文、截断，返回可直接喂给模型的结构。
+
+    三段式，和 DeepSeek / Perplexity 的联网链路同构：
+    **召回**（多源并发）→ **重排**（词面覆盖 + 来源权重）→ **读正文**（前几条抓回
+    全文、按查询挑段落）。只做前两段时模型只看到标题和一两句摘要，回答自然浮在表面。
+
+    核心原则：**只排序，不乱丢**。以前按阈值把"不够像"的结果成批丢掉，中文多词
+    查询几乎必然全军覆没，模型于是答"我搜不到"，用户看到的就是"联网不好使"。
+    """
     started = time.monotonic()
     plan = plan_queries(question, item_title, item_terms)
+    plan["science"] = _unique_queries(plan["science"])
     if not plan["science"] and not plan["web"]:
-        return {"queries": [], "results": [], "errors": [], "elapsed_ms": 0}
+        return {"queries": [], "results": [], "errors": [], "notes": [],
+                "elapsed_ms": 0, "fetched": 0}
 
     tasks: list[tuple[str, str, str, Any]] = []
-    for index, query in enumerate(plan["science"]):
+    for query in plan["science"]:
         tasks.append(("science", query, f"Europe PMC:{query}", europe_pmc(query, 3)))
         tasks.append(("science", query, f"arXiv:{query}", arxiv(query, 2)))
+        tasks.append(("science", query, f"Crossref:{query}", crossref(query, 2)))
     if allow_web and plan["web"]:
-        tasks.append(("web", plan["web"], f"Bing:{plan['web']}", bing(plan["web"], 5)))
+        # 两个通用网页源分工不同：360 扛中文多词，Bing 扛英文与站点直达。
+        # 谁挂了都不影响另一个，errors 里会留下原因。
+        tasks.append(("web", plan["web"], f"360:{plan['web']}", so360(plan["web"], 6)))
+        tasks.append(("web", plan["web"], f"Bing:{plan['web']}", bing(plan["web"], 4)))
 
-    settled = await asyncio.gather(*(coro for *_, coro in tasks), return_exceptions=True)
+    # 一个慢源不该拖死整次问答：Europe PMC 从这台机器出去有时 3 秒、有时 14 秒。
+    # 到点就用手上已有的，慢的那个记一条 error 说明，用户至少能立刻看到结果。
+    futures = [asyncio.ensure_future(coro) for *_, coro in tasks]
+    done, pending = await asyncio.wait(futures, timeout=SEARCH_BUDGET)
+    for task in pending:
+        task.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+
     errors: list[str] = []
     buckets: dict[str, list[dict[str, Any]]] = {"science": [], "web": []}
+    weak: list[dict[str, Any]] = []
     seen: set[str] = set()
-    web_raw = 0
-    for (bucket, query, label, _), outcome in zip(tasks, settled):
-        if isinstance(outcome, Exception):
-            errors.append(f"{label.split(':')[0]} 失败：{type(outcome).__name__}: {str(outcome)[:120]}")
+    for (bucket, query, label, _), future in zip(tasks, futures):
+        name = label.split(":", 1)[0]
+        if future not in done or future.cancelled():
+            errors.append(f"{name} 超过 {SEARCH_BUDGET:.0f} 秒没返回，已跳过")
             continue
-        query_terms = _terms_of(query)
-        terms_in_query = len(query_terms)
-        head_term = query_terms[0] if query_terms else ""
-        for hit in outcome:
-            key = re.sub(r"^https?://(www\.)?", "", hit["url"]).rstrip("/").lower()
+        outcome = future.exception()
+        if outcome is not None:
+            errors.append(f"{name} 失败：{type(outcome).__name__}: {str(outcome)[:120]}")
+            continue
+        rows = future.result() or []
+        if not rows:
+            errors.append(f"{name} 没有返回结果")
+            continue
+        latin_head = [w.lower() for w in LATIN_TOKEN.findall(query)
+                      if w.lower() not in STOP_TOKENS][:1]
+        for hit in rows:
+            # arXiv 同一篇有带版本号和不带版本号两种写法，不归一就会重复占位。
+            key = re.sub(r"v\d+$", "", re.sub(r"^https?://(www\.)?", "",
+                                                hit["url"]).rstrip("/").lower())
             title_key = re.sub(r"[\W_]+", "", hit["title"].lower())[:40]
+            # 同一篇文章在 Europe PMC 与 Crossref 里都有，标题去重比 URL 去重更管用。
             if key in seen or (title_key and title_key in seen):
-                continue
-            if bucket == "web":
-                web_raw += 1
-            overlap = _overlap(hit, query)
-            # 文献源：至少命中一半查询词，而且第一条（主题词）必须在场。
-            # 少了后半条，查"ubiquitin conjugation"会混进一篇讲"复共轭代数"的数学论文。
-            text = f"{hit['title']} {hit['snippet']}".lower()
-            if bucket == "science" and (overlap < 0.5 or (head_term and head_term not in text)):
-                continue
-            # 网页源放低一点门槛，但多词查询仍要求命中至少三分之一：
-            # Bing 被判定成自动查询时会退化成"只按首词出结果"，那些词典页就是这么来的。
-            if bucket == "web" and terms_in_query >= 2 and overlap < 0.34:
                 continue
             seen.add(key)
             if title_key:
                 seen.add(title_key)
-            buckets[bucket].append({**hit, "_rank": overlap * _source_weight(hit)})
-
-    if allow_web and plan["web"] and web_raw and not buckets["web"]:
-        errors.append(f"Bing 返回的 {web_raw} 条结果与「{plan['web']}」不相干，已全部丢弃"
-                      "（多半是被判定成自动查询，只按首个关键词出结果）")
+            overlap = _overlap(hit, query)
+            text = f"{hit['title']} {hit['snippet']}".lower()
+            if bucket == "science":
+                # 文献库是相关性打分：词越多越糊，太低的确实不是同一件事。
+                ok = overlap >= 0.45 and (not latin_head or latin_head[0] in text)
+            else:
+                # 网页源放到 0.25：360 的标题里常把关键词改写或拆开，门槛一高就全没了。
+                ok = overlap >= 0.25
+            row = {**hit, "_rank": overlap * _source_weight(hit) * _authority(hit["url"])}
+            if ok:
+                buckets[bucket].append(row)
+            else:
+                weak.append(row)
 
     for bucket in buckets.values():
         bucket.sort(key=lambda h: h["_rank"], reverse=True)
-    ordered = buckets["science"][:max(limit - web_limit, 0)]
-    ordered += buckets["web"][:web_limit]
+    weak.sort(key=lambda h: h["_rank"], reverse=True)
+
+    science_quota = max(limit - web_limit, 0)
+    ordered = buckets["science"][:science_quota]
+    # 文献源没占满的名额让给网页，别让"5 条文献上限"把可用的网页结果也挤掉。
+    ordered += buckets["web"][:max(web_limit, limit - len(ordered))]
+    # 保底只在"一条都不剩"时启用，且只补 3 条：有真结果时硬塞弱相关内容
+    # 会把"西湖大学直博"变成"西湖旅游攻略"，比少给几条更糟。
+    if not ordered:
+        ordered = weak[:3]
+        if ordered:
+            errors.append("没有强相关结果，已按相关度取前几条兜底，请谨慎采信")
+
     results: list[dict[str, Any]] = []
     used = 0
-    budget = 3200
+    # 抓过正文的条目一条就有一千字上下，预算按"能装下 limit 条正文"来定。
+    # 卡在 6000 时后半截会被整体挤掉，等于白抓。
+    budget = 10000
     for hit in ordered:
         cost = len(hit["title"]) + len(hit["snippet"])
         if used + cost > budget and results:
@@ -413,8 +666,28 @@ async def gather(question: str, *, item_title: str = "", limit: int = 8,
         results.append({**clean, "n": len(results) + 1})
         if len(results) >= limit:
             break
+
+    fetched = 0
+    notes: list[str] = []
+    if read_pages and results:
+        from .pagefetch import enrich
+        # 用第一个 science 查询 + 网页查询的词做段落打分：前者是英文主题词，
+        # 后者是用户原话，合起来才能同时抓住"这篇讲什么"和"这段有没有回答我"。
+        terms = list(dict.fromkeys(_terms_of(" ".join(plan["science"][:1] + [plan["web"]]))))
+        try:
+            page_stats = await enrich(results, terms)
+            results = page_stats["results"]
+            fetched = page_stats["fetched"]
+            if page_stats["skipped"]:
+                # 抓不到正文只是少一点细节，不是"这个源坏了"，不能混进 errors：
+                # render_block 会把 errors 翻译成"覆盖可能不完整"，把模型带偏。
+                notes.append(f"{page_stats['skipped']} 条网页没抓动正文，已保留搜索摘要")
+        except Exception as exc:                          # noqa: BLE001 - 抓正文失败不该毁掉检索
+            notes.append(f"抓取正文失败：{type(exc).__name__}: {str(exc)[:80]}")
+
     return {"queries": plan["science"] + ([plan["web"]] if plan["web"] else []),
-            "results": results, "errors": errors[:4],
+            "results": results, "errors": errors[:4], "notes": notes,
+            "fetched": fetched,
             "elapsed_ms": int((time.monotonic() - started) * 1000)}
 
 
@@ -434,7 +707,15 @@ def render_block(payload: dict[str, Any]) -> str:
     header = "【联网检索结果】系统已经在用户的机器上完成实时检索，下面就是检索到的内容"
     if queries:
         header += f"（检索词：{'、'.join(queries[:3])}）"
+    read = int(payload.get("fetched") or 0)
     lines = [header + "。引用时在句末标注 [序号]；检索没覆盖的就直说没有查到。"]
+    if read:
+        # 明确告诉模型哪些是全文：不然它会把整段正文当成搜索摘要，只敢引用第一句。
+        lines.append(f"其中 {read} 条网页已抓取正文，条目里的长段落就是原文，"
+                     "里面的数字、方法、结论可以直接引用，不必再说'摘要中没有提到'。")
+    if payload.get("errors") and results:
+        lines.append(f"注意：本次有源没成功（{'；'.join(payload['errors'][:2])}），"
+                     "覆盖可能不完整。")
     for hit in results:
         head = f"[{hit['n']}] {hit['title']}"
         meta = " · ".join(x for x in (hit.get("source"), hit.get("url")) if x)
