@@ -1,0 +1,879 @@
+{
+  "version": 1,
+  "created_at": "2026-11-20T17:42:55Z",
+  "updated_at": "2026-11-20T18:37:46Z",
+  "files": {
+    ".gitattributes": {
+      "role": "index",
+      "sha256": "21fa16a2122e2b0360b47502c577428b645437e08e9e87ffba661f84853cb476",
+      "size": 291,
+      "normalized_sha256": "21fa16a2122e2b0360b47502c577428b645437e08e9e87ffba661f84853cb476"
+    },
+    ".gitignore": {
+      "role": "index",
+      "sha256": "bd80952a41074b1f6ceabb0080a058d4fd522c68550cacba21586ed4fd3eb5fe",
+      "size": 1080,
+      "normalized_sha256": "bd80952a41074b1f6ceabb0080a058d4fd522c68550cacba21586ed4fd3eb5fe"
+    },
+    "AGENTS.md": {
+      "role": "index",
+      "sha256": "f037f80596255bc411ed831e9f3a7ab34b5f150193dcb349e3e6a0ee12f49421",
+      "size": 48517,
+      "normalized_sha256": "f037f80596255bc411ed831e9f3a7ab34b5f150193dcb349e3e6a0ee12f49421"
+    },
+    "Install.vbs": {
+      "role": "index",
+      "sha256": "ddf6ab04af9db7ed6e6273180fd281992e356558b4df08416317e2280f194717",
+      "size": 839,
+      "normalized_sha256": "ddf6ab04af9db7ed6e6273180fd281992e356558b4df08416317e2280f194717"
+    },
+    "README.md": {
+      "role": "index",
+      "sha256": "98b24e9deca55af39b0409fa31c5f4f5d105014fe273e15c02651802b48e235a",
+      "size": 14571,
+      "normalized_sha256": "98b24e9deca55af39b0409fa31c5f4f5d105014fe273e15c02651802b48e235a"
+    },
+    "Start Radar.vbs": {
+      "role": "index",
+      "sha256": "623d51237d93440caa0d599d4aa9948664ad7883d783e203557cdaddf87432bf",
+      "size": 1254,
+      "normalized_sha256": "623d51237d93440caa0d599d4aa9948664ad7883d783e203557cdaddf87432bf"
+    },
+    "Stop Radar.vbs": {
+      "role": "index",
+      "sha256": "ee95f739da5a40d4ab475fd447dfc6d4347c8c94b643b29b59b004d339e1fcc1",
+      "size": 620,
+      "normalized_sha256": "ee95f739da5a40d4ab475fd447dfc6d4347c8c94b643b29b59b004d339e1fcc1"
+    },
+    "VERSION": {
+      "role": "index",
+      "sha256": "4ca8bbd3c595ee306226c6996b32b8d47a900217c55a7ed0cfc868ee444f34f1",
+      "size": 7,
+      "normalized_sha256": "59854984853104df5c353e2f681a15fc7924742f9a2e468c29af248dce45ce03"
+    },
+    "aoci.code.txt": {
+      "role": "index",
+      "sha256": "cd680bd4ad68110bd80b719939cd6d2f1eb268ff76a20cd5431ead310bad01a7",
+      "size": 39621,
+      "normalized_sha256": "cd680bd4ad68110bd80b719939cd6d2f1eb268ff76a20cd5431ead310bad01a7"
+    },
+    "aoci.meta.txt": {
+      "role": "index",
+      "sha256": "5ccd06dd2198435423141174e4f3eaed7e7645644070e0b5cc2e20dbc889172a",
+      "size": 2187,
+      "normalized_sha256": "5ccd06dd2198435423141174e4f3eaed7e7645644070e0b5cc2e20dbc889172a"
+    },
+    "aoci.txt": {
+      "role": "index",
+      "sha256": "249ad4d6c35e8f215c69a95877028b813c7fbe4660e06315291c587fa9465529",
+      "size": 308,
+      "normalized_sha256": "249ad4d6c35e8f215c69a95877028b813c7fbe4660e06315291c587fa9465529"
+    },
+    "app/__init__.py": {
+      "role": "index",
+      "sha256": "4d75003f8297a18d0dfb9f514a83db095cf2c9ba3f7727df83ff376ca4ff8a84",
+      "size": 909,
+      "normalized_sha256": "4d75003f8297a18d0dfb9f514a83db095cf2c9ba3f7727df83ff376ca4ff8a84"
+    },
+    "app/api.py": {
+      "role": "index",
+      "sha256": "0776bed5eecbc5305fa89fa74beaafc12c97abb95c4b6c2bb7ad57ca1cb05430",
+      "size": 107559,
+      "normalized_sha256": "bcb1e8a08fd11a79ccd0d3bfdea81da1f7586959852a2afbab93f3fad19e6606"
+    },
+    "app/collectors/__init__.py": {
+      "role": "index",
+      "sha256": "a747512afaf9f224ffdca697d001862f122092c6b2e6f9e881e1127b5f1696b2",
+      "size": 86,
+      "normalized_sha256": "a747512afaf9f224ffdca697d001862f122092c6b2e6f9e881e1127b5f1696b2"
+    },
+    "app/collectors/sources.py": {
+      "role": "index",
+      "sha256": "75833895797ab8804088cf37cb648ee411f58eb090b19d277de317fe32b22fad",
+      "size": 17378,
+      "normalized_sha256": "75833895797ab8804088cf37cb648ee411f58eb090b19d277de317fe32b22fad"
+    },
+    "app/collectors/wecom_kf.py": {
+      "role": "index",
+      "sha256": "ebaa6c6b9251c2cced212dfc91accb2c320ffab49b11f5e4e35d06dca5aee864",
+      "size": 4357,
+      "normalized_sha256": "ebaa6c6b9251c2cced212dfc91accb2c320ffab49b11f5e4e35d06dca5aee864"
+    },
+    "app/db.py": {
+      "role": "index",
+      "sha256": "50c4494d4a64f5e5301ab5b7f2e6a58959ed25bf472ae4acd647ba99f2187546",
+      "size": 48279,
+      "normalized_sha256": "50c4494d4a64f5e5301ab5b7f2e6a58959ed25bf472ae4acd647ba99f2187546"
+    },
+    "app/logging_config.py": {
+      "role": "index",
+      "sha256": "5726b37c870de00d710f405723f0e3f11f47400e88122a798bfe17db47c7388c",
+      "size": 732,
+      "normalized_sha256": "5726b37c870de00d710f405723f0e3f11f47400e88122a798bfe17db47c7388c"
+    },
+    "app/native_delete.py": {
+      "role": "index",
+      "sha256": "16f4d88d896e6804259e1e18567fc0c3e9cc51512674e7155bf7a6acdb5b0cce",
+      "size": 2397,
+      "normalized_sha256": "16f4d88d896e6804259e1e18567fc0c3e9cc51512674e7155bf7a6acdb5b0cce"
+    },
+    "app/net.py": {
+      "role": "index",
+      "sha256": "2fa146bf3d27f6c977a79017ecb88043a919fb00aadc566c73e73f3a4f357f84",
+      "size": 10269,
+      "normalized_sha256": "aefbb5d8c98a173f21fc82c1bf067778e8998424d06ff93f1a52860c80c00bc7"
+    },
+    "app/paths.py": {
+      "role": "index",
+      "sha256": "1b316e718a655ec7a977cd66bc49931a23dda6fd13ad596982f3374093c5ab03",
+      "size": 1513,
+      "normalized_sha256": "1b316e718a655ec7a977cd66bc49931a23dda6fd13ad596982f3374093c5ab03"
+    },
+    "app/pipeline.py": {
+      "role": "index",
+      "sha256": "687fbe7a10d868375b2d61c8d152c45ada9bc76c1b1ffab65cec13b6ce2c2789",
+      "size": 16148,
+      "normalized_sha256": "6a6c9948bd2112764c90894ce1aaacd62c198518b96080e2adbd9473dafa6853"
+    },
+    "app/services/__init__.py": {
+      "role": "index",
+      "sha256": "71cefcc4d3b1fb7282d896d32d0888a12e69f4484e14c1e5d6749d61504fe6ef",
+      "size": 54,
+      "normalized_sha256": "71cefcc4d3b1fb7282d896d32d0888a12e69f4484e14c1e5d6749d61504fe6ef"
+    },
+    "app/services/analyzer.py": {
+      "role": "index",
+      "sha256": "db7128883a7f5c8d2eb6a2f1b8130990913ff1307bdbdcd70779b5a56d003a86",
+      "size": 47487,
+      "normalized_sha256": "a8aa9843d40a4dd39446074e9c490b8ff2f2b5d819b6438e99cc38e14d88e2e8"
+    },
+    "app/services/archive.py": {
+      "role": "index",
+      "sha256": "1a0662c8184b3b9021aab5791f103a6c67b22d343770539fe8455e840267c2a7",
+      "size": 34403,
+      "normalized_sha256": "66badc741c0e42af2830cae71d257a94562fadc1b494c8d674c2031f13b06ebc"
+    },
+    "app/services/assistant.py": {
+      "role": "index",
+      "sha256": "0b6dd7a91af04f3c36d918be62568fe8451c978edcb69f9e97846ae6fa8ce4bb",
+      "size": 12912,
+      "normalized_sha256": "0b6dd7a91af04f3c36d918be62568fe8451c978edcb69f9e97846ae6fa8ce4bb"
+    },
+    "app/services/autostart.py": {
+      "role": "index",
+      "sha256": "ac368f7d8838ec043a481ed8abde36965936d27fa8d8c4f9adde1364d9719847",
+      "size": 4306,
+      "normalized_sha256": "ac368f7d8838ec043a481ed8abde36965936d27fa8d8c4f9adde1364d9719847"
+    },
+    "app/services/backup.py": {
+      "role": "index",
+      "sha256": "a270e0e6b1bdcf53dcf006fe5fc4031a2015473a060c49312f4bc47cda24bdcd",
+      "size": 5541,
+      "normalized_sha256": "a270e0e6b1bdcf53dcf006fe5fc4031a2015473a060c49312f4bc47cda24bdcd"
+    },
+    "app/services/credits.py": {
+      "role": "index",
+      "sha256": "5e351884f3f4fd15bd2aea6a69f8159961fb8a9365f421f9081f74d53f04f0b9",
+      "size": 6683,
+      "normalized_sha256": "2b08213f2565e36169c46f90ada64b1884205876a8470af283dc036b60b7a353"
+    },
+    "app/services/digest.py": {
+      "role": "index",
+      "sha256": "5a27c399242fa5e1547b7d6261c97c62013f5010b0f28b0adadc6d2680663938",
+      "size": 10319,
+      "normalized_sha256": "685386f4207ad257cb2284d178419f92020f301bab4859d657f9163ecaf650d1"
+    },
+    "app/services/filters.py": {
+      "role": "index",
+      "sha256": "f0058725c4cc76904350b633137891e155c2cebce86d1e903b084d45ee22de18",
+      "size": 6979,
+      "normalized_sha256": "f0058725c4cc76904350b633137891e155c2cebce86d1e903b084d45ee22de18"
+    },
+    "app/services/llm_gateway.py": {
+      "role": "index",
+      "sha256": "e4516fca691db7f54a091e26731a412d65a06d400103c7463bc41c7a65c6821e",
+      "size": 4730,
+      "normalized_sha256": "e4516fca691db7f54a091e26731a412d65a06d400103c7463bc41c7a65c6821e"
+    },
+    "app/services/notify.py": {
+      "role": "index",
+      "sha256": "1cb65ef19b7daa87a626b78310a556c4f5a2ecc21991b9736fc694dc954535b3",
+      "size": 19671,
+      "normalized_sha256": "5fad43bf097c258e0dea7920335fca1a2213269587d34f5fde332803ab2d51e8"
+    },
+    "app/services/papers.py": {
+      "role": "index",
+      "sha256": "0272edb6363c8b4f60553adce66a713488a78aaf20be291aed54d28a89334e25",
+      "size": 20925,
+      "normalized_sha256": "0272edb6363c8b4f60553adce66a713488a78aaf20be291aed54d28a89334e25"
+    },
+    "app/services/purge.py": {
+      "role": "index",
+      "sha256": "96729b9a96ff57feba3fd3c1064176b7067f513249bf64c7759bf65664967926",
+      "size": 4478,
+      "normalized_sha256": "96729b9a96ff57feba3fd3c1064176b7067f513249bf64c7759bf65664967926"
+    },
+    "app/services/relevance.py": {
+      "role": "index",
+      "sha256": "8469d7683dd01844025c0ec145675ec6c56803908c8de9b51d7bd78e05850bed",
+      "size": 23517,
+      "normalized_sha256": "f2f8e5b87f4c80358b6fd675fd228e396fe83ed3e64a2394809c7543bcb31fbc"
+    },
+    "app/services/setup_status.py": {
+      "role": "index",
+      "sha256": "13d671b47035e9c1dc241eb01816e3170ea98f14ec29e7d0bf38cb5e0d6ddc3f",
+      "size": 18852,
+      "normalized_sha256": "13d671b47035e9c1dc241eb01816e3170ea98f14ec29e7d0bf38cb5e0d6ddc3f"
+    },
+    "app/services/setup_test.py": {
+      "role": "index",
+      "sha256": "70cbc5cef6b89d60da79805834cad2e0d81b7cbe62e8de3d6ccb3a99d8f2b571",
+      "size": 6000,
+      "normalized_sha256": "70cbc5cef6b89d60da79805834cad2e0d81b7cbe62e8de3d6ccb3a99d8f2b571"
+    },
+    "app/services/video.py": {
+      "role": "index",
+      "sha256": "f58d2e24c7a155967c2d0fe0e1c3bf43dabb1818974fa6a32537dd5af934a8c0",
+      "size": 6811,
+      "normalized_sha256": "f58d2e24c7a155967c2d0fe0e1c3bf43dabb1818974fa6a32537dd5af934a8c0"
+    },
+    "app/services/websearch.py": {
+      "role": "index",
+      "sha256": "68af8f78453a2c58c81a3ac5e36729e57908e927f25009081cdb7c1261fd8a56",
+      "size": 21679,
+      "normalized_sha256": "68af8f78453a2c58c81a3ac5e36729e57908e927f25009081cdb7c1261fd8a56"
+    },
+    "app/services/wechat3_public.py": {
+      "role": "index",
+      "sha256": "c37443ce552c3543c71bccdcb2d0c260a38d78194560d1ea10e2dbdfd5952b50",
+      "size": 19912,
+      "normalized_sha256": "c37443ce552c3543c71bccdcb2d0c260a38d78194560d1ea10e2dbdfd5952b50"
+    },
+    "app/services/wechat4.py": {
+      "role": "index",
+      "sha256": "67e55e3f95ce3c63551132dce6a4236972047ba4630bb77b7639bd241fce871a",
+      "size": 14037,
+      "normalized_sha256": "67e55e3f95ce3c63551132dce6a4236972047ba4630bb77b7639bd241fce871a"
+    },
+    "app/services/wechat4_live.py": {
+      "role": "index",
+      "sha256": "7becd307a14f971ad6a1050ff17c61b9a25c5791ddc85d35d45439393e2b9625",
+      "size": 62416,
+      "normalized_sha256": "7becd307a14f971ad6a1050ff17c61b9a25c5791ddc85d35d45439393e2b9625"
+    },
+    "app/services/wechat4_memory.py": {
+      "role": "index",
+      "sha256": "52a86ae960e0448d8631fffce4043b698bb8ea0c8aeb7087f3565ba9fc2f7b55",
+      "size": 15779,
+      "normalized_sha256": "52a86ae960e0448d8631fffce4043b698bb8ea0c8aeb7087f3565ba9fc2f7b55"
+    },
+    "app/services/wechat_panel.py": {
+      "role": "index",
+      "sha256": "1ad279ed791709ed69fdfdf82e50a514726cf421e3c8255242d29bd63250b35f",
+      "size": 22821,
+      "normalized_sha256": "1ad279ed791709ed69fdfdf82e50a514726cf421e3c8255242d29bd63250b35f"
+    },
+    "app/services/wechat_probe.py": {
+      "role": "index",
+      "sha256": "442cfebfc8c52ec64f06de51db9fe848e6824edc855a542ee06d214cad1cd544",
+      "size": 7470,
+      "normalized_sha256": "9969d745976e304eedbeee92005f5b35c6aa6167cb3378475574d079d5cbcc53"
+    },
+    "app/services/wechat_public.py": {
+      "role": "index",
+      "sha256": "81ba001de3a9ec7810620ff73eafb0fc4b0be577c391e11cadb0c398cc7b8f8a",
+      "size": 10261,
+      "normalized_sha256": "81ba001de3a9ec7810620ff73eafb0fc4b0be577c391e11cadb0c398cc7b8f8a"
+    },
+    "app/services/wechat_self_archive.py": {
+      "role": "index",
+      "sha256": "d8fee07a2f2b004a3e7c2cfc67f12666f19551cd75bbd68bbe9ced192c07a919",
+      "size": 53455,
+      "normalized_sha256": "c14c4598a0664b22864e93ea91c146f19ee558a52877b71e012834c2e2c2d1c2"
+    },
+    "app/services/wechat_space.py": {
+      "role": "index",
+      "sha256": "4b3332efd03f02c67ef147a71be9db239908643571afb1057e463fae148811bd",
+      "size": 8418,
+      "normalized_sha256": "4b3332efd03f02c67ef147a71be9db239908643571afb1057e463fae148811bd"
+    },
+    "app/services/workbuddy_direct.py": {
+      "role": "index",
+      "sha256": "39d29e8714ef6cc4fb96772899a105ed90c7ac0c16ffc86cec60096c9d80628e",
+      "size": 17972,
+      "normalized_sha256": "39d29e8714ef6cc4fb96772899a105ed90c7ac0c16ffc86cec60096c9d80628e"
+    },
+    "app/services/workbuddy_llm.py": {
+      "role": "index",
+      "sha256": "61f41b137a5e61a8e29d6c0585e38dc1c802bb9342f4f8c89e571434f7066555",
+      "size": 12319,
+      "normalized_sha256": "2cf804f901ed1356ecb65f4d97c739989e24c0cabe5e4e693b32bcfd1bbd0593"
+    },
+    "app/settings.py": {
+      "role": "index",
+      "sha256": "272272d48b42d20f872b3385c9f814a660f42e69619c7d7dd819b5a152eacfe8",
+      "size": 9414,
+      "normalized_sha256": "b160c9dafde5b9e912deb7a6e0fe5f8585b7b61aaf0bc7f5b02a3432b84fa72e"
+    },
+    "app/storage.py": {
+      "role": "index",
+      "sha256": "fdd6027c6c2849c53f50310e95fbe54cbe639aefc37072aebc098e9c8f6278e8",
+      "size": 2175,
+      "normalized_sha256": "fdd6027c6c2849c53f50310e95fbe54cbe639aefc37072aebc098e9c8f6278e8"
+    },
+    "app/updater.py": {
+      "role": "index",
+      "sha256": "62254d8b55c3db24c3254aa09a51b943a049c277e49d85e59415af39a26c146c",
+      "size": 16013,
+      "normalized_sha256": "62254d8b55c3db24c3254aa09a51b943a049c277e49d85e59415af39a26c146c"
+    },
+    "app/utils.py": {
+      "role": "index",
+      "sha256": "e2e5b77bdc2f41ae7fd447811c6171041730c1300eb7f6cbd8f856c0129cd381",
+      "size": 10934,
+      "normalized_sha256": "e2e5b77bdc2f41ae7fd447811c6171041730c1300eb7f6cbd8f856c0129cd381"
+    },
+    "app/worker.py": {
+      "role": "index",
+      "sha256": "0d4b16add50e117b0deea62d0799ffbf390b81fc65b31ffeacc7652cac15eb87",
+      "size": 23384,
+      "normalized_sha256": "9ab7153579bbfd57b6d75fe68d43d33efe086a85596366b0bed187419cb1669d"
+    },
+    "cloud/llm-worker.mjs": {
+      "role": "index",
+      "sha256": "96b4d616bd89bcfbd458b200aeec435f066423bad21b9ca839c69b14d8763034",
+      "size": 3340,
+      "normalized_sha256": "96b4d616bd89bcfbd458b200aeec435f066423bad21b9ca839c69b14d8763034"
+    },
+    "cloud/probe.mjs": {
+      "role": "index",
+      "sha256": "643ef8f15178dce3a831caebecb54f1f28db43ee720c372533e6e0247b8a3531",
+      "size": 1990,
+      "normalized_sha256": "643ef8f15178dce3a831caebecb54f1f28db43ee720c372533e6e0247b8a3531"
+    },
+    "cloud/public-config.json": {
+      "role": "index",
+      "sha256": "42541aedff796397f96f4a6aa6b1c9d8f283003804c1298deebd5fdabc689f5e",
+      "size": 332,
+      "normalized_sha256": "42541aedff796397f96f4a6aa6b1c9d8f283003804c1298deebd5fdabc689f5e"
+    },
+    "config/settings.example.json": {
+      "role": "index",
+      "sha256": "cce124cce351bdaee5cda2f452d0d9f0a742a82bdd1947cf0f6a3734ba1f4aef",
+      "size": 372,
+      "normalized_sha256": "cce124cce351bdaee5cda2f452d0d9f0a742a82bdd1947cf0f6a3734ba1f4aef"
+    },
+    "config/settings.json": {
+      "role": "index",
+      "sha256": "8b3b02b47f5e582e8adef1678312b057beff85203af1991b854602b29f32c000",
+      "size": 2670,
+      "normalized_sha256": "bbd6e997e96b204df4c182e3b282ad55643c6a08ffdbeac9f2a473fb8bcffa7d"
+    },
+    "docs/wechat4/01-技术原理.md": {
+      "role": "index",
+      "sha256": "6917b8d944d8c2f6eb2916eeffd7468f2f8121136f69ea1c0256419ec7432455",
+      "size": 9739,
+      "normalized_sha256": "6917b8d944d8c2f6eb2916eeffd7468f2f8121136f69ea1c0256419ec7432455"
+    },
+    "docs/wechat4/02-集成指南.md": {
+      "role": "index",
+      "sha256": "52b838a09c3dcb71321b1ee9ceb9f0f20026f8fa07917b5add0ad0a730c7e0d8",
+      "size": 14091,
+      "normalized_sha256": "52b838a09c3dcb71321b1ee9ceb9f0f20026f8fa07917b5add0ad0a730c7e0d8"
+    },
+    "docs/wechat4/03-踩坑清单.md": {
+      "role": "index",
+      "sha256": "27a0ca588b28ca69ec64acb173e84f4766ce8e30d98ce22b1243edb9606f8069",
+      "size": 11447,
+      "normalized_sha256": "bae164d0157a777f8326a600fb07e25929f2d3440fc545a5fe1cf54c952a6cd9"
+    },
+    "docs/wechat4/04-验证方法.md": {
+      "role": "index",
+      "sha256": "becec39bd95ffe259a8d3b96eff2990b8e99d55bbee2cf57727294b075eec0e7",
+      "size": 6449,
+      "normalized_sha256": "becec39bd95ffe259a8d3b96eff2990b8e99d55bbee2cf57727294b075eec0e7"
+    },
+    "docs/wechat4/05-实测记录.md": {
+      "role": "index",
+      "sha256": "b5bfe1eab2cef59ad0f021dc894371eaaa1d5b72b1a2685ab680b843ac21c349",
+      "size": 8037,
+      "normalized_sha256": "b5bfe1eab2cef59ad0f021dc894371eaaa1d5b72b1a2685ab680b843ac21c349"
+    },
+    "docs/wechat4/README.md": {
+      "role": "index",
+      "sha256": "e3e88fb5c24c2c08c2e4d3a1dd521b53f47b086559ffefc28b27e588ce8b2b85",
+      "size": 6376,
+      "normalized_sha256": "e3e88fb5c24c2c08c2e4d3a1dd521b53f47b086559ffefc28b27e588ce8b2b85"
+    },
+    "docs/微信4.x验证方案.md": {
+      "role": "index",
+      "sha256": "ccea1b49757528a865e14be4e37a333b6405c9b6181eb7e61a04002201a9e299",
+      "size": 5890,
+      "normalized_sha256": "ccea1b49757528a865e14be4e37a333b6405c9b6181eb7e61a04002201a9e299"
+    },
+    "docs/迁移到新电脑.md": {
+      "role": "index",
+      "sha256": "6e9cd08dabceb8141dbaed1eb828ee3222cb3438993aaefafeae7efd0ae1b89d",
+      "size": 3835,
+      "normalized_sha256": "6e9cd08dabceb8141dbaed1eb828ee3222cb3438993aaefafeae7efd0ae1b89d"
+    },
+    "install.py": {
+      "role": "index",
+      "sha256": "c5170fba7791c1009f70d776b021c5f5b037f128c4ac3113e25724f42b9f4932",
+      "size": 15356,
+      "normalized_sha256": "c5170fba7791c1009f70d776b021c5f5b037f128c4ac3113e25724f42b9f4932"
+    },
+    "installer/launcher.py": {
+      "role": "index",
+      "sha256": "acc305d153caca7ecbd1604eda853003b1b50bcbf4e04f2d20a60159b8c6da8f",
+      "size": 11009,
+      "normalized_sha256": "acc305d153caca7ecbd1604eda853003b1b50bcbf4e04f2d20a60159b8c6da8f"
+    },
+    "installer/restore_wechat.py": {
+      "role": "index",
+      "sha256": "0f90f2a2882dfcc505f19079db1ac56ee8fa116a4742c7ef12891a617327b701",
+      "size": 15530,
+      "normalized_sha256": "0f90f2a2882dfcc505f19079db1ac56ee8fa116a4742c7ef12891a617327b701"
+    },
+    "installer/setup_gui.py": {
+      "role": "index",
+      "sha256": "bcc12a4c03ad1dd53a7f9b4452c96aebce1882c4f464b45b702c3c6b97a53151",
+      "size": 44326,
+      "normalized_sha256": "586a5afdefbccf1a285b66044fc3b7a6ca04bbb3b31583f6b1cadbca29917516"
+    },
+    "package-lock.json": {
+      "role": "observe",
+      "sha256": "e1302a75dbbb8adc3e9a130b2654b5dcffb6e266e439f3185a4d1cb9e4a8463c",
+      "size": 15055,
+      "normalized_sha256": "e1302a75dbbb8adc3e9a130b2654b5dcffb6e266e439f3185a4d1cb9e4a8463c"
+    },
+    "package.json": {
+      "role": "index",
+      "sha256": "cd07772d275c25d5337f91af10bf1c7a203f1a0c4c991f3a61800e07da4c2b5a",
+      "size": 517,
+      "normalized_sha256": "cd07772d275c25d5337f91af10bf1c7a203f1a0c4c991f3a61800e07da4c2b5a"
+    },
+    "radar.py": {
+      "role": "index",
+      "sha256": "83828b07634569eada12c9ec96e03e1f0f58ca46d5ec923665ad55db3ffed717",
+      "size": 11769,
+      "normalized_sha256": "83828b07634569eada12c9ec96e03e1f0f58ca46d5ec923665ad55db3ffed717"
+    },
+    "requirements.txt": {
+      "role": "index",
+      "sha256": "90c75f6c40ca9473cd6555a04f9e260852c0fac35e0d8b212c73d54fb81be31d",
+      "size": 484,
+      "normalized_sha256": "90c75f6c40ca9473cd6555a04f9e260852c0fac35e0d8b212c73d54fb81be31d"
+    },
+    "run_dev.pyw": {
+      "role": "index",
+      "sha256": "dbb75f6215fcf5657fe45468c32e2935eba931fb31af65f5df12b64cf6002dca",
+      "size": 540,
+      "normalized_sha256": "dbb75f6215fcf5657fe45468c32e2935eba931fb31af65f5df12b64cf6002dca"
+    },
+    "scripts/backfill_public_accounts.py": {
+      "role": "index",
+      "sha256": "927eba2a3acb1f3e74e4235a44214814f85d3974177bcdb6f415f8e4e6782d5c",
+      "size": 6982,
+      "normalized_sha256": "927eba2a3acb1f3e74e4235a44214814f85d3974177bcdb6f415f8e4e6782d5c"
+    },
+    "scripts/bench_reading.py": {
+      "role": "index",
+      "sha256": "506accf7ccd6ba3643fc238eeaf51ccc15a3f0e2b4ec2041c945d6142b5fa750",
+      "size": 2084,
+      "normalized_sha256": "506accf7ccd6ba3643fc238eeaf51ccc15a3f0e2b4ec2041c945d6142b5fa750"
+    },
+    "scripts/classify_accounts.py": {
+      "role": "index",
+      "sha256": "90423d9a8e65a1ae0922457038b000c4f348f0f11d9e7c7d2e8bf6d554c2b476",
+      "size": 9396,
+      "normalized_sha256": "90423d9a8e65a1ae0922457038b000c4f348f0f11d9e7c7d2e8bf6d554c2b476"
+    },
+    "scripts/clean_research_library.py": {
+      "role": "index",
+      "sha256": "fb33ce2a535d6c45fa37419c6388cd373dd94dea502a2d583894e0e44d8a3ef1",
+      "size": 8086,
+      "normalized_sha256": "fb33ce2a535d6c45fa37419c6388cd373dd94dea502a2d583894e0e44d8a3ef1"
+    },
+    "scripts/debug_classify.py": {
+      "role": "index",
+      "sha256": "529d3e467ce6c40ed1b5b2c51f67ae2c84a5adcaa76a2c47f5d234a20b3aefb9",
+      "size": 1311,
+      "normalized_sha256": "529d3e467ce6c40ed1b5b2c51f67ae2c84a5adcaa76a2c47f5d234a20b3aefb9"
+    },
+    "scripts/export_review_html.py": {
+      "role": "index",
+      "sha256": "49d13ebda22d8e7cf735b22e7bad7c1a0fa092156b7eb225fe91a9fee2ea0005",
+      "size": 9927,
+      "normalized_sha256": "49d13ebda22d8e7cf735b22e7bad7c1a0fa092156b7eb225fe91a9fee2ea0005"
+    },
+    "scripts/extract_accounts.py": {
+      "role": "index",
+      "sha256": "572fdcd13ae934ba7310a06f7aa07582eb85144af1e50ee6c853dc1816f940eb",
+      "size": 4921,
+      "normalized_sha256": "572fdcd13ae934ba7310a06f7aa07582eb85144af1e50ee6c853dc1816f940eb"
+    },
+    "scripts/extract_timestamps.py": {
+      "role": "index",
+      "sha256": "98f9bcdae5e960dcdb8fd629f6880fe6968b263683550b250afd4a387abc7b06",
+      "size": 2210,
+      "normalized_sha256": "98f9bcdae5e960dcdb8fd629f6880fe6968b263683550b250afd4a387abc7b06"
+    },
+    "scripts/fill_image_alts.py": {
+      "role": "index",
+      "sha256": "29a142ae3f33d1134953da31d57c5ede519651c44be6b29c22b89d3b94cbe5b6",
+      "size": 4188,
+      "normalized_sha256": "29a142ae3f33d1134953da31d57c5ede519651c44be6b29c22b89d3b94cbe5b6"
+    },
+    "scripts/prepare_accounts.py": {
+      "role": "index",
+      "sha256": "9b18a773edac9ddb84a214901f4c6cc4e78bea47a3a1718431529d7c0c9615a0",
+      "size": 4769,
+      "normalized_sha256": "9b18a773edac9ddb84a214901f4c6cc4e78bea47a3a1718431529d7c0c9615a0"
+    },
+    "scripts/prune_blobs.py": {
+      "role": "index",
+      "sha256": "36785956acdd6bb422875c862e1891173faf7e2a3d82ffc995a8f869e22807d8",
+      "size": 2353,
+      "normalized_sha256": "36785956acdd6bb422875c862e1891173faf7e2a3d82ffc995a8f869e22807d8"
+    },
+    "scripts/repair_items.py": {
+      "role": "index",
+      "sha256": "7c9f1b236ccabbea2f90c7984649cdff64ed836abb7c66682a221017cf3c6124",
+      "size": 7036,
+      "normalized_sha256": "7c9f1b236ccabbea2f90c7984649cdff64ed836abb7c66682a221017cf3c6124"
+    },
+    "scripts/repair_reader_pages.py": {
+      "role": "index",
+      "sha256": "dfb35c2bb25a2dffa14f228dabff03e783b5b784b2df5292b6920db889b4036f",
+      "size": 1773,
+      "normalized_sha256": "dfb35c2bb25a2dffa14f228dabff03e783b5b784b2df5292b6920db889b4036f"
+    },
+    "scripts/retriage_images.py": {
+      "role": "index",
+      "sha256": "90408f02290cab58fb9c34e29537fa00a199a4471957f15618b697626d38a855",
+      "size": 3585,
+      "normalized_sha256": "90408f02290cab58fb9c34e29537fa00a199a4471957f15618b697626d38a855"
+    },
+    "scripts/retry_failed_archives.py": {
+      "role": "index",
+      "sha256": "afde5c402302720a6bb729fce38641f7531b95b896555a12f43fbc7c02ce5ee0",
+      "size": 2343,
+      "normalized_sha256": "afde5c402302720a6bb729fce38641f7531b95b896555a12f43fbc7c02ce5ee0"
+    },
+    "scripts/upgrade_reader_pages.py": {
+      "role": "index",
+      "sha256": "4db393651dd877720e24af43ab6149ec1644c3e93e6147109053dc56ebaa5be4",
+      "size": 2639,
+      "normalized_sha256": "4db393651dd877720e24af43ab6149ec1644c3e93e6147109053dc56ebaa5be4"
+    },
+    "scripts/wechat4_probe.py": {
+      "role": "index",
+      "sha256": "962c63d2f1f52cf9e9cc8f006271adaee8d86a9639a3701c8953f0f2249633f1",
+      "size": 3512,
+      "normalized_sha256": "962c63d2f1f52cf9e9cc8f006271adaee8d86a9639a3701c8953f0f2249633f1"
+    },
+    "start_radar.pyw": {
+      "role": "index",
+      "sha256": "75db2e05adc9329b8f557fe55710287d583d9c3281164950729050a916682daf",
+      "size": 3733,
+      "normalized_sha256": "916177b9b24ac804622147edce35897fc5edf543dc2347882ce3400a5b3e6d5c"
+    },
+    "stop_radar.pyw": {
+      "role": "index",
+      "sha256": "7e23c27e09fe16f0a7f039b2d5b052efa6cbdea6c339c2acf1894992a6a80774",
+      "size": 1554,
+      "normalized_sha256": "7e23c27e09fe16f0a7f039b2d5b052efa6cbdea6c339c2acf1894992a6a80774"
+    },
+    "supervisor.pyw": {
+      "role": "index",
+      "sha256": "e12afbfd46b9bb77d79ab1115b12e4f712233419dbafaccbab3eb7c90b18d51c",
+      "size": 7064,
+      "normalized_sha256": "e12afbfd46b9bb77d79ab1115b12e4f712233419dbafaccbab3eb7c90b18d51c"
+    },
+    "tests/__init__.py": {
+      "role": "observe",
+      "sha256": "d4b7219fb0e3d05f755081f355b542f8105397ea4aba2a1257b8d61422398f08",
+      "size": 3298,
+      "normalized_sha256": "d4b7219fb0e3d05f755081f355b542f8105397ea4aba2a1257b8d61422398f08"
+    },
+    "tests/test_account_name_match.py": {
+      "role": "observe",
+      "sha256": "21e1ae19c89d748eda9830f761378245232fea754a5acad02a6f9d1c6bd9e7ac",
+      "size": 4642,
+      "normalized_sha256": "21e1ae19c89d748eda9830f761378245232fea754a5acad02a6f9d1c6bd9e7ac"
+    },
+    "tests/test_analysis_concurrency.py": {
+      "role": "observe",
+      "sha256": "898af31fe7f4a217979af75fc991bbc857670be88534118eac9f0c3554d931ae",
+      "size": 6190,
+      "normalized_sha256": "898af31fe7f4a217979af75fc991bbc857670be88534118eac9f0c3554d931ae"
+    },
+    "tests/test_archive_pause.py": {
+      "role": "observe",
+      "sha256": "55ca3178e27a1630edd4b32be9aa24f8762c6f5d08d22a44c9ad9bd6b17b5164",
+      "size": 5849,
+      "normalized_sha256": "55ca3178e27a1630edd4b32be9aa24f8762c6f5d08d22a44c9ad9bd6b17b5164"
+    },
+    "tests/test_backfill.py": {
+      "role": "observe",
+      "sha256": "5b98bc6ef8056bbefdec5804a16a0f93a3474278fbea22957210a0e7283fb6db",
+      "size": 7904,
+      "normalized_sha256": "5b98bc6ef8056bbefdec5804a16a0f93a3474278fbea22957210a0e7283fb6db"
+    },
+    "tests/test_backup.py": {
+      "role": "observe",
+      "sha256": "0337455899846d433f7571f8a941e1971edf4eb05b1952099f3d60f29169ff79",
+      "size": 2885,
+      "normalized_sha256": "0337455899846d433f7571f8a941e1971edf4eb05b1952099f3d60f29169ff79"
+    },
+    "tests/test_core.py": {
+      "role": "observe",
+      "sha256": "369f8b4823ee37238d5bc4d703069df36cff2bb60372f6bfec5d1626d8f921a1",
+      "size": 72077,
+      "normalized_sha256": "369f8b4823ee37238d5bc4d703069df36cff2bb60372f6bfec5d1626d8f921a1"
+    },
+    "tests/test_daily_limit.py": {
+      "role": "observe",
+      "sha256": "6fd4c16a333886c50dea1044eafdeca366e75a50a215bffe6135e1414a9c8558",
+      "size": 6398,
+      "normalized_sha256": "6fd4c16a333886c50dea1044eafdeca366e75a50a215bffe6135e1414a9c8558"
+    },
+    "tests/test_library_filters.py": {
+      "role": "observe",
+      "sha256": "e4962fd44a47d251f3d06a54d8fe14e67eb3bef13bb3a055129ff4ab0dd9a7dd",
+      "size": 10652,
+      "normalized_sha256": "e4962fd44a47d251f3d06a54d8fe14e67eb3bef13bb3a055129ff4ab0dd9a7dd"
+    },
+    "tests/test_setup_wizard.py": {
+      "role": "observe",
+      "sha256": "8a2e4239405bb14f686dbc854a199bed86c3b6a01942ba66cda4dd75790dbd95",
+      "size": 3247,
+      "normalized_sha256": "8a2e4239405bb14f686dbc854a199bed86c3b6a01942ba66cda4dd75790dbd95"
+    },
+    "tests/test_text_and_papers.py": {
+      "role": "observe",
+      "sha256": "3f5cfd7e7e6f3ee365b404826095ee030958c907e7218da1eeb7a06866dcd14d",
+      "size": 6424,
+      "normalized_sha256": "3f5cfd7e7e6f3ee365b404826095ee030958c907e7218da1eeb7a06866dcd14d"
+    },
+    "tests/test_trash_guard.py": {
+      "role": "observe",
+      "sha256": "4f549cb6be20bace9e9026350e8711af7c7d12c28a0e99f47d2e3166dd502074",
+      "size": 2497,
+      "normalized_sha256": "4f549cb6be20bace9e9026350e8711af7c7d12c28a0e99f47d2e3166dd502074"
+    },
+    "tests/test_updater.py": {
+      "role": "observe",
+      "sha256": "c69e0c0632e352b6021f9b9d0f414e9b04e0cb9a3a81c3e4aa572990e0458314",
+      "size": 9367,
+      "normalized_sha256": "c69e0c0632e352b6021f9b9d0f414e9b04e0cb9a3a81c3e4aa572990e0458314"
+    },
+    "tests/test_wechat3_public.py": {
+      "role": "observe",
+      "sha256": "71934d43ed10714bdf4b5f0b895ae42c56669dc5c8df57975db8c42ed2b751b6",
+      "size": 13595,
+      "normalized_sha256": "71934d43ed10714bdf4b5f0b895ae42c56669dc5c8df57975db8c42ed2b751b6"
+    },
+    "tests/test_wechat4_channel.py": {
+      "role": "observe",
+      "sha256": "584b52bd5cba8f2a7e57c7b6b7cb79bac899b56c914ac9f761cfb80dcf8107b7",
+      "size": 15537,
+      "normalized_sha256": "584b52bd5cba8f2a7e57c7b6b7cb79bac899b56c914ac9f761cfb80dcf8107b7"
+    },
+    "tests/test_wechat4_memory.py": {
+      "role": "observe",
+      "sha256": "a5957b567821fc2986ff60bc1775ab184d64582ce14b2e2e191d18284bc1b4bd",
+      "size": 11813,
+      "normalized_sha256": "a5957b567821fc2986ff60bc1775ab184d64582ce14b2e2e191d18284bc1b4bd"
+    },
+    "tests/test_wechat_panel.py": {
+      "role": "observe",
+      "sha256": "53a459d6743f3c7a2b5ef83dffa6de97e7696ba2e90a9097bbcc4cb5d4210ac8",
+      "size": 24633,
+      "normalized_sha256": "53a459d6743f3c7a2b5ef83dffa6de97e7696ba2e90a9097bbcc4cb5d4210ac8"
+    },
+    "tests/test_workbuddy_direct.py": {
+      "role": "observe",
+      "sha256": "b9dfef8cda3657503ccbf137ea354db753982f02e8c42635355d0c982ded683d",
+      "size": 4378,
+      "normalized_sha256": "b9dfef8cda3657503ccbf137ea354db753982f02e8c42635355d0c982ded683d"
+    },
+    "tools/__init__.py": {
+      "role": "index",
+      "sha256": "f162c36d03dae81fc2ef34dae89d9ef813df5859066e5298e11ba6c2f328cf68",
+      "size": 112,
+      "normalized_sha256": "f162c36d03dae81fc2ef34dae89d9ef813df5859066e5298e11ba6c2f328cf68"
+    },
+    "tools/audit_multi.py": {
+      "role": "index",
+      "sha256": "54bada1163d82188d7d660f60ef6499448a563e08415bda74c23fd36c890dd12",
+      "size": 5126,
+      "normalized_sha256": "54bada1163d82188d7d660f60ef6499448a563e08415bda74c23fd36c890dd12"
+    },
+    "tools/build_exe.py": {
+      "role": "index",
+      "sha256": "ef44ddfa5c4fc44adf5f2dab74ce76ef1b9f6d0221b1c103a191865cec01eaea",
+      "size": 5740,
+      "normalized_sha256": "ef44ddfa5c4fc44adf5f2dab74ce76ef1b9f6d0221b1c103a191865cec01eaea"
+    },
+    "tools/build_restore.py": {
+      "role": "index",
+      "sha256": "6fec7f02103aa7c54f6335d660911628fd1d0708d99408d5d45f6f093dc5fffa",
+      "size": 1727,
+      "normalized_sha256": "6fec7f02103aa7c54f6335d660911628fd1d0708d99408d5d45f6f093dc5fffa"
+    },
+    "tools/calibrate_accounts.py": {
+      "role": "index",
+      "sha256": "9d5f4e723bb0c5ff98de7f08496e2761d9f9c02ed4c40d6ba5d5ad8c770bcb1e",
+      "size": 10660,
+      "normalized_sha256": "9d5f4e723bb0c5ff98de7f08496e2761d9f9c02ed4c40d6ba5d5ad8c770bcb1e"
+    },
+    "tools/merge_dupes.py": {
+      "role": "index",
+      "sha256": "cb6936acc309cd102f92820eba736e8bad7842eaed815fe813834e231e0cb47d",
+      "size": 7768,
+      "normalized_sha256": "cb6936acc309cd102f92820eba736e8bad7842eaed815fe813834e231e0cb47d"
+    },
+    "tools/packaging.py": {
+      "role": "index",
+      "sha256": "a3ca316f8b3bc2bbc8857a0d6f9577a8328a754eded466cf89e3cff2c77ea7f9",
+      "size": 6967,
+      "normalized_sha256": "a3ca316f8b3bc2bbc8857a0d6f9577a8328a754eded466cf89e3cff2c77ea7f9"
+    },
+    "tools/probe.py": {
+      "role": "index",
+      "sha256": "a2595259fb2cfbb5aaf87fb33ccaa9221a84f9c198706325f3e6603b83a60f48",
+      "size": 4643,
+      "normalized_sha256": "a2595259fb2cfbb5aaf87fb33ccaa9221a84f9c198706325f3e6603b83a60f48"
+    },
+    "tools/release.py": {
+      "role": "index",
+      "sha256": "8a732031f09d4d1753e4250b00418e3ff4f98ac80cfb55a142d7118255d884f9",
+      "size": 15046,
+      "normalized_sha256": "9aaa559868726af5c89ef8818aca03d69be251f07ad4e509c7cbba81197f8892"
+    },
+    "tools/repro_url_param.py": {
+      "role": "index",
+      "sha256": "dd2694cccf113b2ef1d56d48d0f3da8235ca8a120e22b86c96fc6e95326570f4",
+      "size": 4518,
+      "normalized_sha256": "dd2694cccf113b2ef1d56d48d0f3da8235ca8a120e22b86c96fc6e95326570f4"
+    },
+    "tools/trash.py": {
+      "role": "index",
+      "sha256": "dc6e83137382168a30b16f4d0e51600007c198d89252bd6f9d0b1f80490ca877",
+      "size": 10038,
+      "normalized_sha256": "dc6e83137382168a30b16f4d0e51600007c198d89252bd6f9d0b1f80490ca877"
+    },
+    "tools/vcs.py": {
+      "role": "index",
+      "sha256": "6fb362eeff64eb8113e2b5af216a5f830c981efa3cba01e54630f9ce36aac960",
+      "size": 13343,
+      "normalized_sha256": "6fb362eeff64eb8113e2b5af216a5f830c981efa3cba01e54630f9ce36aac960"
+    },
+    "version.json": {
+      "role": "index",
+      "sha256": "cbfef49798e13873289b3faf8c1a127d10990917743ab70295d67f48b2db17cc",
+      "size": 588,
+      "normalized_sha256": "15dd28fbbdb638f1fe24ae1cd4ebd39f716fa5a3b4ee12907ee32dc2c0eb46fd"
+    },
+    "web/app.js": {
+      "role": "index",
+      "sha256": "7fc2aa43e5f3e514f24acc046e425b6c9ef14bc2bb5d3e490b5bd770968074bb",
+      "size": 100922,
+      "normalized_sha256": "6d1e3ddf900f625c9d3ff9217646d53befd11da9e14445846919fe4d066aa751"
+    },
+    "web/assistant.js": {
+      "role": "index",
+      "sha256": "247b61f96d460b9b87c9e6c36612009c0df0f11b84f847003610f4c11a1f64ca",
+      "size": 30682,
+      "normalized_sha256": "9b342a0c38139f05ce0b26615ee02f8725f726d6271116847913ffd9d05c6c33"
+    },
+    "web/index.html": {
+      "role": "index",
+      "sha256": "4961ebe61d38f3c2da945cfe398f30aca789c74f0fd86cbea7b266c4d894b5de",
+      "size": 45931,
+      "normalized_sha256": "c5e828ddfdbec93a6929aa24276e451a125781b59428bc41d6ff3bafa99a3e2f"
+    },
+    "web/setup.js": {
+      "role": "index",
+      "sha256": "d723ea5f92b68765baed759e483abfbe7d3614b4c979807176a5afc1932d2575",
+      "size": 16687,
+      "normalized_sha256": "d723ea5f92b68765baed759e483abfbe7d3614b4c979807176a5afc1932d2575"
+    },
+    "web/styles.css": {
+      "role": "index",
+      "sha256": "5e717f766bb03f9cc7a166ab60d59218aaa1945a19f0988a489b5887de6f52b1",
+      "size": 47152,
+      "normalized_sha256": "71fadf45795b69310144c97da6d5d04544e64734c5194e73a4f6678f57e6fea4"
+    }
+  },
+  "managed_scope": {
+    "version": "managed-scope-baseline/v1",
+    "policy_identity": "f55cd79ebcd8fb59a0064e2a58b679ff9bea08964ca9f9aea3bb44c5bc42512a",
+    "observe_change_policy": "review_required",
+    "budget_policy_identity": "15e9b37a6c57e9bf03c9df3d0d049eb5b9a7f5540f9d34960408114e2538a32d",
+    "budget_policy": {
+      "version": "cognition-budget-policy/v1",
+      "mode": "enforce",
+      "whole_index": {
+        "target_tokens": 200000,
+        "warning_tokens": 300000,
+        "max_tokens": 400000
+      },
+      "r": [
+        {
+          "min_c": 1,
+          "max_c": 4,
+          "target_tokens": 25,
+          "max_tokens": 50
+        },
+        {
+          "min_c": 5,
+          "max_c": 7,
+          "target_tokens": 45,
+          "max_tokens": 90
+        },
+        {
+          "min_c": 8,
+          "max_c": 8,
+          "target_tokens": 70,
+          "max_tokens": 140
+        },
+        {
+          "min_c": 9,
+          "max_c": 9,
+          "target_tokens": 90,
+          "max_tokens": 180
+        }
+      ],
+      "s": [
+        {
+          "min_c": 1,
+          "max_c": 4,
+          "target_tokens": 20,
+          "max_tokens": 40
+        },
+        {
+          "min_c": 5,
+          "max_c": 7,
+          "target_tokens": 40,
+          "max_tokens": 80
+        },
+        {
+          "min_c": 8,
+          "max_c": 8,
+          "target_tokens": 70,
+          "max_tokens": 140
+        },
+        {
+          "min_c": 9,
+          "max_c": 9,
+          "target_tokens": 100,
+          "max_tokens": 200
+        }
+      ]
+    },
+    "apply_authorization_mode": "auto"
+  }
+}
