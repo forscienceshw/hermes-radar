@@ -6,6 +6,7 @@ import platform
 import subprocess
 import sys
 import threading
+import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -53,9 +54,28 @@ def _check_updates_in_background() -> None:
     threading.Thread(target=worker, daemon=True, name="update-check").start()
 
 
+def _warm_setup_snapshot(delay: float = 8.0) -> None:
+    """启动后在后台先把体检快照算一遍。
+
+    第一次进「设置 → 配置向导」要读一次微信进程、扫一遍磁盘，冷算六秒；先在后台
+    算好，用户点开时读的就是缓存。算不出来不影响任何功能，所以异常一律吞掉。
+    """
+
+    def run() -> None:
+        time.sleep(delay)
+        try:
+            from .services import setup_status
+            setup_status.snapshot()
+        except Exception:                                   # noqa: BLE001
+            pass
+
+    threading.Thread(target=run, daemon=True, name="setup-snapshot").start()
+
+
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     _check_updates_in_background()
+    _warm_setup_snapshot()
     yield
 
 
@@ -2052,9 +2072,10 @@ class LlmTestInput(BaseModel):
 
 
 @app.get("/api/setup/status")
-def setup_status() -> dict[str, Any]:
+def setup_status(refresh: bool = False) -> dict[str, Any]:
+    """配置向导的整体状态。默认复用 90 秒内的快照，``?refresh=1`` 强制重新体检。"""
     from .services import setup_status as status
-    return status.snapshot()
+    return status.snapshot(force=refresh)
 
 
 @app.post("/api/setup/test/llm")

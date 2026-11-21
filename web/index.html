@@ -39,26 +39,34 @@
   <div class="panel"><div class="panel-head"><h2>最近运行事件</h2><button data-refresh="events">刷新</button></div><div id="events" class="event-list"></div></div>
 </section>
 <section id="sources" class="view">
-  <div class="section-title"><div><h1>采集来源</h1><p>每个来源独立调度、退避和报告故障；停用来源不会删除已归档资料。</p></div></div>
-  <div class="notice">当前微信3.x可只读 PublicMsg 并增量追新，无需第三方 API；默认与「公众号库」的启用名单联动。覆盖范围以本机微信实际接收和同步的消息为准，微信需保持登录；DataXAPI 仅作为可选的外部补扫来源。</div>
-  <div class="panel"><h2>批量导入我的公众号</h2><p class="muted">每行粘贴一个公众号准确名称，自动去重。也可把微信“通讯录 → 公众号”列表截图发给 Hermes 整理成名单，无需提供微信密码。</p>
-    <textarea id="wechatNames" rows="7" placeholder="例如：&#10;Nature Portfolio&#10;Science 科学&#10;生物世界"></textarea>
-    <div class="form-grid three"><label>首次回溯天数<input id="wechatBackfillDays" type="number" min="1" max="365" value="30"></label><label>调度检查间隔（秒）<input id="wechatPollSeconds" type="number" min="30" value="300"><small>公众号会按更新频率自适应调用接口；重要号可在配置中单独设 interval_seconds</small></label><label>第三方 Key 状态<small>在「设置 → 公众号与论文」填写 DataXAPI Key 后自动启用</small></label></div>
-    <div class="actions"><button id="importWechat" class="primary">保存清单并开始监测</button><span id="wechatImportResult" class="muted"></span></div>
+  <div class="section-title">
+    <div><h1>采集来源</h1><p>这一页只管「装了哪些来源、这一趟跑得怎么样」。全局参数和密钥在「设置 → 参数设置」，收谁的公众号在「公众号库」。</p></div>
+    <div class="actions"><button id="srcRefresh" type="button">刷新</button><button id="srcAdd" class="primary" type="button">新增来源</button></div>
   </div>
-  <div class="panel"><h2>新增其他来源</h2>
-    <div class="form-grid three"><label>名称<input id="sourceName" placeholder="例如：科研 RSS"></label><label>类型<select id="sourceType"><option value="rss">RSS / Atom / RSSHub</option><option value="wechat_datax">公众号列表（DataXAPI）</option><option value="wecom_kf">企业微信微信客服（接收转发）</option><option value="wechat_local">本机微信指定聊天窗口（只读）</option><option value="wechat_public_local">本机微信公众号消息库（零API费用）</option><option value="bilibili_datax">B站关键词 / UP主（DataXAPI）</option><option value="jsonl">分享桥 JSONL</option></select></label><label>检查间隔（秒）<input id="sourcePoll" type="number" min="2" value="300"></label></div>
-    <label>来源配置（JSON）<textarea id="sourceConfig" rows="5">{"url":"https://example.com/feed.xml","kind":"article"}</textarea></label>
-    <div class="actions"><button id="addSource" class="primary">添加并持续运行</button><span id="sourceResult" class="muted"></span></div>
-    <details><summary>查看配置示例</summary><pre>公众号：{"accounts":[{"name":"公众号准确名称","id":"gh_原始编号"}],"max_price_per_call":"0.05","initial_backfill_days":30,"overlap_hours":24,"max_pages_per_account_per_run":3,"adaptive_polling":true}
-分享桥：{"path":"E:\\HermesResearchRadar\\data\\share_inbox.jsonl","start_at_end":false}
-企业微信客服：{"corp_id":"ww...","open_kf_id":"wk...","start_at_now":true}
-当前微信指定聊天窗口：{"target_wxid":"对方微信号","target_name":"窗口名称","history_mode":"index_only"}（历史仅索引，新转发自动处理；仅限已验证的微信3.x）
-本机公众号消息库：{"start_at_now":true,"use_catalog":true,"max_rows_per_poll":1000}（联动重点账号；改为false可设initial_backfill_days回扫）
-B站监测：{"queries":["基因编辑 研究进展","蛋白质结构预测"],"up_ids":["8047632"],"sort":"latest","min_views":100,"exclude_keywords":["课程","广告"]}
-B站 UP 主：也可使用你自建的 RSSHub 地址，kind 设为 video。</pre></details>
+  <div id="sourceStats" class="stat-grid src-stats"></div>
+  <div id="sourceAlert" class="notice" hidden></div>
+  <div class="toolbar">
+    <input id="srcQ" placeholder="搜索来源名称、类型或配置里的关键词">
+    <select id="srcFilter">
+      <option value="">全部状态</option>
+      <option value="on">运行中</option>
+      <option value="off">已停用</option>
+      <option value="error">有故障</option>
+    </select>
+    <span id="srcCount" class="muted"></span>
   </div>
-  <div id="sourcesList" class="card-list"></div>
+  <div id="sourcesList" class="src-grid"></div>
+  <details class="panel src-legacy">
+    <summary>批量导入公众号名单（DataX 外部补扫，可选）</summary>
+    <p class="muted">日常不用管这一栏：本机微信里关注的号会自动同步进「公众号库」，勾选即收、零 API 费用。这里只给需要外部补扫的人用——第三方接口按次计费，余额不足时该来源会自动停用，充值后在卡片上重新启用即可。</p>
+    <textarea id="wechatNames" rows="5" placeholder="每行一个公众号准确名称，例如：&#10;Nature Portfolio&#10;生物世界"></textarea>
+    <div class="form-grid three">
+      <label>首次回溯天数<input id="wechatBackfillDays" type="number" min="1" max="365" value="30"></label>
+      <label>检查间隔（秒）<input id="wechatPollSeconds" type="number" min="30" value="300"></label>
+      <label>第三方 Key 状态<small>在「设置 → 参数设置 → 公众号与论文」填写 DataXAPI Key</small></label>
+    </div>
+    <div class="actions"><button id="importWechat" type="button">保存清单并开始监测</button><span id="wechatImportResult" class="muted"></span></div>
+  </details>
 </section>
 <section id="wechat" class="view">
   <div class="section-title"><div><h1>我的公众号库</h1><p>这里管的是「收哪些公众号」：启用名单同时控制本机微信监测和可选 DataX 补扫。关注列表每天自动同步一次，新号默认停用，勾选后才开始收录。</p></div></div>
@@ -126,15 +134,15 @@ B站 UP 主：也可使用你自建的 RSSHub 地址，kind 设为 video。</pre
 </section>
 <section id="settings" class="view">
   <div class="section-title">
-    <div><h1>设置</h1><p>第一次装好，从上往下走一遍「配置向导」，大约三分钟；以后要微调再去「参数设置」。</p></div>
-    <div class="setup-score"><b id="setupDone">–</b><span>/ <i id="setupTotal">5</i> 步就绪</span></div>
+    <div><h1>设置</h1><p>平时改参数就在这一页；只有第一次装好、或者想从头再走一遍流程时，才需要切到「配置向导」。</p></div>
+    <button type="button" class="setup-score" id="setupScoreChip" title="打开配置向导"><span id="setupScoreText">配置向导</span></button>
   </div>
   <div class="subnav" role="tablist">
-    <button type="button" class="subnav-btn active" data-subtab="wizard">配置向导</button>
-    <button type="button" class="subnav-btn" data-subtab="params">参数设置</button>
+    <button type="button" class="subnav-btn active" data-subtab="params">参数设置</button>
+    <button type="button" class="subnav-btn" data-subtab="wizard">配置向导</button>
   </div>
 
-  <div class="subview" id="subtab-wizard">
+  <div class="subview" id="subtab-wizard" hidden>
     <div class="wizard-intro">
       <p>这几步是按依赖顺序排的：先让雷达能读到微信，再给它接上会读论文的模型，然后是汇报方式和追更名单，最后确认一切就绪。每一步右上角有状态，绿色的可以直接跳过。带「为什么 / 注意」的折叠块是解释，不看也不影响配置。</p>
     </div>
@@ -320,12 +328,12 @@ B站 UP 主：也可使用你自建的 RSSHub 地址，kind 设为 video。</pre
     </div>
   </div>
 
-  <div class="subview" id="subtab-params" hidden>
+  <div class="subview" id="subtab-params">
   <form id="settingsForm">
     <h2 class="group-title">常用参数</h2>
-    <div class="panel"><h2>大模型精读</h2><div class="form-grid four"><label>启用语义精读<select id="llmEnabled"><option value="false">关闭，仅规则初筛</option><option value="true">启用</option></select></label><label>调用方式<select id="llmProvider"><option value="workbuddy_cloud">WorkBuddy 点数（官方云 SDK）</option><option value="openai_compatible">OpenAI 兼容 API</option><option value="ollama">Ollama 本地模型（免 Key）</option></select></label><label>Base URL<input id="llmBase" placeholder="https://api.deepseek.com/v1"></label><label>模型<input id="llmModel"></label></div><p class="muted">WorkBuddy 点数模式已实测可由后台调用，默认 hy4free，也可填 deepseek-v4-pro 等目录内模型 ID。Ollama 默认地址为 http://127.0.0.1:11434/v1。</p><div class="actions"><button id="loadWorkbuddyModels" type="button">查看 WorkBuddy 可用模型</button><span id="workbuddyModelInfo" class="muted"></span></div><div class="accounts-head"><h3>对话模型账户</h3><button id="addAccount" type="button">添加账户</button></div><p class="muted">用于右侧「问 Hermes」对话。默认账户沿用上面的精读模型；也可以在这里加 DeepSeek、Kimi、通义等 OpenAI 兼容端点。</p><div id="accountList" class="account-list"></div><div class="form-grid three"><label>API Key（留空保持不变）<input id="llmKey" type="password" autocomplete="off"><small id="llmKeyStatus"></small></label><label>启用图片理解<select id="visionEnabled"><option value="false">关闭</option><option value="true">启用（需模型支持）</option></select></label><label>每日调用上限<input id="llmDaily" type="number" min="1"></label><label>同时精读几篇<input id="llmConcurrency" type="number" min="1" max="8"><small>默认3；精读在等网络，3-5 篇最划算，改完立刻生效</small></label><label>云精读本地初筛门槛<input id="llmPrefilter" type="number" min="0" max="100"><small>默认40；手动强制精读不受限制</small></label><label>长材料策略<select id="llmLongMaterial"><option value="head_tail">首尾证据压缩（单次，省点）</option><option value="chunked">分段笔记后综合（更慢更费点）</option></select></label></div><label>你的既往精读标准 / 额外要求<textarea id="readingPrompt" rows="5" placeholder="可粘贴你认可的精读范例或特别强调的检查项"></textarea></label></div>
+    <div class="panel"><h2>大模型精读</h2><div class="form-grid four"><label>启用语义精读<select id="llmEnabled"><option value="false">关闭，仅规则初筛</option><option value="true">启用</option></select></label><label>调用方式<select id="llmProvider"><option value="workbuddy_cloud">WorkBuddy 点数（复用本机登录）</option><option value="openai_compatible">OpenAI 兼容 API</option><option value="ollama">Ollama 本地模型（免 Key）</option></select></label><label>Base URL<input id="llmBase" placeholder="https://api.deepseek.com/v1"></label><label>模型<input id="llmModel"></label></div><p class="muted">WorkBuddy 点数模式已实测可由后台调用，默认 hy4free，也可填 deepseek-v4-pro 等目录内模型 ID。Ollama 默认地址为 http://127.0.0.1:11434/v1。</p><div class="actions"><button id="loadWorkbuddyModels" type="button">查看 WorkBuddy 可用模型</button><span id="workbuddyModelInfo" class="muted"></span></div><div class="accounts-head"><h3>对话模型账户</h3><button id="addAccount" type="button">添加账户</button></div><p class="muted">用于右侧「问 Hermes」对话。默认账户沿用上面的精读模型；也可以在这里加 DeepSeek、Kimi、通义等 OpenAI 兼容端点。</p><div id="accountList" class="account-list"></div><div class="form-grid three"><label>API Key（留空保持不变）<input id="llmKey" type="password" autocomplete="off"><small id="llmKeyStatus"></small></label><label>启用图片理解<select id="visionEnabled"><option value="false">关闭</option><option value="true">启用（需模型支持）</option></select></label><label>每日调用上限<input id="llmDaily" type="number" min="1"></label><label>同时精读几篇<input id="llmConcurrency" type="number" min="1" max="8"><small>默认3；精读在等网络，3-5 篇最划算，改完立刻生效</small></label><label>云精读本地初筛门槛<input id="llmPrefilter" type="number" min="0" max="100"><small>默认40；手动强制精读不受限制</small></label><label>长材料策略<select id="llmLongMaterial"><option value="head_tail">首尾证据压缩（单次，省点）</option><option value="chunked">分段笔记后综合（更慢更费点）</option></select></label></div><label>你的既往精读标准 / 额外要求<textarea id="readingPrompt" rows="5" placeholder="可粘贴你认可的精读范例或特别强调的检查项"></textarea></label></div>
     <div class="panel"><h2>自动汇报</h2><div class="form-grid three"><label>渠道<select id="notifyChannel"><option value="inbox">站内收件箱</option><option value="wecom_webhook">企业微信群机器人 Webhook</option><option value="serverchan">Server酱（个人微信）</option><option value="generic_webhook">通用 JSON Webhook</option></select></label><label>Webhook（留空保持不变）<input id="notifyWebhook" type="password" autocomplete="off"><small id="webhookStatus"></small></label><label>即时汇报阈值（0-100）<input id="instantThreshold" type="number" min="0" max="100"></label></div><div class="form-grid four"><label>每次至少积攒<input id="batchSize" type="number" min="1"></label><label>最长等待（分钟）<input id="maxWait" type="number" min="1"></label><label>最低科研相关度<input id="minRelevance" type="number" min="0" max="100"></label><label>每日最多汇报次数<input id="maxPerDay" type="number" min="1" max="12"></label></div><div class="form-grid three"><label>发送时段（逗号分隔）<input id="sendWindows" placeholder="08:30,13:00,20:30"><small>只在时段前后发送；其余时间自动攒着</small></label><label>重点方向细讲阈值<input id="highlightThreshold" type="number" min="0" max="100"><small>达到阈值的重点方向文章用三段讲清，其余只列一行</small></label><label>速览最多列几条<input id="digestLimit" type="number" min="3" max="30"></label></div><div class="form-grid three"><label>免打扰开始<input id="quietStart" type="time"></label><label>免打扰结束<input id="quietEnd" type="time"></label><label>重要内容可突破免打扰<select id="quietCritical"><option value="true">允许</option><option value="false">不允许</option></select></label></div><p class="muted">Server酱填写完整发送地址：https://sctapi.ftqq.com/你的SendKey.send。免费版每天 5 条，请用合并汇报控制条数。企业微信机器人 Webhook 通常为 https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...</p></div>
-    <div class="panel"><h2>公众号与论文</h2><div class="form-grid two"><label>DataXAPI Key（可选，留空保持不变）<input id="dataxKey" type="password" autocomplete="off"><small id="dataxKeyStatus"></small></label><label>学术 API 联系邮箱<input id="paperEmail" type="email" placeholder="用于 Crossref / Unpaywall 礼貌调用"></label></div></div>
+    <div class="panel"><h2>公众号与论文</h2><div class="form-grid two"><label>DataXAPI Key（可选，留空保持不变）<input id="dataxKey" type="password" autocomplete="off"><small id="dataxKeyStatus"></small></label><label>学术 API 联系邮箱<input id="paperEmail" type="email" placeholder="用于 Crossref / Unpaywall 礼貌调用"></label></div><p class="muted">这里只存凭据。装了哪些来源、哪个在报错、要改检查间隔，都去「采集来源」页看。<button type="button" class="link" id="gotoSources">去采集来源 →</button></p></div>
     <h2 class="group-title">高级与诊断</h2>
     <div class="panel"><h2>原文删除识别自检</h2><p class="muted">拿资料库里已经确认被删除的文章、一篇正常文章、一个必然 404 的地址各探测一次，直接告诉你这套判断到底管不管用。也可以在任意条目详情页点「检查原文」单独验证。</p><div class="actions"><button id="goneSelfCheck" type="button">运行自检</button><span id="goneSelfCheckInfo" class="muted"></span></div><div id="goneSelfCheckResult"></div></div>
     <div class="panel" id="wechatSpacePanel">
@@ -372,7 +380,7 @@ B站 UP 主：也可使用你自建的 RSSHub 地址，kind 设为 video。</pre
 </section>
 </main>
 </div>
-<dialog id="detailDialog"><div class="dialog-head"><button id="closeDialog" aria-label="关闭">关闭</button></div><div id="detailContent"></div></dialog>
+<dialog id="detailDialog"><div class="dialog-head"><button id="detailAsk" class="detail-ask" type="button">问 AI</button><button id="closeDialog" aria-label="关闭">关闭</button></div><div id="detailContent"></div></dialog>
 <dialog id="ruleDialog" class="rule-dialog">
   <div class="dialog-head"><h2>过滤规则</h2><button id="ruleClose" type="button">关闭</button></div>
   <p class="muted">规则只判断标题或「标题 + 简介」，入库时就生效——不想看的栏目连索引都不留。判断有误时，被挡住的条目在「全部状态 → 含已删除」里能找回并恢复。</p>
@@ -446,7 +454,7 @@ B站 UP 主：也可使用你自建的 RSSHub 地址，kind 设为 video。</pre
   <div id="taskList" class="task-list"></div>
 </aside>
 <div id="chatBackdrop" class="chat-backdrop"></div>
-<aside id="chatDrawer" class="chat-drawer" aria-hidden="true">
+<aside id="chatDrawer" class="chat-drawer" popover="manual" aria-hidden="true">
   <div class="chat-head">
     <div class="chat-title-row">
       <select id="chatModel" title="切换模型"></select>
@@ -465,7 +473,7 @@ B站 UP 主：也可使用你自建的 RSSHub 地址，kind 设为 video。</pre
   <div id="chatSessionsPanel" class="chat-sessions" hidden></div>
 </aside>
 <button id="chatFab" class="chat-fab" type="button" title="针对当前文章提问">问 AI</button>
-<div id="notePop" class="note-pop" hidden>
+<div id="notePop" class="note-pop" popover="manual" hidden>
   <div class="note-pop-head"><b>存到笔记库</b><button id="notePopClose" type="button">×</button></div>
   <blockquote id="notePopQuote"></blockquote>
   <textarea id="notePopBody" rows="3" placeholder="补一句你的想法（可留空）"></textarea>
@@ -487,7 +495,19 @@ B站 UP 主：也可使用你自建的 RSSHub 地址，kind 设为 video。</pre
     <button id="collectionManageCreate" class="primary" type="button">新建</button>
   </div>
 </dialog>
-<div id="selectionBar" class="selection-bar" hidden>
+<dialog id="sourceDialog" class="mini-dialog source-dialog">
+  <div class="dialog-head"><b id="sourceDialogTitle">新增来源</b><button id="sourceDialogClose" type="button">关闭</button></div>
+  <p class="muted" id="sourceDialogLead">先选一个类型，配置模板会自动填好，按需改几个字就能用。</p>
+  <div id="sourceTypeGrid" class="src-type-grid"></div>
+  <div class="form-grid two">
+    <label>名称<input id="srcName" placeholder="给自己看的名字，例如「Nature 系列 RSS」"></label>
+    <label>检查间隔（秒）<input id="srcPoll" type="number" min="2" value="300"><small>分享桥 2 秒、本机微信 30–60 秒、外部接口 300 秒起步</small></label>
+  </div>
+  <label id="srcEnabledLabel">保存后<select id="srcEnabled"><option value="1">立即启用</option><option value="0">先停用，配好再开</option></select></label>
+  <label>配置（JSON）<textarea id="srcConfig" rows="5"></textarea><small id="srcConfigHint"></small></label>
+  <div class="actions"><button id="srcSave" class="primary" type="button">保存</button><span id="srcResult" class="muted"></span></div>
+</dialog>
+<div id="selectionBar" class="selection-bar" popover="manual" hidden>
   <span id="selectionInfo"></span>
   <button type="button" data-sel-act="ask" class="primary">问这段</button>
   <button type="button" data-sel-act="note">存笔记</button>
@@ -504,7 +524,7 @@ B站 UP 主：也可使用你自建的 RSSHub 地址，kind 设为 video。</pre
   </div>
   <div class="image-viewer-stage" id="imageViewerStage"><img id="imageViewerImg" alt=""></div>
 </dialog>
-<div id="toast" class="toast"></div>
+<div id="toast" class="toast" popover="manual"></div>
 <script src="/static/app.js"></script>
 <script src="/static/assistant.js"></script>
 <script src="/static/setup.js"></script>

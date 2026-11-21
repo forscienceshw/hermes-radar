@@ -1,7 +1,7 @@
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const api=async(path,options={})=>{if(options.body&&typeof options.body!=='string'){options.body=JSON.stringify(options.body);options.headers={'Content-Type':'application/json',...(options.headers||{})}}const r=await fetch(path,options);const type=r.headers.get('content-type')||'';const data=type.includes('json')?await r.json():await r.text();if(!r.ok)throw new Error(data.detail||data.message||JSON.stringify(data));return data};
-const toast=message=>{const el=$('#toast');el.textContent=message;el.classList.add('show');setTimeout(()=>el.classList.remove('show'),3200)};
+const toast=message=>{const el=$('#toast');if(!el)return;el.textContent=message;if(el.showPopover&&!el.matches(':popover-open')){try{el.showPopover()}catch(e){}}el.classList.add('show');clearTimeout(el._hideTimer);el._hideTimer=setTimeout(()=>el.classList.remove('show'),3200)};
 const time=value=>value?new Date(value).toLocaleString('zh-CN',{hour12:false}):'—';
 const bool=value=>value?'true':'false';
 let currentView='dashboard', currentPapers=[];
@@ -38,7 +38,237 @@ $('#taskRetrySelected').onclick=()=>bulkJobAction('retry').catch(e=>toast(e.mess
 $('#taskDeleteSelected').onclick=()=>{if(!taskSelected.size)return toast('先勾选失败任务');if(!confirm(`删除选中的 ${taskSelected.size} 条失败记录？\n\n只删任务记录，不动资料库里的内容和已归档的正文。`))return;bulkJobAction('delete').catch(e=>toast(e.message))};
 $('#taskCleanFailed').onclick=()=>{const n=(window.taskCounts||{}).failed||0;if(!n)return toast('当前没有失败任务');if(!confirm(`删除全部 ${n} 条失败任务记录？\n\n只删任务记录，不动资料库里的内容和已归档的正文。`))return;bulkJobAction('delete',true).catch(e=>toast(e.message))};
 async function loadEvents(){try{const rows=await api('/api/events?limit=60');$('#events').innerHTML=rows.map(x=>`<div class="event"><time>${time(x.created_at)}</time><span class="badge ${x.type.includes('error')?'error':''}">${esc(x.type)}</span><span>${esc(x.message)}</span></div>`).join('')||'<p class="muted">还没有运行事件</p>'}catch(e){toast(e.message)}}
-async function loadSources(){const rows=await api('/api/sources');$('#sourcesList').innerHTML=rows.map(x=>`<div class="card source-card"><div><h3>${esc(x.name)}</h3><span class="badge ${x.enabled?'ok':''}">${x.enabled?'持续运行':'已停用'}</span> <span class="badge">${esc(x.type)}</span></div><div><div>${esc(x.capability)}</div><small>每 ${x.poll_seconds} 秒 · 上次成功 ${time(x.last_success_at)}</small>${x.catalog_total!==undefined?`<div><span class="badge ok">公众号库已启用 ${x.catalog_enabled} / ${x.catalog_total}</span>${x.catalog_linked?` <span class="badge ok">本地监测已联动${x.local_catalog&&x.local_catalog.matched?` · 已匹配 ${x.local_catalog.matched}`:''}</span>`:''}</div>`:''}${x.last_error?`<div class="error-text">${esc(x.last_error)}</div>`:''}<details><summary>来源配置</summary><pre>${esc(JSON.stringify(x.config,null,2))}</pre></details></div><div class="actions"><button data-run="${x.id}">立即检查</button>${x.type==='wechat_local'?`<button data-archive-history="${x.id}">历史全文归档（零精读点数）</button>`:''}<button data-toggle="${x.id}" data-enabled="${x.enabled?1:0}">${x.enabled?'停用':'启用'}</button></div></div>`).join('')||'<div class="panel muted">还没有来源。可先从 RSS 或分享桥 JSONL 开始。</div>'}
+/* ---------- 采集来源 ----------
+   这一页只回答一个问题：装了哪些来源、这一趟跑得怎么样。
+   新增与改配置都收进弹层，列表里只留状态卡片和动作——以前两个大表单摆在最上面，
+   真正的「哪个来源挂了」被挤到屏幕外面去了。 */
+const SOURCE_META={
+  wechat_public_local:{label:'本机公众号消息库',short:'公众号',icon:'公',note:'零 API 费用'},
+  wechat_local:{label:'本机微信聊天窗口',short:'聊天',icon:'聊',note:'只读单个窗口'},
+  jsonl:{label:'本地分享桥',short:'分享桥',icon:'桥',note:'手机分享落到文件'},
+  rss:{label:'RSS / Atom',short:'RSS',icon:'R',note:'订阅源'},
+  bilibili_datax:{label:'B站（DataX）',short:'B站',icon:'B',note:'按次计费'},
+  wechat_datax:{label:'公众号（DataX）',short:'DataX',icon:'D',note:'按次计费'},
+  wecom_kf:{label:'企业微信客服',short:'企微',icon:'企',note:'接收转发'},
+};
+const SOURCE_EXAMPLES={
+  rss:{url:'https://example.com/feed.xml',kind:'article'},
+  wechat_public_local:{start_at_now:true,use_catalog:true,max_rows_per_poll:1000},
+  wechat_local:{target_wxid:'对方的微信号',target_name:'聊天窗口名称',history_mode:'index_only'},
+  jsonl:{path:'E:/HermesResearchRadar/data/share_inbox.jsonl',start_at_end:false},
+  wecom_kf:{corp_id:'ww...',open_kf_id:'wk...',start_at_now:true},
+  bilibili_datax:{queries:['基因编辑 研究进展','蛋白质结构预测'],up_ids:[],sort:'latest',min_views:100,exclude_keywords:['课程','广告'],max_price_per_call:'0.01'},
+  wechat_datax:{accounts:[{name:'公众号准确名称',id:'gh_原始编号'}],max_price_per_call:'0.05',initial_backfill_days:30,overlap_hours:24,max_pages_per_account_per_run:3,adaptive_polling:true},
+};
+const SOURCE_HINTS={
+  rss:'url 是订阅地址；kind 填 article 或 video。RSSHub 的公众号路由也填在这里。',
+  wechat_public_local:'use_catalog=true 表示只读「公众号库」里勾选的号；start_at_now=true 只追新，不回扫历史。',
+  wechat_local:'只适配已验证的微信 3.x；history_mode=index_only 表示历史只建索引，新转发才抓全文。',
+  jsonl:'path 是收件箱文件的绝对路径，start_at_end=true 表示只看启动之后新追加的行。',
+  wecom_kf:'corp_id / open_kf_id 在企业微信后台拿；Secret 在「设置 → 参数设置」里单独保存。',
+  bilibili_datax:'queries 是关键词，up_ids 是 UP 主 mid，两个填一个就够；max_price_per_call 是单次上限。',
+  wechat_datax:'需要准确的账号名和 gh 编号；余额不足时接口返回 402，来源会被自动停用。',
+};
+let sourceRows=[],sourceQuery='',sourceFilter='',sourceEditId=null,sourceDraftType='rss';
+function sourceMeta(type){return SOURCE_META[type]||{label:type||'未知类型',short:type||'其他',icon:'·',note:'自定义采集器'}}
+function sourceState(x){return x.last_error?'error':(x.enabled?'on':'off')}
+function ago(iso){
+  if(!iso)return '还没成功过';
+  const t=new Date(iso).getTime();
+  if(!t)return '—';
+  const sec=Math.max(0,(Date.now()-t)/1000);
+  if(sec<90)return '刚刚';
+  if(sec<3600)return Math.round(sec/60)+' 分钟前';
+  if(sec<86400)return Math.round(sec/3600)+' 小时前';
+  return Math.round(sec/86400)+' 天前';
+}
+function shortPath(value){const t=String(value||'');return t.length>34?'…'+t.slice(-32):t}
+function sourceMetrics(x){
+  const cells=[[x.poll_seconds+' 秒','检查间隔'],[ago(x.last_success_at),'上次成功']];
+  const cfg=x.config||{};
+  if(x.type==='wechat_public_local'||x.type==='wechat_datax'){
+    cells.push([`${x.catalog_enabled||0} / ${x.catalog_total||0}`,'启用 / 库内总数']);
+  }else if(x.type==='jsonl'){
+    cells.push([cfg.path?shortPath(cfg.path):'没配路径','监听的收件箱']);
+  }else if(x.type==='rss'){
+    cells.push([cfg.url?shortPath(cfg.url):'没配地址','订阅地址']);
+  }else if(x.type==='bilibili_datax'){
+    cells.push([`${(cfg.queries||[]).length} 关键词 · ${(cfg.up_ids||[]).length} UP`,'监测范围']);
+  }else if(x.type==='wecom_kf'){
+    cells.push([cfg.open_kf_id||'没配客服账号','open_kf_id']);
+  }else if(x.type==='wechat_local'){
+    cells.push([cfg.target_name||cfg.target_wxid||'没配窗口','监测的聊天窗口']);
+  }else{
+    cells.push([Object.keys(cfg).length+' 项','配置项']);
+  }
+  return cells;
+}
+function sourceCard(x){
+  const meta=sourceMeta(x.type),state=sourceState(x);
+  const badge=state==='error'?`<span class="badge error">需要处理</span>`:state==='on'?`<span class="badge ok">运行中</span>`:`<span class="badge wait">已停用</span>`;
+  const count=x.error_count>1?`<span class="badge wait" title="连续失败次数">连续 ${x.error_count} 次</span>`:'';
+  const links=x.type==='wechat_public_local'&&x.catalog_linked?`<span class="badge ok">联动公众号库</span>`:'';
+  const actions=[`<button class="primary" type="button" data-src-run="${x.id}">立即检查</button>`,
+                 `<button type="button" data-src-edit="${x.id}">配置</button>`];
+  if(x.type==='wechat_local')actions.push(`<button type="button" data-src-archive="${x.id}">历史全文归档</button>`);
+  if(['wechat_public_local','wechat_datax'].includes(x.type))actions.push(`<button type="button" data-src-goto="wechat">去公众号库</button>`);
+  return `<article class="src-card" data-state="${state}" data-src-card="${x.id}">
+    <div class="src-card-head">
+      <span class="src-icon" aria-hidden="true">${esc(meta.icon)}</span>
+      <div class="src-title">
+        <h3>${esc(x.name)}</h3>
+        <div class="src-tags"><span class="badge">${esc(meta.label)}</span>${badge}${links}${count}</div>
+      </div>
+    </div>
+    <p class="src-cap">${esc(x.capability||meta.note)}</p>
+    <div class="src-metrics">${sourceMetrics(x).map(([v,k])=>`<div><b title="${esc(v)}">${esc(v)}</b><span>${esc(k)}</span></div>`).join('')}</div>
+    ${x.last_error?`<div class="src-error">${esc(x.last_error)}</div>`:''}
+    <div class="src-actions">${actions.join('')}
+      <label class="switch" title="${x.enabled?'停用后不再调度，已归档的资料都还在':'重新开始调度'}"><input type="checkbox" data-src-toggle="${x.id}"${x.enabled?' checked':''}><span class="track"></span><span class="muted">${x.enabled?'启用':'停用'}</span></label>
+    </div>
+    <details class="src-raw"><summary>查看配置</summary><pre>${esc(JSON.stringify({type:x.type,poll_seconds:x.poll_seconds,config:x.config},null,2))}</pre></details>
+  </article>`;
+}
+function renderSourceStats(){
+  const on=sourceRows.filter(x=>x.enabled).length;
+  const bad=sourceRows.filter(x=>x.last_error).length;
+  const latest=sourceRows.map(x=>x.last_success_at).filter(Boolean).sort().pop();
+  const cards=[['运行中',on],['已停用',sourceRows.length-on],['需要处理',bad],['最近成功',latest?ago(latest):'—']];
+  $('#sourceStats').innerHTML=cards.map(([k,v])=>`<div class="stat"><strong>${esc(String(v))}</strong><span>${esc(k)}</span></div>`).join('');
+  const alert=$('#sourceAlert');
+  const broken=sourceRows.filter(x=>x.last_error);
+  if(!broken.length){alert.hidden=true;alert.innerHTML='';return}
+  alert.hidden=false;
+  alert.innerHTML=`<b>${broken.length} 个来源需要你看一眼</b><ul>${broken.slice(0,4).map(x=>`<li>${esc(x.name)}：${esc((x.last_error||'').slice(0,120))}</li>`).join('')}</ul>
+    <small>来源停用不会删除任何已归档的资料；修好后把卡片上的开关打开就会继续跑。</small>
+    <button type="button" id="sourceOnlyBad">只看有故障的</button>`;
+  const btn=$('#sourceOnlyBad');
+  if(btn)btn.onclick=()=>{$('#srcFilter').value='error';sourceFilter='error';renderSources()};
+}
+function renderSources(){
+  renderSourceStats();
+  const q=sourceQuery.toLowerCase();
+  const rows=sourceRows.filter(x=>{
+    if(sourceFilter&&sourceState(x)!==sourceFilter)return false;
+    if(!q)return true;
+    return (x.name+' '+x.type+' '+sourceMeta(x.type).label+' '+JSON.stringify(x.config||{})).toLowerCase().includes(q);
+  });
+  $('#sourcesList').innerHTML=rows.map(sourceCard).join('')||
+    `<div class="panel muted">${sourceRows.length?'没有符合筛选条件的来源。':'还没有来源。点右上角「新增来源」加一个 RSS 或分享桥。'}</div>`;
+  $('#srcCount').textContent=sourceRows.length?`显示 ${rows.length} / ${sourceRows.length} 个来源`:'';
+}
+async function loadSources(){
+  sourceRows=await api('/api/sources');
+  renderSources();
+}
+function paintSourceTypes(){
+  const grid=$('#sourceTypeGrid');
+  if(!grid)return;
+  grid.innerHTML=Object.entries(SOURCE_META).map(([type,meta])=>
+    `<button type="button" class="src-type${type===sourceDraftType?' on':''}" data-src-type="${type}">
+       <b>${esc(meta.label)}</b><span>${esc(meta.note)}</span>
+     </button>`).join('');
+}
+function applySourceDraft(type){
+  sourceDraftType=type;
+  $('#srcConfig').value=JSON.stringify(SOURCE_EXAMPLES[type]||{},null,2);
+  $('#srcPoll').value=type==='jsonl'?2:(['wecom_kf','wechat_local','wechat_public_local'].includes(type)?60:300);
+  $('#srcConfigHint').textContent=SOURCE_HINTS[type]||'';
+}
+function openSourceDialog(source){
+  sourceEditId=source?source.id:null;
+  const dlg=$('#sourceDialog');
+  $('#sourceDialogTitle').textContent=source?'配置来源':'新增来源';
+  $('#sourceDialogLead').textContent=source
+    ? '改完保存立刻生效。停用不会删除已归档的资料；类型不能改，要换类型请新建一个再停掉旧的。'
+    : '先选一个类型，配置模板会自动填好，按需改几个字就能用。';
+  $('#sourceTypeGrid').hidden=!!source;
+  $('#srcEnabledLabel').hidden=!!source;
+  $('#srcResult').textContent='';
+  if(source){
+    sourceDraftType=source.type;
+    $('#srcName').value=source.name;
+    $('#srcPoll').value=source.poll_seconds;
+    $('#srcConfig').value=JSON.stringify(source.config||{},null,2);
+    $('#srcConfigHint').textContent='类型：'+sourceMeta(source.type).label;
+    paintSourceTypes();
+  }else{
+    $('#srcName').value='';
+    applySourceDraft('rss');
+    paintSourceTypes();
+  }
+  if(!dlg.open)dlg.showModal();
+}
+async function setSourceEnabled(id,enabled){
+  await api('/api/sources/'+id,{method:'PATCH',body:{enabled}});
+  toast(enabled?'已启用，下一轮开始调度':'已停用，已归档的资料都还在');
+  await loadSources();
+}
+async function runSourceNow(id){
+  await api('/api/sources/'+id+'/run',{method:'POST'});
+  toast('已排入「立即检查」，几秒后在任务队列里能看到');
+  loadHealth().catch(()=>{});
+}
+$('#srcQ').oninput=()=>{sourceQuery=$('#srcQ').value.trim();renderSources()};
+$('#srcFilter').onchange=()=>{sourceFilter=$('#srcFilter').value;renderSources()};
+$('#gotoSources').onclick=()=>switchView('sources');
+$('#srcRefresh').onclick=()=>{loadSources().then(()=>toast('已刷新来源状态')).catch(e=>toast(e.message))};
+$('#srcAdd').onclick=()=>openSourceDialog(null);
+$('#sourceDialogClose').onclick=()=>$('#sourceDialog').close();
+$('#sourceTypeGrid').onclick=e=>{
+  const btn=e.target.closest('[data-src-type]');
+  if(!btn)return;
+  applySourceDraft(btn.dataset.srcType);
+  paintSourceTypes();
+};
+$('#srcSave').onclick=async()=>{
+  const name=$('#srcName').value.trim();
+  if(!name)return toast('先给这个来源起个名字');
+  let config;
+  try{config=JSON.parse($('#srcConfig').value||'{}')}catch(e){
+    $('#srcResult').textContent='配置不是合法 JSON：'+e.message;
+    return;
+  }
+  const poll=Math.max(2,Number($('#srcPoll').value)||300);
+  const button=$('#srcSave');
+  button.disabled=true;
+  try{
+    if(sourceEditId){
+      await api('/api/sources/'+sourceEditId,{method:'PATCH',body:{name,poll_seconds:poll,config}});
+      toast('已保存，下一轮按新配置跑');
+    }else{
+      await api('/api/sources',{method:'POST',body:{name,type:sourceDraftType,poll_seconds:poll,config,enabled:$('#srcEnabled').value==='1'}});
+      toast('已创建，后台会自动检查');
+    }
+    $('#sourceDialog').close();
+    await loadSources();
+  }catch(e){
+    $('#srcResult').textContent=e.message;
+  }finally{
+    button.disabled=false;
+  }
+};
+$('#sourcesList').addEventListener('click',async e=>{
+  const run=e.target.closest('[data-src-run]');
+  if(run)return runSourceNow(run.dataset.srcRun).catch(err=>toast(err.message));
+  const edit=e.target.closest('[data-src-edit]');
+  if(edit){
+    const row=sourceRows.find(x=>x.id===edit.dataset.srcEdit);
+    if(row)openSourceDialog(row);
+    return;
+  }
+  const archive=e.target.closest('[data-src-archive]');
+  if(archive)return api('/api/sources/'+archive.dataset.srcArchive+'/archive-history',{method:'POST'})
+    .then(r=>toast(r.queued?`已开始归档，剩余 ${r.remaining} 条`:'没有待归档的条目'))
+    .catch(err=>toast(err.message));
+  const go=e.target.closest('[data-src-goto]');
+  if(go)return switchView(go.dataset.srcGoto);
+});
+$('#sourcesList').addEventListener('change',e=>{
+  const box=e.target.closest('[data-src-toggle]');
+  if(!box)return;
+  setSourceEnabled(box.dataset.srcToggle,box.checked).catch(err=>{toast(err.message);box.checked=!box.checked});
+});
 const WA_LABELS={LIFE_MOLECULAR:'生命科学基础',STRUCT_BIO:'结构生物学',CHEM_BIOL:'化学生物学',SYNTH_BIO:'合成生物学',OMICS_BIOINFO:'生信与组学',NEURO:'神经科学',BIOMED:'生物医学临床',CHEM_MAT:'化学与材料',PHYS_MATH:'物理数学天文',CS_AI:'计算机与AI',ENG_TECH:'工程与微流控',INTERDISCIPLINARY:'跨学科',SCI_COMM:'期刊与科学媒体',ACADEMIC_TOOL:'科研工具服务',CAMPUS_EDU:'校园教育',SOCIAL_HUMANITIES:'人文社科',LIFE_ENTERTAINMENT:'生活娱乐动漫',OTHER:'待判断'};
 let waAll=[],waFiltered=[],waPage=0,waLoaded=false;const waSelected=new Set(),WA_PAGE_SIZE=60;
 async function loadWechatAccounts(){const data=await api('/api/wechat/accounts?limit=2000');waAll=data.items;const s=data.stats||{};const cards=[['收录总数',s.total||0],['已启用',s.enabled||0],['CORE',s.core||0],['OPTIONAL',s.optional||0],['EXCLUDE',s.excluded||0],['已停用',(s.total||0)-(s.enabled||0)]];$('#wechatStats').innerHTML=cards.map(([k,v])=>`<div class="stat"><strong>${v}</strong><span>${k}</span></div>`).join('');if(!waLoaded){$('#waCategory').innerHTML='<option value="">全部分类</option>'+Object.entries(WA_LABELS).map(([k,v])=>`<option value="${k}">${v}</option>`).join('');waLoaded=true}applyWaFilter()}
@@ -605,12 +835,11 @@ async function loadCredits(){
     <div class="credit-models">${models}</div>
     ${rows?`<details><summary>最近调用明细</summary><div class="table-wrap"><table><thead><tr><th>时间</th><th>模型</th><th>用途</th><th>点数</th><th>输入+输出</th><th>用时</th></tr></thead><tbody>${rows}</tbody></table></div></details>`:''}`;
 }
-const loaders={dashboard:()=>Promise.all([loadHealth(),loadEvents(),loadProgress(),loadCredits()]),sources:loadSources,wechat:loadWechatAccounts,library:()=>Promise.all([loadCollections('library').then(list=>fillCollectionSelect($('#searchCollection'),list)),loadItems(),loadProgress()]),papers:loadPapers,ideas:()=>Promise.all([loadCollections('ideas').then(list=>fillCollectionSelect($('#ideaCollection'),list)),loadIdeas()]),notifications:loadNotifications,settings:()=>Promise.all([loadSettings(),window.loadSetupPanel?loadSetupPanel():null])};
+const loaders={dashboard:()=>Promise.all([loadHealth(),loadEvents(),loadProgress(),loadCredits()]),sources:loadSources,wechat:loadWechatAccounts,library:()=>Promise.all([loadCollections('library').then(list=>fillCollectionSelect($('#searchCollection'),list)),loadItems(),loadProgress()]),papers:loadPapers,ideas:()=>Promise.all([loadCollections('ideas').then(list=>fillCollectionSelect($('#ideaCollection'),list)),loadIdeas()]),notifications:loadNotifications,settings:()=>Promise.all([loadSettings(),window.wizEnsureBadge?window.wizEnsureBadge():null])};
 function switchView(view){currentView=view;$$('.view').forEach(x=>x.classList.toggle('active',x.id===view));$$('.nav').forEach(x=>x.classList.toggle('active',x.dataset.view===view));loaders[view]().catch(e=>toast(e.message))}
 $$('.nav').forEach(x=>x.onclick=()=>switchView(x.dataset.view));
+$('#detailAsk').onclick=()=>{const item=window.__currentItem;if(window.openChat)window.openChat({itemId:item?item.id:undefined,selection:''});else toast('对话面板还没加载好，稍等一秒再点')};
 $('#ingestBtn').onclick=async()=>{try{const result=await api('/api/ingest',{method:'POST',body:{text:$('#quickText').value}});$('#ingestResult').textContent=`已接收 ${result.items.length} 条，其中新增 ${result.items.filter(x=>x.created).length} 条`;$('#quickText').value='';loadHealth()}catch(e){toast(e.message)}};
-$('#sourceType').onchange=()=>{const examples={rss:{url:'https://example.com/feed.xml',kind:'article'},wecom_kf:{corp_id:'ww...',open_kf_id:'wk...',start_at_now:true},wechat_datax:{accounts:[{name:'公众号准确名称',id:'gh_原始编号'}],max_price_per_call:'0.05'},bilibili_datax:{queries:['基因编辑 研究进展','蛋白质结构预测'],up_ids:[],sort:'latest',min_views:100,exclude_keywords:['课程','广告'],max_price_per_call:'0.01'},jsonl:{path:'E:\\HermesResearchRadar\\data\\share_inbox.jsonl',start_at_end:false},wechat_local:{target_wxid:'对方的微信号',target_name:'聊天窗口名称',history_mode:'index_only'},wechat_public_local:{start_at_now:true,use_catalog:true,max_rows_per_poll:1000}};$('#sourceConfig').value=JSON.stringify(examples[$('#sourceType').value]||{},null,2);$('#sourcePoll').value=$('#sourceType').value==='jsonl'?2:($('#sourceType').value==='wecom_kf'||['wechat_local','wechat_public_local'].includes($('#sourceType').value)?60:300)};
-$('#addSource').onclick=async()=>{try{const body={name:$('#sourceName').value,type:$('#sourceType').value,poll_seconds:Number($('#sourcePoll').value),config:JSON.parse($('#sourceConfig').value)};await api('/api/sources',{method:'POST',body});$('#sourceName').value='';$('#sourceResult').textContent='已创建，后台会自动检查';loadSources()}catch(e){toast(e.message)}};
 $('#importWechat').onclick=async()=>{try{const body={names_text:$('#wechatNames').value,initial_backfill_days:Number($('#wechatBackfillDays').value),poll_seconds:Number($('#wechatPollSeconds').value)};const r=await api('/api/sources/wechat/import',{method:'POST',body});$('#wechatImportResult').textContent=`新增 ${r.added} 个；`+(r.needs_key?'清单已保存，填写 DataXAPI Key 后自动启用':'已开始自动监测与历史追补');loadSources()}catch(e){toast(e.message)}};
 function reloadItems(){itemPage=1;loadItems().catch(e=>toast(e.message))}
 $('#searchBtn').onclick=reloadItems;

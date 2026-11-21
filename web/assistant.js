@@ -102,12 +102,21 @@
 
   /* ---------------- 笔记弹层 ---------------- */
   let pendingNote = null;
+  function closeNotePop() {
+    const pop = q('#notePop');
+    pop.hidden = true;
+    if (pop.matches(':popover-open')) pop.hidePopover();
+    pendingNote = null;
+  }
   function openNotePop(section, quote, itemId) {
     pendingNote = { section, quote, itemId };
     q('#notePopQuote').textContent = quote.length > 600 ? quote.slice(0, 600) + '…' : quote;
     q('#notePopBody').value = '';
     q('#notePopFrom').textContent = section || '';
-    q('#notePop').hidden = false;
+    const pop = q('#notePop');
+    pop.hidden = false;
+    // popover 才能压在精读页上面：精读页是 modal，普通 div 的 z-index 再高也没用。
+    if (pop.showPopover && !pop.matches(':popover-open')) pop.showPopover();
     q('#notePopBody').focus();
   }
   async function saveNotePop() {
@@ -118,8 +127,7 @@
         body: { item_id: pendingNote.itemId, section: pendingNote.section,
                 quote: pendingNote.quote, body: q('#notePopBody').value },
       });
-      q('#notePop').hidden = true;
-      pendingNote = null;
+      closeNotePop();
       toast('已存入笔记库');
       if (ideaTab === 'notes') loadNotes();
     } catch (e) {
@@ -323,10 +331,15 @@
       chat.selection = '';
       chat.selectionLocked = false;
     }
-    q('#chatDrawer').classList.add('open');
+    const drawer = q('#chatDrawer');
+    // 必须是 popover：精读页用 showModal() 进了 top layer，抽屉留在普通层里会被压在
+    // 对话框背后，「看着能点、其实点不到」。popover 只占 top layer、不锁死底下那层，
+    // 所以还能一边滚文章一边问。
+    if (drawer.showPopover && !drawer.matches(':popover-open')) drawer.showPopover();
+    requestAnimationFrame(() => drawer.classList.add('open'));
     q('#chatBackdrop').classList.add('open');
     hideSelectionBar();
-    q('#chatDrawer').setAttribute('aria-hidden', 'false');
+    drawer.setAttribute('aria-hidden', 'false');
     if (!chat.accounts.length) await loadAccounts();
     updateChatContext();
     renderChat();
@@ -335,9 +348,14 @@
 
   function closeChat() {
     chat.open = false;
-    q('#chatDrawer').classList.remove('open');
+    const drawer = q('#chatDrawer');
+    drawer.classList.remove('open');
     q('#chatBackdrop').classList.remove('open');
-    q('#chatDrawer').setAttribute('aria-hidden', 'true');
+    drawer.setAttribute('aria-hidden', 'true');
+    // 等滑出动画走完再退出 top layer；这期间又点开就别关。
+    setTimeout(() => {
+      if (!chat.open && drawer.matches(':popover-open')) drawer.hidePopover();
+    }, 220);
     q('#chatSessionsPanel').hidden = true;
     // 关闭后释放锁定，下一次重新选中段落时按钮才会更新。
     chat.selection = '';
@@ -538,7 +556,7 @@
   });
 
   q('#notePopSave').onclick = saveNotePop;
-  q('#notePopClose').onclick = () => { q('#notePop').hidden = true; pendingNote = null; };
+  q('#notePopClose').onclick = closeNotePop;
   const ideaSearch = q('#ideaQ');
   if (ideaSearch) ideaSearch.oninput = () => refreshIdeasView();
   q('#noteItemFilter').onchange = renderNotes;
@@ -586,7 +604,9 @@
 
   function hideSelectionBar() {
     const bar = q('#selectionBar');
-    if (bar) bar.hidden = true;
+    if (!bar) return;
+    bar.hidden = true;
+    if (bar.matches(':popover-open')) bar.hidePopover();
   }
 
   function currentSelection() {
@@ -624,6 +644,7 @@
     fab.textContent = `问这段（${chat.selection.length} 字）`;
     const bar = q('#selectionBar');
     bar.hidden = false;
+    if (bar.showPopover && !bar.matches(':popover-open')) bar.showPopover();
     q('#selectionInfo').textContent = `${picked.block ? picked.block + ' · ' : ''}${picked.text.length} 字：${picked.text.slice(0, 26)}${picked.text.length > 26 ? '…' : ''}`;
     const rect = picked.range.getBoundingClientRect();
     const width = bar.offsetWidth || 340;

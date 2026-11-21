@@ -5,6 +5,8 @@
  * 这里刻意不复制 app.js 里的任何状态，所有事实都以后端返回为准。
  */
 let wizData = null;
+let wizLoading = null;
+let wizLoadedAt = 0;
 let wizProvider = 'workbuddy_cloud';
 let wizBound = false;
 
@@ -54,24 +56,47 @@ function wizBusy(button, on, label) {
   }
 }
 
-async function loadSetupPanel() {
-  try {
-    wizData = await api('/api/setup/status');
-  } catch (err) {
-    const box = $('#setupChecks');
-    if (box) box.innerHTML = `<div class="check-item"><span class="check-dot error"></span><div><b>读取状态失败</b><small>${esc(err.message)}</small></div></div>`;
+/* 体检一次要读微信进程和磁盘，冷启动六秒左右。所以两件事：
+ * 一是不进配置向导就不体检（打开「设置」默认是参数设置，没人想看这个）；
+ * 二是后端有 90 秒快照，返回时几乎不花时间，只有「重新体检」才强制重算。
+ */
+async function loadSetupPanel(force) {
+  if (wizLoading) return wizLoading;
+  if (!force && wizData && Date.now() - wizLoadedAt < 10 * 60 * 1000) {
+    wizRenderSetup();
     return;
   }
-  wizRenderSetup();
-  wizBindSetup();
+  const box = $('#setupChecks');
+  if (box && !wizData) {
+    box.innerHTML = '<div class="check-item"><span class="check-dot"></span><div><b>正在体检…</b><small>要读一次微信进程和磁盘，第一次大约几秒</small></div></div>';
+  }
+  wizLoading = (async () => {
+    try {
+      wizData = await api('/api/setup/status' + (force ? '?refresh=1' : ''));
+      wizLoadedAt = Date.now();
+      wizRenderSetup();
+      wizBindSetup();
+    } catch (err) {
+      if (box) box.innerHTML = `<div class="check-item"><span class="check-dot error"></span><div><b>读取状态失败</b><small>${esc(err.message)}</small></div></div>`;
+    } finally {
+      wizLoading = null;
+    }
+  })();
+  return wizLoading;
+}
+
+// 只为了顶栏那个「x / 5 步就绪」，进设置时在后台补一次，不挡页面。
+function wizEnsureBadge() {
+  if (wizData) { wizRenderSetup(); return Promise.resolve(); }
+  return loadSetupPanel();
 }
 
 function wizRenderSetup() {
   const data = wizData;
   if (!data) return;
 
-  $('#setupDone').textContent = data.progress.done;
-  $('#setupTotal').textContent = data.progress.total;
+  const chip = $('#setupScoreChip');
+  if (chip) chip.innerHTML = `<b>${data.progress.done}</b><span>/ ${data.progress.total} 步就绪</span>`;
 
   // 环境缺件单独提出来，放在最上面，避免用户配到一半才发现跑不起来。
   const warn = $('#setupWarnings');
@@ -200,14 +225,6 @@ function wizBindSetup() {
   if (wizBound) return;
   wizBound = true;
 
-  document.querySelectorAll('.subnav-btn').forEach(btn => {
-    btn.onclick = () => {
-      document.querySelectorAll('.subnav-btn').forEach(b => b.classList.toggle('active', b === btn));
-      document.querySelectorAll('.subview').forEach(view => {
-        view.hidden = view.id !== 'subtab-' + btn.dataset.subtab;
-      });
-    };
-  });
 
   document.querySelectorAll('#llmChoices .choice').forEach(btn => {
     btn.onclick = () => {
@@ -267,10 +284,10 @@ function wizBindSetup() {
     }
   };
 
-  $('#wechatRefresh').onclick = () => loadSetupPanel();
+  $('#wechatRefresh').onclick = () => loadSetupPanel(true);
   $('#setupRefresh').onclick = () => {
-    $('#setupChecks').innerHTML = '<div class="check-item"><span class="check-dot"></span><div><b>正在体检…</b></div></div>';
-    loadSetupPanel();
+    $('#setupChecks').innerHTML = '<div class="check-item"><span class="check-dot"></span><div><b>正在体检…</b><small>这次是真的重算，几秒钟</small></div></div>';
+    loadSetupPanel(true);
   };
 
   $('#llmTest').onclick = async () => {
@@ -391,16 +408,25 @@ function wizBindSetup() {
   };
 }
 
-function wizActivateSubtab(name) {
+function wizActivateSubtab(name, options) {
   document.querySelectorAll('.subnav-btn').forEach(b => b.classList.toggle('active', b.dataset.subtab === name));
   document.querySelectorAll('.subview').forEach(v => { v.hidden = v.id !== 'subtab-' + name; });
+  // 向导是「按需加载」：只有真的切过去才体检，否则打开设置就白等六秒。
+  if (name === 'wizard' && !(options && options.load === false)) loadSetupPanel();
 }
 
+document.querySelectorAll('.subnav-btn').forEach(btn => {
+  btn.onclick = () => wizActivateSubtab(btn.dataset.subtab);
+});
+const scoreChip = document.querySelector('#setupScoreChip');
+if (scoreChip) scoreChip.onclick = () => wizActivateSubtab('wizard');
+
 window.loadSetupPanel = loadSetupPanel;
+window.wizEnsureBadge = wizEnsureBadge;
+window.wizActivateSubtab = wizActivateSubtab;
 const deepTab = new URLSearchParams(location.search).get('tab');
 if (deepTab) wizActivateSubtab(deepTab);
-// 直接用 ?view=settings 打开时，本文件可能比 app.js 的初始化晚到，
-// 那时 loaders.settings 已经跑过一轮。这里补一次，保证深链也能看到状态。
+// 深链 ?view=settings&tab=wizard 时 app.js 的 loaders 可能已经跑过，这里补一次。
 if (document.querySelector('#settings') && document.querySelector('#settings').classList.contains('active')) {
-  loadSetupPanel();
+  if (deepTab === 'wizard') loadSetupPanel();
 }

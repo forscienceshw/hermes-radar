@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -220,7 +221,30 @@ def _backup_state() -> dict[str, Any]:
         return {"error": f"{type(exc).__name__}: {exc}"}
 
 
-def snapshot() -> dict[str, Any]:
+_SNAPSHOT_CACHE: tuple[float, dict[str, Any]] | None = None
+SNAPSHOT_TTL_SECONDS = 600.0
+
+
+def snapshot(force: bool = False) -> dict[str, Any]:
+    """Return the wizard snapshot, reusing a recent one unless ``force`` is set.
+
+    Building it is not free: the WeChat probe alone costs ~3 s (it walks the
+    running process looking for keys) and the disk checks another ~1 s, so a
+    cold call takes six seconds.  The settings page used to pay that every time
+    it opened, which is exactly what "点一下要卡半天" felt like.  A 10 min cache
+    keeps repeated opens instant while 重新体检 (``?refresh=1``) still gets a
+    fresh reading.
+    """
+    global _SNAPSHOT_CACHE
+    now = time.monotonic()
+    if not force and _SNAPSHOT_CACHE is not None and now - _SNAPSHOT_CACHE[0] < SNAPSHOT_TTL_SECONDS:
+        return _SNAPSHOT_CACHE[1]
+    data = _build_snapshot()
+    _SNAPSHOT_CACHE = (now, data)
+    return data
+
+
+def _build_snapshot() -> dict[str, Any]:
     settings = get_settings()
     secrets = secret_status()
     llm = _llm_state(settings, secrets)

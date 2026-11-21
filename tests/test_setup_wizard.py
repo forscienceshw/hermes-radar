@@ -76,5 +76,68 @@ class Wechat4KeyRegexTests(unittest.TestCase):
         self.assertEqual(wechat4.KEY_PATTERN.findall(b"x'" + b"z" * 64 + b"'"), [])
 
 
+class SnapshotCacheTests(unittest.TestCase):
+    """体检快照默认复用 90 秒内的结果，只有 refresh 才重算。
+
+    冷算一次约六秒：要读一次微信进程、扫一遍磁盘。设置页以前每次打开都算，
+    体感就是「点一下卡半天」——所以默认进参数设置，向导按需加载，后端再加这层缓存。
+    """
+
+    def setUp(self):
+        from app.services import setup_status
+        self.mod = setup_status
+        self.mod._SNAPSHOT_CACHE = None
+        self.addCleanup(setattr, self.mod, "_SNAPSHOT_CACHE", None)
+
+    def test_reuses_a_recent_snapshot(self):
+        calls = []
+        with patch.object(self.mod, "_build_snapshot",
+                          side_effect=lambda: calls.append(1) or {"n": len(calls)}):
+            first = self.mod.snapshot()
+            second = self.mod.snapshot()
+        self.assertEqual(len(calls), 1)
+        self.assertIs(first, second)
+
+    def test_force_rebuilds_even_when_fresh(self):
+        with patch.object(self.mod, "_build_snapshot", return_value={"ok": True}) as build:
+            self.mod.snapshot()
+            self.mod.snapshot(force=True)
+        self.assertEqual(build.call_count, 2)
+
+    def test_expired_cache_is_rebuilt(self):
+        with patch.object(self.mod, "_build_snapshot", return_value={"ok": True}) as build:
+            self.mod.snapshot()
+            stamp, data = self.mod._SNAPSHOT_CACHE
+            self.mod._SNAPSHOT_CACHE = (stamp - self.mod.SNAPSHOT_TTL_SECONDS - 1, data)
+            self.mod.snapshot()
+        self.assertEqual(build.call_count, 2)
+
+
+class SettingsPageTests(unittest.TestCase):
+    """界面上的两条硬约定，用文本锁住，避免以后又被改回去。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.html = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
+
+    def test_params_tab_is_the_default(self):
+        # 打开设置先看参数；配置向导只在真的切过去时才体检。
+        self.assertIn('class="subnav-btn active" data-subtab="params"', self.html)
+        self.assertIn('id="subtab-wizard" hidden', self.html)
+        # 顶栏那块在没体检之前只是一句「配置向导」，不要先摆个「– / 5 步」装作读到了。
+        self.assertIn('id="setupScoreText"', self.html)
+
+    def test_layers_that_must_float_above_the_reader_are_popovers(self):
+        # 精读页是 showModal()，普通 div 的 z-index 压不过 top layer。
+        for element_id in ("chatDrawer", "notePop", "selectionBar", "toast"):
+            with self.subTest(element=element_id):
+                pattern = rf'id="{element_id}"[^>]*popover="manual"'
+                self.assertRegex(self.html, pattern)
+
+    def test_reader_has_its_own_ask_entry(self):
+        # 「问 AI」浮钮在 modal 底下点不到，精读页顶栏要有一条能点的入口。
+        self.assertIn('id="detailAsk"', self.html)
+
+
 if __name__ == "__main__":
     unittest.main()
