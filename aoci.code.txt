@@ -101,7 +101,7 @@ setup_gui.py[EV8L]: F:RadarSetup.exe 图形安装向导（支持 /S 静默安装
 
 ===/<repository>/tools/===
 __init__.py[XG2T]: F:工程工具包入口：版本控制、打包、安装相关脚本，与 app/ 业务代码无关 | R:- | A:- | S:-
-aoci_doctor.py[XZ5M]: F:AOCI 接入体检与修复：查二进制、索引、shim 与 MCP 配置，--fix 写回仓库注册表与 mcp.json | R:code:tools/aoci_mcp_shim.py,code:AGENTS.md | A:python tools/aoci_doctor.py [--fix] | S:只改 mcpServers.aoci 与 repos.json，不动别人的 MCP 条目；宿主没重启前 MCP 不会重新加载，修完必须让用户去连接器页点信任或重启
+aoci_doctor.py[XZ5M]: F:AOCI 接入体检与修复：查二进制、索引、shim 一致性、仓库注册表与 MCP 配置，--fix 覆盖副本并写回配置 | R:code:tools/aoci_mcp_shim.py,code:AGENTS.md | A:python tools/aoci_doctor.py [--fix] | S:只改 mcpServers.aoci 与 repos.json，不动别人的 MCP 条目；宿主没重启前 MCP 不会重新加载，修完必须让用户去连接器页点信任或重启
 aoci_mcp_shim.py[XZ5M]: F:AOCI MCP 薄壳：按 cwd → 环境变量 → repos.json 定位仓库，转调 aoci.exe mcp | R:code:tools/aoci_doctor.py | A:stdin/stdout JSON-RPC；--resolve 打印命中的仓库 | S:只按 cwd 找 aoci.txt 是「工具列表为空」的根因——会话目录通常不在仓库里；找不到仓库要返回空工具列表而不是崩掉会话
 audit_multi.py[XQ6S]: F:只读体检：一次群发多篇时被归并吞掉了多少篇 | R:code:app/db.py | A:--days N，默认近 90 天 | S:只认「这一行确实有篇被收录过」的情况；整行都没收录说明本来没过准入，不算归并的锅；只读不写库
 build_exe.py[XV6S]: F:把源码打成 Radar.exe 与 RadarSetup.exe | R:code:installer/launcher.py,code:installer/setup_gui.py,code:tools/packaging.py | A:--launcher / --setup 可只打一个 | S:构建环境必须与运行时 .venv 分开，否则 PyInstaller 会把构建依赖混进运行环境

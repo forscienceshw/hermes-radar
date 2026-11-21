@@ -17,6 +17,7 @@ MCP 由 WorkBuddy 启动。三者任何一处断掉，表现都只是「AOCI 不
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -66,6 +67,10 @@ def _run(cmd: list[str], cwd: Path | None = None, timeout: int = 90) -> subproce
                           timeout=timeout, encoding="utf-8", errors="replace")
 
 
+def _digest(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def check(config: Path | None = None) -> dict:
     result: dict = {"ok": True, "checks": [], "repo": str(REPO)}
 
@@ -108,6 +113,15 @@ def check(config: Path | None = None) -> dict:
     shim = GLOBAL / "aoci_mcp_shim.py"
     add("MCP shim", shim.is_file(), str(shim) if shim.is_file() else "shim 缺失",
         "python tools/aoci_doctor.py --fix（从仓库复制）")
+
+    # 仓库里那份才是源；跑的是仓库外那份副本。副本落后时症状和「MCP 消失」
+    # 一样（定位逻辑还是旧的），所以两边指纹必须一致。
+    source_shim = REPO / "tools" / "aoci_mcp_shim.py"
+    if shim.is_file() and source_shim.is_file():
+        same = _digest(shim) == _digest(source_shim)
+        add("shim 版本一致", same,
+            "副本与仓库一致" if same else "副本落后于仓库 tools/aoci_mcp_shim.py",
+            "python tools/aoci_doctor.py --fix（覆盖副本）")
 
     registry = GLOBAL / "repos.json"
     default = ""
