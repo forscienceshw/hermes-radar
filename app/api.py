@@ -672,6 +672,7 @@ def update_wechat_account(account_pk: int, data: WeChatAccountPatch) -> dict[str
     row = db.one("SELECT * FROM wechat_accounts WHERE id=?", (account_pk,))
     if not row:
         raise HTTPException(404, "公众号不存在")
+    turning_on = data.enabled is True and not int(row.get("enabled") or 0)
     changes, params = [], []
     if data.enabled is not None:
         changes.append("enabled=?")
@@ -682,108 +683,78 @@ def update_wechat_account(account_pk: int, data: WeChatAccountPatch) -> dict[str
             raise HTTPException(400, "建议只能是 CORE / OPTIONAL / EXCLUDE")
         changes.append("fit=?")
         params.append(fit)
+    category_note = ""
     if data.category_code is not None:
         changes.append("category_code=?")
         params.append(str(data.category_code).strip() or "OTHER")
+    elif turning_on and str(row.get("category_code") or "OTHER") == "OTHER":
+        # 新同步进来的号默认是 OTHER，启用时按名称/简介先判一次；判不出来就
+        # 老实保留待判断，等补录到最近标题后再在后台重判一次。
+        from .services import wechat_panel
+        category, reason = wechat_panel.classify_account(row["name"], row.get("description") or "")
+        if category != "OTHER":
+            changes.append("category_code=?")
+            params.append(category)
+            category_note = f"已自动分类（{reason}）"
+        else:
+            category_note = "暂无可判依据，分类保留待判断，可手动改"
     if not changes:
         return {"updated": 0}
     db.execute(f"UPDATE wechat_accounts SET {','.join(changes)},updated_at=? WHERE id=?",
                [*params, now_iso(), account_pk])
+    backfill_queued = False
+    if turning_on:
+        # 启用不等于「从现在开始等下一篇」：把最近未收录的推文补进资料库，
+        # 用户点完启用回到列表就能看到东西。补录是幂等的，重复启用不会重复建条目。
+        backfill_queued = db.enqueue_job(
+            "wechat_backfill_account",
+            {"account_pk": account_pk, "limit": 10, "days": 30},
+            dedupe_key=f"wechat-backfill:{account_pk}:{int(time.time())}",
+            priority=80)
     if data.enabled is False:
         db.add_event("wechat_account_disabled", f"停用公众号：{row['name']}")
-    return {"updated": 1, "enabled": row.get("enabled") if data.enabled is None else int(data.enabled),
-            "fit": data.fit or row.get("fit"), "category_code": data.category_code or row.get("category_code")}
+    elif turning_on:
+        db.add_event("wechat_account_enabled",
+                     f"启用公众号：{row['name']}{'；' + category_note if category_note else ''}")
+    fresh = db.one("SELECT category_code,fit,enabled FROM wechat_accounts WHERE id=?", (account_pk,))
+    return {"updated": 1, "enabled": fresh["enabled"], "fit": fresh["fit"],
+            "category_code": fresh["category_code"], "category_note": category_note,
+            "backfill_queued": backfill_queued}
 
 
 @app.get("/api/wechat/accounts/{account_pk}/articles")
-def wechat_account_articles(account_pk: int, limit: int = 24, offset: int = 0, days: int = 365) -> dict[str, Any]:
+def wechat_account_articles(account_pk: int, limit: int = 24, offset: int = 0, days: int = 365,
+                            refresh: bool = False) -> dict[str, Any]:
     """某个号最近的推文，带上「在资料库里是什么状态」。
 
-    数据直接来自本机微信的公众号消息库（只读、零费用），不是本站收录的内容，
-    所以能看到很多还没进雷达的推文——那正是「补录」的来源。
+    打开详情就自动读本机微信——不管这个号有没有启用、有没有归档过文章。
+    三路合并：4.x/3.x 消息库 + 订阅号盒子的内存卡片 + 雷达资料库；4.x 只留了
+    会话摘要时，至少把摘要作为一张不能补录的卡片显示出来，而不是空白。
+    结果缓存 15 分钟；会话摘要或盒子里出现更新的条目时会自动重读一次。
     """
     account = db.one("SELECT * FROM wechat_accounts WHERE id=?", (account_pk,))
     if not account:
         raise HTTPException(404, "公众号不存在")
-    from .services import filters, wechat4_live, wechat_self_archive
-    channel = wechat_self_archive.local_channel()
-    gh_id = (account.get("account_id") or "").strip()
-    if channel == "4.x" and not gh_id:
-        # 4.x 的号名要从它自己的通讯录里对，3.x 那份是冻结的旧库
-        gh_id = wechat4_live.gh_for_name(account["name"])
-    if not gh_id:
-        gh_id = wechat_public.gh_id_for(account["name"], gh_id)
-    if gh_id and (account.get("account_id") or "") != gh_id:
-        # 顺手把编号补上：本机监测和面板都靠它对号。
-        db.execute("UPDATE wechat_accounts SET account_id=?,updated_at=? WHERE id=?",
-                   (gh_id, now_iso(), account_pk))
-        account["account_id"] = gh_id
-    base = {"account": {"id": account["id"], "name": account["name"], "account_id": gh_id,
-                        "category_code": account.get("category_code"), "fit": account.get("fit"),
-                        "enabled": int(account.get("enabled") or 0)},
-            "total": 0, "offset": offset, "limit": limit, "has_more": False, "items": []}
-    if not gh_id:
-        return {**base, "error": "没能把网页上的号名对到微信内部编号：微信里可能没关注它，或者备注名和清单不一致"}
-    if channel == "4.x":
-        # 合并后要支持翻页：两路微信通道至少取到当前页末尾，否则第 2 页开始
-        # 就只剩资料库那一路了。
-        window = min(200, max(60, offset + limit))
-        rows = wechat4_live.recent_for(gh_id, limit=window, days=days)
-        # 4.x 客户端不落盘公众号正文，升级前的历史全在 3.x 的 PublicMsg.db 里。
-        # 两路拼起来才是一个号完整的样子；否则面板上永远是"只有一两条"。
-        try:
-            from .services import wechat3_public
-            legacy = wechat3_public.recent_for(gh_id, limit=window, days=days)
-        except Exception:                               # noqa: BLE001
-            legacy = []
-        # 第三路是资料库自己：4.x 不落盘、3.x 库冻结、内存盒子只留最近几百条，
-        # 只问微信的话列表会停在换通道那天，而右侧小字（本站最近收录）还在往前
-        # 走——11-16 之后"点了才缺一大截"就是这么来的。
-        known = wechat_panel.library_articles(db, gh_id, account["name"], days=days)
-        merged: dict[str, dict] = {}
-        for row in list(rows) + list(legacy) + list(known):
-            merged.setdefault(row["canonical_url"], row)
-        rows = sorted(merged.values(), key=lambda item: item.get("create_time") or 0, reverse=True)
-        hint = wechat4_live.session_hint(gh_id)
-        articles = [{
-            "canonical_url": row["canonical_url"],
-            "url": row["url"],
-            "title": row["title"] or "(无标题)",
-            "summary": (row["digest"] or "")[:160],
-            "cover": "",
-            "published_at": datetime.fromtimestamp(row["create_time"], timezone.utc)
-                                     .isoformat(timespec="seconds") if row["create_time"] else "",
-            "message_id": row["local_id"],
-            # 一次群发多篇：同一 message_id 下的第几篇，前端据此区分卡片
-            "idx": int(row.get("idx") or 1),
-        } for row in rows[offset:offset + limit]]
-        payload = {"items": articles, "total": len(rows),
-                   "legacy_filled": bool(legacy),
-                   "has_more": len(rows) > offset + len(articles)}
-        if not articles and hint:
-            # 正文没落盘时，会话表里至少还有「最后一条推文的时间」，标题也常常还有
-            title = (hint["title"] or "").strip()
-            head = (f"微信在 {hint['at_display']} 收到过这个号的推送"
-                    + (f"（「{title[:36]}」）" if title else "，标题已被清过"))
-            payload["note"] = head + ("，但正文没保存到本地。4.x 客户端只在打开订阅号时"
-                                      "去服务端拉一次，正文不会常驻磁盘。")
-        elif hint.get("at") and rows and hint["at"] > rows[0]["create_time"] + 60:
-            # 有正文，但更近的那条没存下来——同样得说清楚，别让人以为就这些
-            title = (hint["title"] or "").strip()
-            payload["note"] = (f"更近的一条（{hint['at_display']}"
-                               + (f"「{title[:36]}」" if title else "") +
-                               "）微信没把正文存下来，所以列表里没有它。")
-    else:
-        try:
-            payload = wechat_public.recent_articles(gh_id, limit=limit, offset=offset, days=days)
-        except wechat_public.PublicMsgUnavailable as exc:
-            return {**base, "error": str(exc)}
+    from .services import filters
+    try:
+        payload = wechat_panel.recent_articles_for_panel(
+            db, account, limit=min(100, max(1, limit)), offset=max(0, offset),
+            days=min(3650, max(1, days)), refresh=refresh)
+    except Exception as exc:                         # noqa: BLE001
+        raise HTTPException(500, f"读取本机微信失败：{exc}") from exc
+    if payload.get("error"):
+        return payload
+
     articles = payload.get("items") or []
-    canonicals = [item["canonical_url"] for item in articles]
+    canonicals = [item["canonical_url"] for item in articles if item.get("canonical_url")]
     marks = wechat_panel.marks_for(db, canonicals)
     library = wechat_panel.library_index(db, canonicals)
     rules = filters.load_rules(db)
     for item in articles:
+        if item.get("hint"):
+            item["state"] = "hint"
+            item["detail"] = {}
+            continue
         state, detail = wechat_panel.state_of(item["canonical_url"], library, marks)
         item["state"] = state
         item["detail"] = detail or {}
@@ -791,12 +762,20 @@ def wechat_account_articles(account_pk: int, limit: int = 24, offset: int = 0, d
             hit = filters.match(rules, account["name"], item["title"], item["summary"])
             if hit:
                 item["rule_note"] = filters.describe(hit["rule"])
-    base.update({"items": articles, "total": payload.get("total") or 0,
-                 "has_more": bool(payload.get("has_more")),
-                 "note": payload.get("note") or "",
-                 "library_count": sum(1 for item in articles if item["state"] in {"archived", "index_only"}),
-                 "rules": wechat_panel.rules_for_account(db, account, gh_id)})
-    return base
+    payload["library_count"] = sum(1 for item in articles if item.get("state") in {"archived", "index_only"})
+    payload["rules"] = wechat_panel.rules_for_account(db, account, payload["account"]["account_id"])
+    # 用户点开详情往往就是为了判断「这个号值不值得启用」。此时手里有最近标题，
+    # 比启用那一刻只看名字有证据得多：判得出来就顺手补上分类，判不出来保持待判断。
+    if str(account.get("category_code") or "OTHER") == "OTHER" and articles:
+        titles = [str(item.get("title") or "") for item in articles[:12] if not item.get("hint")]
+        category, reason = wechat_panel.classify_account(
+            account["name"], account.get("description") or "", titles)
+        if category != "OTHER":
+            db.execute("UPDATE wechat_accounts SET category_code=?,updated_at=? WHERE id=?",
+                       (category, now_iso(), account_pk))
+            payload["category_note"] = f"已按最近推文自动分类：{category}（{reason}）"
+            payload["account"]["category_code"] = category
+    return payload
 
 
 @app.post("/api/wechat/accounts/{account_pk}/articles/import")
@@ -908,9 +887,21 @@ def backup_run() -> dict[str, Any]:
 
 @app.post("/api/wechat/accounts/bulk")
 def bulk_wechat_accounts(data: WeChatAccountBulkInput) -> dict[str, Any]:
+    """批量启用/停用。
+
+    启用时做两件以前没做的事：把仍是「待判断」的分类按名称/简介判一次；
+    给每个要启用的号排一个补录任务（最多 80 个，避免一次点全选把队列塞满）。
+    补录本身幂等，重复启用不会重复建条目。
+    """
+    from .services import wechat_panel
     ids = list(dict.fromkeys(int(x) for x in data.ids))
     if not ids:
         raise HTTPException(400, "没有选择公众号")
+    rows: list[dict[str, Any]] = []
+    for offset in range(0, len(ids), 300):
+        chunk = ids[offset:offset + 300]
+        rows.extend(db.query(f"SELECT * FROM wechat_accounts WHERE id IN ({','.join('?' for _ in chunk)})",
+                             chunk))
     updated = 0
     with db.transaction() as conn:
         for start in range(0, len(ids), 400):
@@ -919,7 +910,29 @@ def bulk_wechat_accounts(data: WeChatAccountBulkInput) -> dict[str, Any]:
             cursor = conn.execute(f"UPDATE wechat_accounts SET enabled=?,updated_at=? WHERE id IN ({marks})",
                                   [int(data.enabled), now_iso(), *chunk])
             updated += cursor.rowcount
-    return {"updated": updated, "enabled": data.enabled}
+    classified = queued = 0
+    if data.enabled:
+        for row in rows:
+            if str(row.get("category_code") or "OTHER") == "OTHER":
+                category, _reason = wechat_panel.classify_account(row["name"], row.get("description") or "")
+                if category != "OTHER":
+                    db.execute("UPDATE wechat_accounts SET category_code=?,updated_at=? WHERE id=?",
+                               (category, now_iso(), row["id"]))
+                    classified += 1
+            if str(row.get("fit") or "").upper() == "EXCLUDE":
+                continue
+            if queued >= 80:
+                continue
+            if db.enqueue_job("wechat_backfill_account",
+                              {"account_pk": int(row["id"]), "limit": 8, "days": 21},
+                              dedupe_key=f"wechat-backfill:{row['id']}:{int(time.time())}",
+                              priority=85):
+                queued += 1
+        if classified or queued:
+            db.add_event("wechat_accounts_bulk_enabled",
+                         f"批量启用 {updated} 个公众号：自动分类 {classified} 个，补录任务 {queued} 个")
+    return {"updated": updated, "enabled": data.enabled,
+            "classified": classified, "backfill_queued": queued}
 
 
 @app.post("/api/wechat/catalog/import")
@@ -1520,8 +1533,14 @@ def delete_idea(idea_id: str) -> dict[str, Any]:
 @app.get("/api/credits")
 def credits(days: int = 30) -> dict[str, Any]:
     from .services.credits import recent_calls, summary
-    data = summary(days=min(365, max(1, days)))
+    from .services.api_usage import recent_calls as api_recent
+    from .services.api_usage import summary as api_summary
+    window = min(365, max(1, days))
+    data = summary(days=window)
     data["recent"] = recent_calls(30)
+    # 自带 API Key 的模型单独记账：它花的是各家账户余额，不是 WorkBuddy 点数。
+    data["api"] = api_summary(days=window)
+    data["api"]["recent"] = api_recent(10)
     return data
 
 

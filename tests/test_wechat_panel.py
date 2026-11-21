@@ -459,3 +459,140 @@ class SyncDueTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AccountClassificationTest(unittest.TestCase):
+    """启用时的自动分类：只认证据，判不出来就保持 OTHER。"""
+
+    def test_name_beats_description(self):
+        category, _ = wechat_panel.classify_account("抗体XDC", "")
+        self.assertEqual(category, "BIOMED")
+
+    def test_journal_account_goes_to_science_media(self):
+        category, _ = wechat_panel.classify_account("Nature 中文速递")
+        self.assertEqual(category, "SCI_COMM")
+
+    def test_campus_account(self):
+        category, _ = wechat_panel.classify_account("某某大学研究生院")
+        self.assertEqual(category, "CAMPUS_EDU")
+
+    def test_unknown_name_stays_other(self):
+        category, reason = wechat_panel.classify_account("褚贝贝课题组")
+        self.assertEqual(category, "OTHER")
+        self.assertTrue(reason)
+
+    def test_description_alone_needs_two_hits(self):
+        # 只有一个弱线索时不硬猜
+        category, _ = wechat_panel.classify_account("某某频道", "偶尔聊聊物理")
+        self.assertEqual(category, "OTHER")
+
+    def test_titles_can_confirm_a_category(self):
+        category, _ = wechat_panel.classify_account(
+            "某某频道", "", ["CRISPR 基因编辑新进展", "合成生物学底盘细胞"])
+        self.assertEqual(category, "SYNTH_BIO")
+
+
+class ArticleCacheTest(unittest.TestCase):
+    """详情页缓存：15 分钟内复用；出现更新的推送信号就自动重读。"""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.db = Database(Path(self.temp.name) / "test.db")
+        self.account = {"id": 7, "name": "测试号", "account_id": "gh_test", "category_code": "OTHER",
+                        "fit": "OPTIONAL", "enabled": 1, "description": ""}
+        self.db.execute("""INSERT INTO wechat_accounts
+            (id,name,account_id,category_code,fit,reason,description,enabled,created_at,updated_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                        (7, "测试号", "gh_test", "OTHER", "OPTIONAL", "", "", 1, now_iso(), now_iso()))
+        now = datetime.now(timezone.utc)
+        self.rows = [{
+            "canonical_url": "https://mp.weixin.qq.com/s?__biz=x&mid=1&idx=1&sn=a",
+            "url": "https://mp.weixin.qq.com/s?__biz=x&mid=1&idx=1&sn=a",
+            "title": "最近的推文", "digest": "摘要", "create_time": int(now.timestamp()),
+            "local_id": 11, "idx": 1,
+        }]
+        self.calls = 0
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def _collect(self, *_args, **_kwargs):
+        self.calls += 1
+        return [dict(row) for row in self.rows], {"channel": "4.x", "note": "", "legacy_filled": False}
+
+    def test_second_open_hits_cache(self):
+        with patch.object(wechat_panel, "resolve_gh", return_value=("gh_test", "4.x")), \
+             patch.object(wechat_panel, "newest_signal", return_value=0), \
+             patch.object(wechat_panel, "collect_recent", side_effect=self._collect):
+            first = wechat_panel.recent_articles_for_panel(self.db, self.account, limit=10, days=30)
+            second = wechat_panel.recent_articles_for_panel(self.db, self.account, limit=10, days=30)
+        self.assertFalse(first["cached"])
+        self.assertTrue(second["cached"])
+        self.assertEqual(self.calls, 1)
+        self.assertEqual(second["total"], 1)
+        self.assertEqual(second["items"][0]["title"], "最近的推文")
+
+    def test_new_push_signal_forces_refresh(self):
+        with patch.object(wechat_panel, "resolve_gh", return_value=("gh_test", "4.x")), \
+             patch.object(wechat_panel, "collect_recent", side_effect=self._collect):
+            with patch.object(wechat_panel, "newest_signal", return_value=0):
+                wechat_panel.recent_articles_for_panel(self.db, self.account, limit=10, days=30)
+            with patch.object(wechat_panel, "newest_signal", return_value=10 ** 10):
+                second = wechat_panel.recent_articles_for_panel(self.db, self.account, limit=10, days=30)
+        self.assertFalse(second["cached"])
+        self.assertEqual(self.calls, 2)
+
+    def test_explicit_refresh_bypasses_cache(self):
+        with patch.object(wechat_panel, "resolve_gh", return_value=("gh_test", "4.x")), \
+             patch.object(wechat_panel, "newest_signal", return_value=0), \
+             patch.object(wechat_panel, "collect_recent", side_effect=self._collect):
+            wechat_panel.recent_articles_for_panel(self.db, self.account, limit=10, days=30)
+            wechat_panel.recent_articles_for_panel(self.db, self.account, limit=10, days=30, refresh=True)
+        self.assertEqual(self.calls, 2)
+
+    def test_hint_newer_than_items_still_hits_cache(self):
+        """微信只留下会话摘要（没有链接）时，items 里永远不会有对应条目。
+
+        只比 newest_ts 会让缓存每打开一次就作废、反复扫进程内存；
+        写入时把信号存进 meta，下一次就能命中。
+        """
+        with patch.object(wechat_panel, "resolve_gh", return_value=("gh_test", "4.x")), \
+             patch.object(wechat_panel, "newest_signal", return_value=10 ** 9), \
+             patch.object(wechat_panel, "collect_recent", side_effect=self._collect):
+            first = wechat_panel.recent_articles_for_panel(self.db, self.account, limit=10, days=30)
+            second = wechat_panel.recent_articles_for_panel(self.db, self.account, limit=10, days=30)
+        self.assertFalse(first["cached"])
+        self.assertTrue(second["cached"])
+        self.assertEqual(self.calls, 1)
+
+
+class DetailAutoClassifyTest(unittest.TestCase):
+    """点开详情看到最近标题后，待分类的号要能自动落位。"""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.db = Database(Path(self.temp.name) / "test.db")
+        self.db.execute("""INSERT INTO wechat_accounts
+            (name,account_id,category_code,fit,reason,description,enabled,created_at,updated_at)
+            VALUES('某某课题组','gh_abc','OTHER','OPTIONAL','','',1,'t','t')""")
+        self.account = self.db.one("SELECT * FROM wechat_accounts WHERE name='某某课题组'")
+
+    def test_titles_from_detail_page_settle_the_category(self):
+        from app import api
+        for mid, title in ((9201, "CRISPR 基因编辑新进展"), (9202, "合成生物学底盘细胞改造")):
+            wechat_panel.import_articles(self.db, self.account, "gh_abc", [{
+                "url": f"http://mp.weixin.qq.com/s?__biz=B&mid={mid}&idx=1&sn=x",
+                "title": title, "summary": "",
+                "published_at": "2026-11-20T08:30:00+00:00", "message_id": mid}])
+        hint = {"at": 0, "at_display": "", "title": "", "unread": 0, "last_type": 0}
+        with patch.object(api, "db", self.db), \
+                patch.object(wechat_self_archive, "local_channel", return_value="4.x"), \
+                patch.object(wechat4_live, "recent_for", return_value=[]), \
+                patch.object(wechat4_live, "session_hint", return_value=hint), \
+                patch.object(wechat3_public, "recent_for", return_value=[]):
+            payload = api.wechat_account_articles(int(self.account["id"]), limit=10, offset=0, days=60)
+        self.assertEqual(payload["account"]["category_code"], "SYNTH_BIO")
+        self.assertTrue(payload.get("category_note"))
+        fresh = self.db.one("SELECT category_code FROM wechat_accounts WHERE id=?", (self.account["id"],))
+        self.assertEqual(fresh["category_code"], "SYNTH_BIO")

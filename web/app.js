@@ -275,7 +275,7 @@ async function loadWechatAccounts(){const data=await api('/api/wechat/accounts?l
 async function syncLocalAccounts(){const b=$('#waSyncLocal');b.disabled=true;b.textContent='同步中…';try{const d=await api('/api/wechat/accounts/sync-local',{method:'POST',body:{}});toast(`本机关注 ${d.found} 个：新增 ${d.inserted}、更新 ${d.updated}${d.merged?`、归并 ${d.merged}`:''}`);await loadWechatAccounts()}finally{b.disabled=false;b.textContent='同步本机关注'}}
 function applyWaFilter(){const q=$('#waQ').value.trim().toLowerCase(),cat=$('#waCategory').value,fit=$('#waFit').value,en=$('#waEnabled').value;waFiltered=waAll.filter(x=>(!q||(x.name+' '+x.description+' '+x.reason+' '+(x.recent_article?x.recent_article.title:'')+' '+WA_LABELS[x.category_code]).toLowerCase().includes(q))&&(!cat||x.category_code===cat)&&(!fit||x.fit===fit)&&(!en||String(x.enabled)===en));waPage=0;renderWechat()}
 function renderWechat(){const pages=Math.max(1,Math.ceil(waFiltered.length/WA_PAGE_SIZE));waPage=Math.min(waPage,pages-1);const rows=waFiltered.slice(waPage*WA_PAGE_SIZE,(waPage+1)*WA_PAGE_SIZE);$('#waRows').innerHTML=rows.map(x=>`<tr><td><input type="checkbox" data-wa-check="${x.id}" ${waSelected.has(x.id)?'checked':''}></td><td><b class="wa-open" data-wa-open="${x.id}" title="点开看它最近的推文">${esc(x.name)}</b>${x.account_id?`<div class="update">${esc(x.account_id)}</div>`:''}</td><td><span class="badge">${esc(WA_LABELS[x.category_code]||x.category_code)}</span></td><td><span class="badge ${x.fit.toLowerCase()}">${x.fit}</span></td><td><span class="badge ${x.enabled?'ok':'wait'}">${x.enabled?'已启用':'已停用'}</span></td><td><span class="reason">${esc(x.reason||'—')}</span><br><span class="recent">${x.recent_article?`最近：${esc((x.recent_article.title||'').slice(0,70))} · ${time(x.recent_article.discovered_at)}`:'<span class="muted">本站还没收录它的文章</span>'}</span>${x.description?`<br><small class="muted">简介：${esc(x.description.slice(0,56))}</small>`:''}</td></tr>`).join('')||'<tr><td colspan="6" class="muted">没有匹配的公众号</td></tr>';$('#waPageInfo').textContent=`第 ${waPage+1}/${pages} 页 · 筛选结果 ${waFiltered.length} 个`;$('#waSelectedInfo').textContent=`已勾选 ${waSelected.size} 个`;$('#waHeaderCheck').checked=rows.length>0&&rows.every(x=>waSelected.has(x.id));$('#waPrev').disabled=waPage<=0;$('#waNext').disabled=waPage>=pages-1}
-async function setWaEnabled(enabled){if(!waSelected.size)return toast('请先勾选公众号');const r=await api('/api/wechat/accounts/bulk',{method:'POST',body:{ids:[...waSelected],enabled}});toast(`已${enabled?'启用':'停用'} ${r.updated} 个公众号`);await loadWechatAccounts()}
+async function setWaEnabled(enabled){if(!waSelected.size)return toast('请先勾选公众号');const r=await api('/api/wechat/accounts/bulk',{method:'POST',body:{ids:[...waSelected],enabled}});toast(`已${enabled?'启用':'停用'} ${r.updated} 个公众号`+(enabled&&r.classified?`，自动分类 ${r.classified} 个`:'')+(enabled&&r.backfill_queued?`，${r.backfill_queued} 个补录任务已排队`:''));await loadWechatAccounts();if(enabled&&r.backfill_queued)setTimeout(()=>loadWechatAccounts().catch(()=>{}),8000)}
 $('#waQ').oninput=applyWaFilter;$('#waSearch').onclick=applyWaFilter;$('#waCategory').onchange=applyWaFilter;$('#waFit').onchange=applyWaFilter;$('#waEnabled').onchange=applyWaFilter;$('#waPrev').onclick=()=>{waPage--;renderWechat()};$('#waNext').onclick=()=>{waPage++;renderWechat()};$('#waEnable').onclick=()=>setWaEnabled(true).catch(e=>toast(e.message));$('#waDisable').onclick=()=>setWaEnabled(false).catch(e=>toast(e.message));$('#waCheckPage').onclick=()=>{waFiltered.slice(waPage*WA_PAGE_SIZE,(waPage+1)*WA_PAGE_SIZE).forEach(x=>waSelected.add(x.id));renderWechat()};$('#waUncheckPage').onclick=()=>{waSelected.clear();renderWechat()};$('#waCheckAll').onclick=()=>{waFiltered.forEach(x=>waSelected.add(x.id));renderWechat()};$('#waSyncLocal').onclick=()=>syncLocalAccounts().catch(e=>toast(e.message));$('#waHeaderCheck').onchange=e=>{waFiltered.slice(waPage*WA_PAGE_SIZE,(waPage+1)*WA_PAGE_SIZE).forEach(x=>e.target.checked?waSelected.add(x.id):waSelected.delete(x.id));renderWechat()};
 $('#waRows').addEventListener('change',e=>{if(e.target.matches('[data-wa-check]')){const id=+e.target.dataset.waCheck;e.target.checked?waSelected.add(id):waSelected.delete(id);$('#waSelectedInfo').textContent=`已勾选 ${waSelected.size} 个`}});
 
@@ -289,7 +289,7 @@ let waPresets=[],waExcludeTargets=[];
 const WA_PANEL_PAGE=24;
 
 const waStateTag={archived:'<span class="wa-tag ok">已收录</span>',index_only:'<span class="wa-tag info">仅索引</span>',
-  excluded:'<span class="wa-tag warn">已排除</span>',new:''};
+  excluded:'<span class="wa-tag warn">已排除</span>',hint:'<span class="wa-tag wait">仅摘要</span>',new:''};
 
 function waCard(item){
   const state=item.state||'new';
@@ -299,18 +299,22 @@ function waCard(item){
   const detail=item.detail||{};
   let note='';
   if(state==='excluded')note=`<div class="wa-note">${esc(detail.reason||'已排除')}</div>`;
+  else if(state==='hint')note='<div class="wa-note">微信只保留了这条会话摘要，正文与链接没有落盘，无法补录。</div>';
   else if(item.rule_note)note=`<div class="wa-note">按现有规则不会收录：${esc(item.rule_note)}</div>`;
   const tools=[];
   if(state==='new')tools.push('<button type="button" data-wa-act="import">补录</button>');
   if(state==='index_only')tools.push('<button type="button" data-wa-act="import">补全文</button>');
   if(state==='archived'&&detail.item_id)tools.push('<button type="button" data-wa-act="go">在资料库</button>');
   if(state==='excluded')tools.push('<button type="button" data-wa-act="restore">恢复</button>');
-  if(state!=='excluded')tools.push('<button type="button" class="danger" data-wa-act="exclude">排除</button>');
+  if(state!=='excluded'&&state!=='hint')tools.push('<button type="button" class="danger" data-wa-act="exclude">排除</button>');
   const picked=waPanelSelected.has(item.canonical_url)?' picked':'';
+  const title=item.url
+    ? `<a class="wa-title" href="${esc(item.url)}" target="_blank" rel="noreferrer" title="${esc(item.summary||'')}">${esc(item.title)}</a>`
+    : `<span class="wa-title" title="${esc(item.summary||'')}">${esc(item.title)}</span>`;
   return `<article class="wa-card${picked}" data-state="${state}" data-wa-key="${esc(item.canonical_url)}">
     <div class="wa-cover ${item.cover?'':'noimg'}">${initial}${cover}<span class="wa-pick">✓</span>${waStateTag[state]||''}</div>
     <div class="wa-body">
-      <a class="wa-title" href="${esc(item.url)}" target="_blank" rel="noreferrer" title="${esc(item.summary||'')}">${esc(item.title)}</a>
+      ${title}
       ${note}
       <div class="wa-meta"><span>${time(item.published_at).slice(0,10)}</span></div>
       <div class="wa-tools">${tools.join('')}</div>
@@ -337,13 +341,14 @@ async function openWaPanel(id){
   await loadWaPanel(true);
 }
 function closeWaPanel(){const d=$('#waArticles');if(d.open)d.close()}
+$('#waPanelRefresh').onclick=()=>loadWaPanel(true,true).catch(e=>toast(e.message));
 
-async function loadWaPanel(reset){
+async function loadWaPanel(reset,refresh){
   if(!waPanelAcc)return;
   if(reset){waPanelOffset=0;waPanelItems=[];}
   const more=$('#waPanelMore');more.hidden=true;more.disabled=true;
   try{
-    const data=await api(`/api/wechat/accounts/${waPanelAcc.id}/articles?limit=${WA_PANEL_PAGE}&offset=${waPanelOffset}&days=${waPanelDays}`);
+    const data=await api(`/api/wechat/accounts/${waPanelAcc.id}/articles?limit=${WA_PANEL_PAGE}&offset=${waPanelOffset}&days=${waPanelDays}${refresh?'&refresh=1':''}`);
     if(data.error){
       $('#waPanelStatus').textContent=data.error;
       if(reset)$('#waArticlesGrid').innerHTML='<div class="wa-empty">这台电脑上暂时看不到它的推文</div>';
@@ -356,7 +361,20 @@ async function loadWaPanel(reset){
     const bits=[`共 ${data.total} 篇`];
     bits.push(`资料库已收录 ${waPanelItems.filter(x=>x.state==='archived'||x.state==='index_only').length} 篇`);
     if(waPanelRules.length)bits.push(`本号排除规则 ${waPanelRules.length} 条`);
+    if(data.cached)bits.push(`本机缓存 ${Math.max(0,Math.round((data.cache_age||0)/60))} 分钟前${data.stale?'（刷新失败）':''}`);
+    else bits.push('刚刚从本机微信重读');
+    if(data.memory_cards)bits.push(`盒子卡片 ${data.memory_cards} 条`);
+    if(data.category_note){
+      bits.push(data.category_note);
+      // 列表在弹层后面，顺手刷新一次，关掉详情就能看到分类已变。
+      setTimeout(()=>loadWechatAccounts().catch(()=>{}),0);
+    }
     if(data.note)bits.push(data.note);
+    if(data.account&&data.account.category_code){
+      waPanelAcc.category_code=data.account.category_code;
+      const pick=$('#waPanelCategory');
+      if(pick&&[...pick.options].some(o=>o.value===data.account.category_code))pick.value=data.account.category_code;
+    }
     $('#waPanelStatus').textContent=bits.join(' · ');
     $('#waArticlesGrid').innerHTML=waPanelItems.map(waCard).join('')||'<div class="wa-empty">这段时间里它没有推文</div>';
     more.hidden=!waPanelHasMore;
@@ -465,10 +483,17 @@ $('#waPanelFit').onchange=async e=>{
 $('#waPanelEnabled').onchange=async e=>{
   if(!waPanelAcc)return;
   try{
-    await api(`/api/wechat/accounts/${waPanelAcc.id}`,{method:'PATCH',body:{enabled:e.target.checked}});
+    const r=await api(`/api/wechat/accounts/${waPanelAcc.id}`,{method:'PATCH',body:{enabled:e.target.checked}});
     waPanelAcc.enabled=e.target.checked?1:0;
-    toast(e.target.checked?'已恢复监测':'已停止监测这个号');
-    loadWechatAccounts().catch(()=>{});
+    if(e.target.checked){
+      if(r.category_code){waPanelAcc.category_code=r.category_code;$('#waPanelCategory').value=r.category_code}
+      toast('已启用'+(r.category_note?`；${r.category_note}`:'')+(r.backfill_queued?'；正在补录最近推文':''));
+      // 补录在后台跑，几秒后刷新列表才能看到「最近」那一列和自动分类结果。
+      setTimeout(()=>loadWechatAccounts().catch(()=>{}),7000);
+    }else{
+      toast('已停止监测这个号');
+      loadWechatAccounts().catch(()=>{});
+    }
   }catch(err){toast(err.message)}
 };
 $('#waExcludePreset').onchange=applyWaPreset;
@@ -519,7 +544,7 @@ function itemStage(x){
 let itemPage=1,itemPageSize=50,itemTotal=0,itemCollections=[],ideaCollections=[];
 const itemPicked=new Set();
 function daysAgoIso(value){const n=Number(value||0);if(!n)return '';const d=new Date();d.setHours(0,0,0,0);d.setDate(d.getDate()-(n-1));return d.toISOString()}
-async function loadCollections(scope){try{const rows=await api('/api/collections?scope='+scope);if(scope==='library'){itemCollections=rows;window.__itemCollections=rows}else{ideaCollections=rows;window.__ideaCollections=rows}return rows}catch(e){return []}}
+async function loadCollections(scope){try{const rows=await api('/api/collections?scope='+scope);if(scope==='library'){itemCollections=rows;window.__itemCollections=rows}else{ideaCollections=rows;window.__ideaCollections=rows}syncCollectionButton(scope);return rows}catch(e){return []}}
 function collectionName(scope,id){const list=scope==='library'?itemCollections:ideaCollections;const hit=list.find(c=>c.id===id);return hit?hit.name:''}
 function nameKey(value){return (value||'').toLowerCase().replace(/[\s\-_·、,，.。:：()（）\[\]【】"'“”]/g,'')}
 function editDistance(a,b){
@@ -544,27 +569,98 @@ function findSimilarCollections(name,list){
     return Math.min(key.length,other.length)>=4&&editDistance(key,other)<=1;
   }).slice(0,3);
 }
-function fillCollectionSelect(select,list,keyword){
-  if(!select)return;
-  const keep=select.value;
-  const head=select.querySelector('option[value=""]');
-  const word=(keyword||'').trim().toLowerCase();
-  const rows=Array.isArray(list)?list:[];
-  const shown=word?rows.filter(c=>(c.name||'').toLowerCase().includes(word)):rows;
-  // 当前选中的夹子即使被关键字过滤掉也要留着，否则打两个字筛选条件就被悄悄重置了。
-  const kept=keep&&keep!=='__none__'?rows.find(c=>c.id===keep):null;
-  const extra=kept&&!shown.includes(kept)?[kept]:[];
-  select.innerHTML=`<option value="">${esc(head?head.textContent:'全部收藏夹')}</option><option value="__none__">未收藏</option>`+
-    [...extra,...shown].map(c=>`<option value="${esc(c.id)}">${esc(c.name)}${c.count?`（${c.count}）`:''}</option>`).join('');
-  if(word&&!shown.length)select.options[0].textContent='没有匹配的收藏夹';
-  select.value=[...select.options].some(o=>o.value===keep)?keep:'';
+/* 筛选收藏夹不再用 <select>：选项一多就翻不动，也没地方放搜索框和排序。
+   现在的交互是「一个按钮 → 弹层里搜索/排序/点一行」，和「收藏到」保持同一套设计。
+   旧实现还有两个真 bug：搜不到时把第 0 个 option 的文案改成「没有匹配的收藏夹」，
+   下一次渲染又把这段文案当标题读回去，于是「全部收藏夹」被永久顶掉。 */
+let libraryCollectionFilter='',ideaCollectionFilter='';
+let collectionPickScope='library';
+function collectionFilterValue(scope){return scope==='library'?libraryCollectionFilter:ideaCollectionFilter}
+function collectionFilterLabel(scope){
+  const value=collectionFilterValue(scope);
+  if(value==='__none__')return '未收藏';
+  if(!value)return '全部收藏夹';
+  const list=scope==='library'?itemCollections:ideaCollections;
+  const hit=list.find(c=>c.id===value);
+  return hit?hit.name:'全部收藏夹';
+}
+function syncCollectionButton(scope){
+  const label=$(scope==='library'?'#searchCollectionLabel':'#ideaCollectionLabel');
+  if(!label)return;
+  label.textContent=collectionFilterLabel(scope);
+  const button=label.closest('button');
+  if(button)button.classList.toggle('active',!!collectionFilterValue(scope));
+  if($('#collectionPick').open&&collectionPickScope===scope)renderCollectionPick();
+}
+function sortCollectionRows(rows,mode){
+  const copy=(rows||[]).slice();
+  if(mode==='count')copy.sort((a,b)=>(b.count||0)-(a.count||0)||String(a.name).localeCompare(String(b.name),'zh'));
+  else if(mode==='name')copy.sort((a,b)=>String(a.name).localeCompare(String(b.name),'zh'));
+  else copy.sort((a,b)=>String(b.last_used||b.created_at||'').localeCompare(String(a.last_used||a.created_at||'')));
+  return copy;
+}
+function renderCollectionPick(){
+  const scope=collectionPickScope;
+  const list=scope==='library'?itemCollections:ideaCollections;
+  const word=($('#collectionPickSearch')?.value||'').trim().toLowerCase();
+  const mode=$('#collectionPickSort')?.value||'recent';
+  const current=collectionFilterValue(scope);
+  const matched=sortCollectionRows(word?list.filter(c=>(c.name||'').toLowerCase().includes(word)):list,mode);
+  const fixed=[
+    {id:'',name:'全部收藏夹',count:null,hint:'不按收藏夹限制'},
+    {id:'__none__',name:'未收藏',count:null,hint:'还没放进任何收藏夹'},
+  ];
+  const head=fixed.map(row=>`<button type="button" class="collection-pick-row${row.id===current?' current':''}" data-pick-collection="${esc(row.id)}"><span>${esc(row.name)}</span><small class="muted">${esc(row.hint)}</small><b>${row.id===current?'✓':''}</b></button>`).join('');
+  const body=matched.map(c=>`<button type="button" class="collection-pick-row${c.id===current?' current':''}" data-pick-collection="${esc(c.id)}"><span>${esc(c.name)}</span><small class="muted">${c.count||0} 条${c.last_used?` · 最近 ${time(c.last_used).slice(0,10)}`:''}</small><b>${c.id===current?'✓':''}</b></button>`).join('');
+  const empty=word&&!matched.length?`<div class="collection-pick-empty">没有匹配「${esc(word)}」的收藏夹。<br>可以换个词，或到「管理收藏夹」里新建。</div>`:'';
+  $('#collectionPickList').innerHTML=head+body+empty;
+  $('#collectionPickHint').textContent=word
+    ? `在 ${list.length} 个收藏夹里搜到 ${matched.length} 个`
+    : `共 ${list.length} 个收藏夹 · 点一行按它筛选`;
+}
+function positionCollectionPop(pop,anchor){
+  const rect=anchor.getBoundingClientRect();
+  const width=pop.offsetWidth||320,height=pop.offsetHeight||260;
+  const left=Math.min(window.innerWidth-width-12,Math.max(12,rect.left));
+  let top=rect.bottom+8;
+  if(top+height>window.innerHeight-12)top=Math.max(12,rect.top-height-8);
+  pop.style.left=left+'px';
+  pop.style.top=top+'px';
+}
+async function openCollectionPick(scope,anchor){
+  collectionPickScope=scope;
+  if($('#collectionPickSearch'))$('#collectionPickSearch').value='';
+  if($('#collectionPickSort'))$('#collectionPickSort').value='recent';
+  $('#collectionPickTitle').textContent=scope==='library'?'按收藏夹筛选资料':'按收藏夹筛选 Ideas 与笔记';
+  await loadCollections(scope);
+  renderCollectionPick();
+  const pop=$('#collectionPick');
+  if(pop.open)pop.close();
+  pop.showModal();
+  positionCollectionPop(pop,anchor);
+  $('#collectionPickSearch').focus();
+}
+function closeCollectionPick(){const pop=$('#collectionPick');if(pop&&pop.open)pop.close()}
+function applyCollectionFilter(scope,value){
+  if(scope==='library')libraryCollectionFilter=value||'';
+  else ideaCollectionFilter=value||'';
+  syncCollectionButton(scope);
+  closeCollectionPick();
+  if(scope==='library')reloadItems();
+  else loadIdeas().catch(e=>toast(e.message));
+}
+function collectionManageRows(scope){
+  const list=scope==='library'?itemCollections:ideaCollections;
+  const word=($('#collectionDialogSearch')?.value||'').trim().toLowerCase();
+  const mode=$('#collectionDialogSort')?.value||'recent';
+  return sortCollectionRows(word?list.filter(c=>(c.name||'').toLowerCase().includes(word)):list,mode);
 }
 function scheduleListRefresh(){if(listRefreshTimer)return;listRefreshTimer=setTimeout(()=>{listRefreshTimer=null;if(currentView==='library')loadItems().catch(()=>{})},4000)}
 async function loadItems(){
   const params=new URLSearchParams({q:$('#searchQ').value.trim(),kind:$('#searchKind').value,status:$('#searchStatus').value,limit:itemPageSize,offset:(itemPage-1)*itemPageSize});
   const since=daysAgoIso($('#searchRange').value);
   if(since)params.set('since',since);
-  const collection=$('#searchCollection').value;
+  const collection=libraryCollectionFilter;
   if(collection)params.set('collection',collection);
   if($('#searchExcluded').checked)params.set('include_excluded','true');
   if($('#hideLow').checked)params.set('hide_low','true');
@@ -665,7 +761,7 @@ async function toggleCollect(collectionId,member){
   target.ids=r.member?[...new Set([...target.ids,collectionId])]:target.ids.filter(x=>x!==collectionId);
   await loadCollections(collectScope(target.entryType));
   renderCollectPop();
-  fillCollectionSelect($('#searchCollection'),itemCollections,$('#searchCollectionFilter').value);
+  syncCollectionButton(collectScope(target.entryType));
   if(target.refresh)target.refresh().catch(()=>{});
   toast(r.member?'已加入收藏夹':'已移出收藏夹');
 }
@@ -680,13 +776,15 @@ async function createCollectionFor(name,scope,entry){
     renderCollectPop();
     if(collectTarget.refresh)collectTarget.refresh().catch(()=>{});
   }
-  fillCollectionSelect($('#searchCollection'),itemCollections,$('#searchCollectionFilter').value);
+  syncCollectionButton(scope);
   toast(`已创建收藏夹「${created.name}」`);
   return created;
 }
 async function openCollectionManager(scope){
   window.__manageScope=scope;
   $('#collectionDialogTitle').textContent=scope==='library'?'管理资料库收藏夹':'管理 Ideas 与笔记收藏夹';
+  if($('#collectionDialogSearch'))$('#collectionDialogSearch').value='';
+  if($('#collectionDialogSort'))$('#collectionDialogSort').value='recent';
   await loadCollections(scope);
   renderCollectionManage();
   $('#collectionDialog').showModal();
@@ -694,7 +792,10 @@ async function openCollectionManager(scope){
 function renderCollectionManage(){
   const scope=window.__manageScope||'library';
   const list=scope==='library'?itemCollections:ideaCollections;
-  $('#collectionDialogList').innerHTML=list.length?list.map(c=>`<div class="row" data-collection-row="${esc(c.id)}"><input value="${esc(c.name)}" data-collection-name="${esc(c.id)}"><span class="count">${c.count||0} 项</span><button type="button" data-collection-save="${esc(c.id)}">改名</button><button type="button" class="danger" data-collection-delete="${esc(c.id)}">删除</button></div>`).join(''):'<div class="muted">还没有收藏夹。</div>';
+  const rows=collectionManageRows(scope);
+  const word=($('#collectionDialogSearch')?.value||'').trim();
+  $('#collectionDialogList').innerHTML=rows.length?rows.map(c=>`<div class="row" data-collection-row="${esc(c.id)}"><input value="${esc(c.name)}" data-collection-name="${esc(c.id)}"><span class="count">${c.count||0} 项${c.last_used?` · ${time(c.last_used).slice(0,10)}`:''}</span><button type="button" data-collection-save="${esc(c.id)}">改名</button><button type="button" class="danger" data-collection-delete="${esc(c.id)}">删除</button></div>`).join('')
+    :(word?`<div class="muted">没有匹配「${esc(word)}」的收藏夹。共 ${list.length} 个，换个词试试。</div>`:'<div class="muted">还没有收藏夹。</div>');
 }
 const listBlock=(title,items)=>Array.isArray(items)&&items.length?`<div class="detail-section"><h3>${title}</h3><ol>${items.map(x=>`<li>${esc(typeof x==='string'?x:JSON.stringify(x))}</li>`).join('')}</ol></div>`:'';
 let detailWatchTimer=null,detailWatchId=null,detailSeq=0;
@@ -830,7 +931,7 @@ async function loadIdeas(){
   const params=new URLSearchParams();
   const since=daysAgoIso($('#ideaRange').value);
   if(since)params.set('since',since);
-  const collection=$('#ideaCollection').value;
+  const collection=ideaCollectionFilter;
   if(collection)params.set('collection',collection);
   const keyword=($('#ideaQ').value||'').trim().toLowerCase();
   const rows=(await api('/api/ideas?'+params.toString())).filter(x=>!keyword||`${x.title} ${x.content} ${(x.tags||[]).join(' ')}`.toLowerCase().includes(keyword));
@@ -880,11 +981,15 @@ async function loadProgress(){
 async function loadCredits(){
   let c;try{c=await api('/api/credits?days=30')}catch(e){return}
   const money=v=>Number(v||0).toFixed(v>=100?1:2);
-  // token 和点数同一格显示：两万以下给精确值，再往上给「万 / 亿」，
+  // token 和点数分开显示：两万以下给精确值，再往上给「万 / 亿」，
   // 免得一位数一直涨到七位数把卡片撑破。
   const tokens=v=>{const n=Number(v||0);if(n<10000)return n.toLocaleString('zh-CN');if(n<1e8)return (n/1e4).toFixed(n<1e6?1:0)+' 万';return (n/1e8).toFixed(2)+' 亿'};
-  const cards=[['今日实扣',money(c.today_points)+' 点 / '+tokens(c.today_tokens)],['30 天实扣',money(c.window_points)+' 点 / '+tokens(c.window_tokens)],['累计实扣',money(c.total_points)+' 点 / '+tokens(c.total_tokens)],['平均每次精读',money(c.reading_avg)+' 点'],['精读次数',c.reading_calls],['每篇中位数',money(c.reading_median)+' 点']];
-  const models=(c.by_model||[]).slice(0,4).map(m=>`<span class="badge">${esc(m.model)} ${m.calls} 次 · 实扣 ${money(m.points)} 点${m.reference&&m.reference!==m.points?`（原价 ${money(m.reference)}）`:''} · ${tokens(m.tokens)} token · 均 ${m.avg_seconds}s</span>`).join(' ');
+  const hostOf=url=>{try{return new URL(url).host}catch(e){return url||''}};
+  const cards=[['今日实扣',money(c.today_points)+' 点'],['30 天实扣',money(c.window_points)+' 点'],['累计实扣',money(c.total_points)+' 点'],['平均每次精读',money(c.reading_avg)+' 点'],['精读次数',c.reading_calls],['每篇中位数',money(c.reading_median)+' 点']];
+  const models=(c.by_model||[]).slice(0,4).map(m=>`<span class="badge">${esc(m.model)} ${m.calls} 次 · 实扣 ${money(m.points)} 点${m.reference&&m.reference!==m.points?`（原价 ${money(m.reference)}）`:''} · WorkBuddy 侧 ${tokens(m.tokens)} token · 均 ${m.avg_seconds}s</span>`).join(' ');
+  const api=c.api||{};
+  const apiCards=[['今日 API token',tokens(api.today_tokens)],['30 天 API token',tokens(api.window_tokens)],['累计 API token',tokens(api.total_tokens)],['今日调用',api.today_calls||0],['输入 token',tokens(api.prompt_tokens)],['输出 token',tokens(api.completion_tokens)]];
+  const apiModels=(api.by_model||[]).slice(0,6).map(m=>`<span class="badge">${esc(m.label||m.model)} ${m.calls} 次 · ${tokens(m.tokens)} token${m.base_url?` · ${esc(hostOf(m.base_url))}`:''} · 均 ${m.avg_seconds}s</span>`).join(' ');
   const daily=(c.daily||[]).slice(-14);
   const peak=Math.max(1,...daily.map(d=>d.points));
   const bars=daily.map(d=>`<div class="bar" title="${d.day} · ${money(d.points)} 点 / ${d.calls} 次"><i style="height:${Math.max(3,Math.round(d.points/peak*46))}px"></i><span>${d.day.slice(5)}</span></div>`).join('');
@@ -894,9 +999,14 @@ async function loadCredits(){
     <div class="credit-grid">${cards.map(([k,v])=>`<div class="credit-cell"><b>${v}</b><span>${k}</span></div>`).join('')}</div>
     <div class="credit-bars">${bars||'<span class="muted">最近没有调用</span>'}</div>
     <div class="credit-models">${models}</div>
-    ${rows?`<details><summary>最近调用明细</summary><div class="table-wrap"><table><thead><tr><th>时间</th><th>模型</th><th>用途</th><th>点数</th><th>输入+输出</th><th>用时</th></tr></thead><tbody>${rows}</tbody></table></div></details>`:''}`;
+    <div class="credit-sub">
+      <div class="panel-head"><h3>API Key 模型 token</h3><span class="muted">设置里自带 Key 接入的 OpenAI 兼容模型单独统计；WorkBuddy 点数与它无关</span></div>
+      <div class="credit-grid">${apiCards.map(([k,v])=>`<div class="credit-cell api"><b>${v}</b><span>${k}</span></div>`).join('')}</div>
+      <div class="credit-models">${apiModels||'<span class="muted">还没有 API Key 模型的调用记录。用 WorkBuddy 点数精读、或本机 Ollama，都不计入这里。</span>'}</div>
+    </div>
+    ${rows?`<details><summary>最近 WorkBuddy 调用明细</summary><div class="table-wrap"><table><thead><tr><th>时间</th><th>模型</th><th>用途</th><th>点数</th><th>输入+输出</th><th>用时</th></tr></thead><tbody>${rows}</tbody></table></div></details>`:''}`;
 }
-const loaders={dashboard:()=>Promise.all([loadHealth(),loadEvents(),loadProgress(),loadCredits()]),sources:loadSources,wechat:loadWechatAccounts,library:()=>Promise.all([loadCollections('library').then(list=>fillCollectionSelect($('#searchCollection'),list,$('#searchCollectionFilter').value)),loadItems(),loadProgress()]),papers:loadPapers,ideas:()=>Promise.all([loadCollections('ideas').then(list=>fillCollectionSelect($('#ideaCollection'),list)),loadIdeas()]),notifications:loadNotifications,settings:()=>Promise.all([loadSettings(),window.wizEnsureBadge?window.wizEnsureBadge():null])};
+const loaders={dashboard:()=>Promise.all([loadHealth(),loadEvents(),loadProgress(),loadCredits()]),sources:loadSources,wechat:loadWechatAccounts,library:()=>Promise.all([loadCollections('library'),loadItems(),loadProgress()]),papers:loadPapers,ideas:()=>Promise.all([loadCollections('ideas'),loadIdeas()]),notifications:loadNotifications,settings:()=>Promise.all([loadSettings(),window.wizEnsureBadge?window.wizEnsureBadge():null])};
 function switchView(view){currentView=view;$$('.view').forEach(x=>x.classList.toggle('active',x.id===view));$$('.nav').forEach(x=>x.classList.toggle('active',x.dataset.view===view));loaders[view]().catch(e=>toast(e.message))}
 $$('.nav').forEach(x=>x.onclick=()=>switchView(x.dataset.view));
 $('#detailAsk').onclick=()=>{const item=window.__currentItem;if(window.openChat)window.openChat({itemId:item?item.id:undefined,selection:''});else toast('对话面板还没加载好，稍等一秒再点')};
@@ -905,7 +1015,7 @@ $('#importWechat').onclick=async()=>{try{const body={names_text:$('#wechatNames'
 function reloadItems(){itemPage=1;loadItems().catch(e=>toast(e.message))}
 $('#searchBtn').onclick=reloadItems;
 $('#searchQ').onkeydown=e=>{if(e.key==='Enter')reloadItems()};
-['#searchKind','#searchStatus','#searchRange','#searchCollection','#searchExcluded','#hideLow'].forEach(sel=>{const el=$(sel);if(el)el.onchange=reloadItems});
+['#searchKind','#searchStatus','#searchRange','#searchExcluded','#hideLow'].forEach(sel=>{const el=$(sel);if(el)el.onchange=reloadItems});
 $('#manageCollections').onclick=()=>openCollectionManager('library').catch(e=>toast(e.message));
 $('#manageIdeaCollections').onclick=()=>openCollectionManager('ideas').catch(e=>toast(e.message));
 $('#paperStatus').onchange=()=>{paperPage=1;loadPapers().catch(e=>toast(e.message))};
@@ -970,13 +1080,21 @@ if($('#collectionPop').open)return;if($('#chatDrawer').classList.contains('open'
 // Esc 不在这里手动关精读页：模态层自带「先关最上面那层」的顺序，
 // 手动 close 会让浏览器接着把下面那层公众号面板一起关掉。
 $('#collectionPopClose').onclick=closeCollectPop;
+$('#searchCollectionBtn').onclick=e=>openCollectionPick('library',e.currentTarget).catch(err=>toast(err.message));
+$('#ideaCollectionBtn').onclick=e=>openCollectionPick('ideas',e.currentTarget).catch(err=>toast(err.message));
+$('#collectionPickClose').onclick=closeCollectionPick;
+$('#collectionPickSearch').oninput=renderCollectionPick;
+$('#collectionPickSort').onchange=renderCollectionPick;
+$('#collectionPickManage').onclick=()=>{const scope=collectionPickScope;closeCollectionPick();openCollectionManager(scope).catch(err=>toast(err.message))};
+$('#collectionDialogSearch').oninput=renderCollectionManage;
+$('#collectionDialogSort').onchange=renderCollectionManage;
+$('#collectionPick').addEventListener('click',e=>{if(e.target!==e.currentTarget)return;const r=e.currentTarget.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)closeCollectionPick()});
 // 点弹层外面（含遮罩）关掉；dialog 的遮罩点击在事件里表现为 target===dialog。
 $('#collectionPop').addEventListener('click',e=>{if(e.target!==e.currentTarget)return;const r=e.currentTarget.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)closeCollectPop()});
 $('#collectionCreate').onclick=()=>{const scope=collectTarget?collectScope(collectTarget.entryType):'library';const input=$('#collectionNewName');createCollectionFor(input.value,scope,true).then(()=>{input.value=''}).catch(e=>toast(e.message))};
 $('#collectionPopSearch').oninput=renderCollectPop;
 $('#collectionPopSort').onchange=renderCollectPop;
 $('#collectionNewName').oninput=renderCollectPop;
-$('#searchCollectionFilter').oninput=()=>fillCollectionSelect($('#searchCollection'),itemCollections,$('#searchCollectionFilter').value);
 $('#collectionDialogClose').onclick=()=>$('#collectionDialog').close();
 $('#collectionManageCreate').onclick=async()=>{const input=$('#collectionManageName');const scope=window.__manageScope||'library';try{await createCollectionFor(input.value,scope,false);input.value='';renderCollectionManage()}catch(e){toast(e.message)}};
 document.addEventListener('change',e=>{const box=e.target.closest('[data-collect-toggle]');if(box)toggleCollect(box.dataset.collectToggle,box.checked).catch(err=>toast(err.message))});
@@ -989,10 +1107,11 @@ if(t.dataset.item)await showItem(t.dataset.item);
 if(t.dataset.page!==undefined&&t.dataset.page!==''){const n=Number(t.dataset.page);if(n>=1){itemPage=n;await loadItems()}return}
 if(t.dataset.ppage!==undefined&&t.dataset.ppage!==''){const n=Number(t.dataset.ppage);if(n>=1&&n!==paperPage){paperPage=n;await loadPapers()}return}
 if(t.dataset.collect){await openCollectPop(t.dataset.collectType||'item',t.dataset.collect,(t.dataset.collectIds||'').split(',').filter(Boolean),t,()=>currentView==='library'?loadItems():loadIdeas());return}
+if(t.dataset.pickCollection!==undefined&&t.dataset.pickCollection!==null&&t.closest('#collectionPick')){applyCollectionFilter(collectionPickScope,t.dataset.pickCollection);return}
 if(t.dataset.restore){await api(`/api/items/${t.dataset.restore}/restore`,{method:'POST'});toast('已恢复收录');loadItems().catch(()=>{});await showItem(t.dataset.restore,true);return}
 if(t.dataset.useCollection){await toggleCollect(t.dataset.useCollection,true);$('#collectionNewName').value='';renderCollectPop();return}
-if(t.dataset.collectionSave){const input=document.querySelector(`[data-collection-name="${t.dataset.collectionSave}"]`);await api(`/api/collections/${t.dataset.collectionSave}`,{method:'PATCH',body:{name:input.value}});toast('已改名');await loadCollections(window.__manageScope||'library');renderCollectionManage();fillCollectionSelect($('#searchCollection'),itemCollections,$('#searchCollectionFilter').value);return}
-if(t.dataset.collectionDelete){if(!confirm('删除这个收藏夹？条目本身不会被删除。'))return;await api(`/api/collections/${t.dataset.collectionDelete}`,{method:'DELETE'});toast('已删除收藏夹');await loadCollections(window.__manageScope||'library');renderCollectionManage();fillCollectionSelect($('#searchCollection'),itemCollections,$('#searchCollectionFilter').value);loadItems().catch(()=>{});return}
+if(t.dataset.collectionSave){const input=document.querySelector(`[data-collection-name="${t.dataset.collectionSave}"]`);await api(`/api/collections/${t.dataset.collectionSave}`,{method:'PATCH',body:{name:input.value}});toast('已改名');await loadCollections(window.__manageScope||'library');renderCollectionManage();return}
+if(t.dataset.collectionDelete){if(!confirm('删除这个收藏夹？条目本身不会被删除。'))return;const scope=window.__manageScope||'library';await api(`/api/collections/${t.dataset.collectionDelete}`,{method:'DELETE'});toast('已删除收藏夹');if(collectionFilterValue(scope)===t.dataset.collectionDelete){if(scope==='library')libraryCollectionFilter='';else ideaCollectionFilter=''}await loadCollections(scope);renderCollectionManage();syncCollectionButton(scope);if(scope==='library')loadItems().catch(()=>{});else loadIdeas().catch(()=>{});return}
 if(t.dataset.run){await api(`/api/sources/${t.dataset.run}/run`,{method:'POST'});toast('已加入立即检查队列')}if(t.dataset.archiveHistory){if(!confirm('将控速归档历史全文、图片和可获取论文，不自动调用云精读。确定开始吗？'))return;const r=await api(`/api/sources/${t.dataset.archiveHistory}/archive-history`,{method:'POST'});toast(r.queued?`已开始历史归档，剩余 ${r.remaining} 条；云精读调用 0`:'没有待归档的历史索引')}if(t.dataset.toggle){await api(`/api/sources/${t.dataset.toggle}`,{method:'PATCH',body:{enabled:t.dataset.enabled!=='1'}});loadSources()}if(t.dataset.process){await api(`/api/items/${t.dataset.process}/process`,{method:'POST'});toast('已加入归档与精读队列，完成后本页自动刷新');if($('#detailDialog').open)showItem(t.dataset.process,true).catch(()=>{});loadItems().catch(()=>{})}if(t.dataset.reanalyze){await api(`/api/items/${t.dataset.reanalyze}/reanalyze`,{method:'POST'});toast('已排队，正在精读，完成后自动刷新');if($('#detailDialog').open)showItem(t.dataset.reanalyze,true).catch(()=>{})}if(t.dataset.retriage){toast('正在让模型重新判断配图…');const r=await api(`/api/items/${t.dataset.retriage}/retriage-images`,{method:'POST'});toast(r.dropped?`已删除 ${r.dropped} 张无关配图`:'没有发现需要删除的配图');await showItem(t.dataset.retriage,true);loadItems().catch(()=>{})}if(t.dataset.verifySource){const r=await api(`/api/items/${t.dataset.verifySource}/verify-source`,{method:'POST'});toast(r.exists?'原文仍可访问':(r.kept?'原文已删除，但离线页已保存，继续保留':'原文已删除且没有离线页，已移出资料库'));await showItem(t.dataset.verifySource,true);loadItems().catch(()=>{})}if(t.dataset.archiveIndex!==undefined){if(!confirm('将限速归档所有仅索引条目（正文、图片、原始快照），不调用云精读。条目较多时会持续一段时间，可随时查看进度。确定开始吗？'))return;const r=await api('/api/archive-index-only',{method:'POST'});toast(r.queued?`已开始归档，剩余 ${r.remaining} 条；云精读调用 0`:'没有待归档的索引条目');loadProgress().catch(()=>{})}if(t.dataset.archiveStop!==undefined){if(!confirm('停止批量归档？正在下载的这一条会先做完，之后不再继续排队。已归档的条目不受影响。'))return;const r=await api('/api/archive-index-only/stop',{method:'POST'});toast(`已暂停：撤销 ${r.cancelled} 个排队批次${r.running_batches?`，正在跑的那批收尾后停下`:''}；还剩 ${r.remaining} 条未归档`);loadProgress().catch(()=>{})}if(t.dataset.cloudModel){$('#llmProvider').value='workbuddy_cloud';$('#llmProvider').dispatchEvent(new Event('change'));$('#llmModel').value=t.dataset.cloudModel;$('#detailDialog').close();toast('已选择模型，保存设置后生效')}if(t.dataset.paperRetry){await api(`/api/papers/${t.dataset.paperRetry}/retry`,{method:'POST'});toast('已重试论文解析与下载')}if(t.dataset.jobRetry){await api(`/api/jobs/${t.dataset.jobRetry}/retry`,{method:'POST'});toast('任务已重新排队');await loadTaskQueue()}if(t.dataset.jobDiagnostic){const d=await api(`/api/jobs/${t.dataset.jobDiagnostic}/diagnostics`);window.currentDiagnostic=d.markdown;$('#detailContent').innerHTML=`<h1>任务失败诊断</h1>${d.hint?'<div class="notice"><b>已知模式：'+esc(d.hint)+'</b><br>'+esc(d.hint_advice)+'</div>':''}<p>${d.retryable?'<span class="badge wait">疑似临时错误，可重试</span>':'<span class="badge error">不是临时错误，盲目重试会再次失败</span>'}</p><p class="muted">复制下面内容，粘贴到 WorkBuddy 对话即可定位和修复。</p><div class="actions"><button class="primary" data-copy-diagnostic="1">复制诊断给 WorkBuddy</button></div><div class="detail-text"><pre style="white-space:pre-wrap">${esc(d.markdown)}</pre></div>`;openDetail()}if(t.dataset.copyDiagnostic){try{await navigator.clipboard.writeText(window.currentDiagnostic||'')}catch(err){const ta=document.createElement('textarea');ta.value=window.currentDiagnostic||'';document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove()}toast('诊断已复制，可直接粘贴到 WorkBuddy')}if(t.dataset.pdfPreview){await previewPaper(t.dataset.pdfPreview)}if(t.dataset.paperWps){const r=await api(`/api/papers/${t.dataset.paperWps}/open-wps`,{method:'POST'});toast(`${r.application} 已打开：${r.path}`)}if(t.dataset.paperReveal){const r=await api(`/api/papers/${t.dataset.paperReveal}/reveal`,{method:'POST'});toast(`已打开目录：${r.directory}`)}if(t.dataset.ideaEdit){const x=window.ideaRows.find(i=>i.id===t.dataset.ideaEdit);$('#ideaId').value=x.id;$('#ideaTitle').value=x.title;$('#ideaContent').value=x.content;$('#ideaTags').value=(x.tags||[]).join(', ');scrollTo({top:0,behavior:'smooth'})}if(t.dataset.ideaToggle){const x=window.ideaRows.find(i=>i.id===t.dataset.ideaToggle);await api('/api/ideas/'+x.id,{method:'PATCH',body:{title:x.title,content:x.content,tags:x.tags,enabled:t.dataset.enabled!=='1'}});loadIdeas()}if(t.dataset.batch){const x=await api('/api/notifications/'+t.dataset.batch);$('#detailContent').innerHTML=`<h1>汇报内容</h1><div class="detail-text">${esc(x.text)}</div>`;openDetail()}if(t.dataset.batchRetry){const r=await api(`/api/notifications/${t.dataset.batchRetry}/retry`,{method:'POST'});toast(r.queued===false?(r.reason||'该批次无需重试'):'已重新进入发送队列');loadNotifications().catch(()=>{})}}catch(err){toast(err.message)}});
 /* ---------- 图片查看器 ---------- */
 const viewerState={scale:1,x:0,y:0,fit:1,dragging:false,moved:false,startX:0,startY:0};

@@ -89,8 +89,7 @@
       <select id="searchKind"><option value="">全部类型</option><option value="article">文章</option><option value="video">视频</option></select>
       <select id="searchStatus"><option value="">全部状态</option><option value="ready">已精读</option><option value="archived">已归档</option><option value="filtered">低相关</option><option value="discovered">仅历史索引</option><option value="insufficient">无法详细归档</option><option value="error">失败</option></select>
       <select id="searchRange" title="按发布时间筛选"><option value="">全部时间</option><option value="1">今天</option><option value="3">近 3 天</option><option value="7">近 7 天</option><option value="30">近 30 天</option><option value="90">近 90 天</option><option value="365">近一年</option></select>
-      <input id="searchCollectionFilter" type="search" class="mini-filter" placeholder="找收藏夹" title="输入关键字过滤下面的收藏夹列表" autocomplete="off">
-      <select id="searchCollection" title="按收藏夹筛选（最近使用的排在前面）"><option value="">全部收藏夹</option><option value="__none__">未收藏</option></select>
+      <button id="searchCollectionBtn" class="collection-pick-btn" type="button" aria-haspopup="dialog" title="按收藏夹筛选（点开可搜索、排序）"><span id="searchCollectionLabel">全部收藏夹</span><i class="caret">▾</i></button>
       <label class="check" title="只看相关度达标的条目"><input id="hideLow" type="checkbox"> 隐藏低相关</label>
       <label class="check"><input id="searchExcluded" type="checkbox"> 含已删除</label>
       <div class="filter-actions">
@@ -121,7 +120,7 @@
     <button class="primary" data-idea-tab="ideas">Ideas</button><button data-idea-tab="notes">笔记库</button>
     <input id="ideaQ" placeholder="搜索标题、正文或标签">
     <select id="ideaRange" title="按更新时间筛选"><option value="">全部时间</option><option value="1">今天</option><option value="3">近 3 天</option><option value="7">近 7 天</option><option value="30">近 30 天</option><option value="90">近 90 天</option><option value="365">近一年</option></select>
-    <select id="ideaCollection" title="按收藏夹筛选"><option value="">全部收藏夹</option><option value="__none__">未收藏</option></select>
+    <button id="ideaCollectionBtn" class="collection-pick-btn" type="button" aria-haspopup="dialog" title="按收藏夹筛选（点开可搜索、排序）"><span id="ideaCollectionLabel">全部收藏夹</span><i class="caret">▾</i></button>
     <button id="manageIdeaCollections" type="button">管理收藏夹</button>
     <select id="noteItemFilter" style="display:none"><option value="">全部文章</option></select>
   </div>
@@ -428,6 +427,7 @@
       <label class="wa-inline">分类<select id="waPanelCategory"></select></label>
       <label class="wa-inline">建议<select id="waPanelFit"><option value="CORE">CORE 核心</option><option value="OPTIONAL">OPTIONAL 可选</option><option value="EXCLUDE">EXCLUDE 排除</option></select></label>
       <label class="check wa-inline"><input id="waPanelEnabled" type="checkbox"> 参与监测</label>
+      <button id="waPanelRefresh" type="button" title="重新读取本机微信（不消耗云点数）">刷新推文</button>
       <button id="waPanelClose" type="button">关闭</button>
     </div>
   </div>
@@ -518,8 +518,30 @@
   </div>
   <div id="collectionPopHint" class="collection-pop-hint"></div>
 </dialog>
+<dialog id="collectionPick" class="collection-pop collection-filter-pop" aria-label="按收藏夹筛选">
+  <div class="collection-pop-head"><b id="collectionPickTitle">按收藏夹筛选</b><button id="collectionPickClose" type="button">×</button></div>
+  <div class="collection-pop-tools">
+    <input id="collectionPickSearch" type="search" placeholder="搜索收藏夹…" autocomplete="off">
+    <select id="collectionPickSort" title="排序方式">
+      <option value="recent">最近使用</option>
+      <option value="count">条目最多</option>
+      <option value="name">名称 A-Z</option>
+    </select>
+  </div>
+  <div id="collectionPickList" class="collection-pop-list collection-filter-list"></div>
+  <div class="collection-pop-hint" id="collectionPickHint">点一行就按它筛选；「未收藏」只看还没归类的条目。</div>
+  <div class="collection-pop-new"><button id="collectionPickManage" type="button">管理收藏夹</button></div>
+</dialog>
 <dialog id="collectionDialog" class="mini-dialog">
   <div class="dialog-head"><b id="collectionDialogTitle">管理收藏夹</b><button id="collectionDialogClose" type="button">关闭</button></div>
+  <div class="collection-pop-tools">
+    <input id="collectionDialogSearch" type="search" placeholder="搜索收藏夹…" autocomplete="off">
+    <select id="collectionDialogSort" title="排序方式">
+      <option value="recent">最近使用</option>
+      <option value="count">条目最多</option>
+      <option value="name">名称 A-Z</option>
+    </select>
+  </div>
   <div id="collectionDialogList" class="collection-manage"></div>
   <div class="collection-pop-new">
     <input id="collectionManageName" placeholder="新收藏夹名称">

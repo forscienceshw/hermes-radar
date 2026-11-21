@@ -673,3 +673,22 @@ Entry 的语义必须来自模型对真实证据的理解。不得仅依据路�
 
 不预加载、不猜测，也不自行重建这些专项流程。平台调用方式、请求格式、批次上限、审批规则、索引格式细节和恢复步骤由对应Guide、工具说明、模型Prompt和CLI帮助按需提供。
 <!-- aoci:end -->
+
+## AOCI 工具链的存放与自检（运维约定）
+
+- **二进制在仓库外**：`D:/program/WorkBuddyData/tools/aoci/aoci.exe`（0.2.0-rc3），
+  和 `aoci_mcp_shim.py`、`repos.json` 放在同一目录。仓库里只放索引（`aoci.txt`、
+  `aoci.meta.txt`、`aoci.code.txt`）与 shim 的可恢复副本 `tools/aoci_mcp_shim.py`。
+  不要把 exe 提交进 git：30 MB，且会随平台更新，版本历史没有意义。
+- **shim 不能按 cwd 决定仓库**。WorkBuddy 每个会话都会启动 MCP，会话目录经常不在
+  本仓库（例如 `D:/program/WorkBuddyData/自动化信息收集助手`）。旧 shim 找不到
+  `aoci.txt` 就返回 0 个工具，界面表现是「AOCI 不见了」，其实是未绑定。
+  现在的顺序是：`AOCI_REPO` → 从 cwd 向上找 → `repos.json` 的 `default/repos`。
+- **症状「没有 aoci_* 工具」的处理顺序**：
+  1. `python tools/aoci_doctor.py`（只读体检，会告诉你哪一环断了）；
+  2. `python tools/aoci_doctor.py --fix`（重写 `repos.json`、复制 shim、修正 MCP 条目）；
+  3. 重启 WorkBuddy（MCP 只在启动时读 `mcp.json`），再看工具列表是否有 9 个 `aoci_*`。
+- **不要手改 `mcp.json` 的 aoci 条目**：doctor 会保留其它 server，只替换 aoci 一项；
+  解释器优先用 `D:/Python/python.exe`，不要指向 `.venv`（重建 venv 时 MCP 会一起坏）。
+- 换机器/换仓库路径后，先 `--fix` 再继续；`repos.json` 里的路径用正斜杠。
+

@@ -520,3 +520,25 @@ body.viewer-open{overflow:hidden}
 body.modal-open .chat-fab{display:none}
 .source-dialog{max-height:88vh}
 .source-dialog .dialog-head{justify-content:space-between;align-items:center}
+
+/* 收藏夹筛选：按钮 + 弹层（搜索/排序/单选取值），与「收藏到」共用一套视觉。
+   弹层是 dialog，必须自己清掉 UA 的 inset:0;margin:auto，否则 left/top 全落空。 */
+.collection-pick-btn{display:inline-flex;align-items:center;gap:6px;margin:0;padding:6px 10px;font-size:13px;border:1px solid #cfd8df;border-radius:7px;background:#fff;color:var(--ink);max-width:190px}
+.collection-pick-btn span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.collection-pick-btn .caret{font-style:normal;color:var(--muted);font-size:10px;line-height:1}
+.collection-pick-btn.active{border-color:var(--accent);color:var(--accent);background:#f2faf9}
+.collection-filter-pop{width:min(360px,94vw);padding:12px 14px}
+.collection-filter-list{gap:2px;max-height:320px}
+.collection-pick-row{display:flex;align-items:center;gap:8px;width:100%;text-align:left;background:transparent;border:0;border-radius:7px;padding:7px 8px;font:inherit;font-size:13px;color:var(--ink);cursor:pointer}
+.collection-pick-row:hover{background:#f4f8f8}
+.collection-pick-row.current{background:#e9f6f4;font-weight:650;color:var(--accent)}
+.collection-pick-row span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.collection-pick-row small{font-size:11px;white-space:nowrap}
+.collection-pick-row b{width:14px;color:var(--accent);font-size:12px;text-align:right;flex:none}
+.collection-pick-empty{padding:10px 8px;font-size:12.5px;line-height:1.7;color:var(--muted)}
+.collection-manage .row .count{min-width:96px;text-align:right}
+
+/* 总览：API Key 模型 token 与 WorkBuddy 点数分开两块，避免把两者当成同一个口径。 */
+.credit-sub{margin-top:18px;padding-top:16px;border-top:1px solid var(--line)}
+.credit-sub h3{font-size:15px;margin:0}
+.credit-cell.api b{color:#2c5fa8}

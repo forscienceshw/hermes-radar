@@ -97,6 +97,13 @@ async def complete(messages: list[dict[str, Any]], account_id: str | None = None
         content = response["choices"][0]["message"].get("content") or ""
     except (KeyError, IndexError, TypeError):
         raise RuntimeError(f"模型返回格式异常：{str(response)[:300]}")
+    elapsed_ms = int((time.monotonic() - started) * 1000)
+    if provider == "openai_compatible":
+        from .api_usage import record as record_api_usage
+        record_api_usage(provider=provider, model=account["model"],
+                         base_url=account.get("base_url") or "",
+                         usage=response.get("usage") or {}, elapsed_ms=elapsed_ms,
+                         task=task, account=account["id"], label=account["label"])
     return {"content": content, "model": account["model"], "usage": response.get("usage") or {},
-            "elapsed_ms": int((time.monotonic() - started) * 1000),
+            "elapsed_ms": elapsed_ms,
             "account": account["id"], "label": account["label"]}

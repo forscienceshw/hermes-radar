@@ -635,8 +635,15 @@ async def _llm_call(db: Database, messages: list[dict[str, Any]], item_id: str =
                 raise ValueError("本地模型响应超过大小限制")
             response = result.json()
     else:
+        started = time.monotonic()
         response, _ = await post_json(endpoint, payload, headers={"Authorization": f"Bearer {key}"},
                                       timeout=float(settings["timeout_seconds"]), max_bytes=20_000_000)
+        # 自带的 API Key 模型单独记 token：它不扣 WorkBuddy 点数，混在点数里看不出真实开销。
+        from .api_usage import record as record_api_usage
+        record_api_usage(provider=provider, model=settings.get("model") or "",
+                         base_url=settings.get("base_url") or "", usage=response.get("usage") or {},
+                         elapsed_ms=int((time.monotonic() - started) * 1000), task="analyze",
+                         account="default", label=settings.get("model") or "")
     return {"content": response["choices"][0]["message"]["content"]}
 
 

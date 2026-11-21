@@ -15,7 +15,7 @@ from .utils import canonical_url, humanize_error_text, now_iso, parse_time, stab
 # 库结构版本。加字段/改表时把这个数字 +1，init() 会把新值写进
 # PRAGMA user_version，于是"这是哪个版本的库"可以和代码版本对得上。
 # 目前只用于诊断：新代码遇到旧库靠下面的补列逻辑自动升级。
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sources (
@@ -47,6 +47,16 @@ CREATE TABLE IF NOT EXISTS wechat_accounts (
     updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_wechat_accounts_filters ON wechat_accounts(enabled, category_code, fit);
+-- 公众号详情页的推文快照：4.x 的一次读取要扫进程内存 + 两代微信库，冷读 3 秒以上。
+-- 存下来既能秒开，也能在微信通道暂时读不到时先显示上一份，而不是空白。
+CREATE TABLE IF NOT EXISTS wechat_article_cache (
+    account_pk INTEGER PRIMARY KEY,
+    payload_json TEXT NOT NULL,
+    item_count INTEGER NOT NULL DEFAULT 0,
+    newest_ts INTEGER NOT NULL DEFAULT 0,
+    meta_json TEXT NOT NULL DEFAULT '{}',
+    synced_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS items (
     id TEXT PRIMARY KEY,
     source_id TEXT,

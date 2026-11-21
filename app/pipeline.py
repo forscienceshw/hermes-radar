@@ -99,12 +99,44 @@ class JobRunner:
             if payload.get("force"):
                 await self._refresh_papers(payload["item_id"])
             await analyze_item(self.db, payload["item_id"], force=bool(payload.get("force")))
+        elif kind == "wechat_backfill_account":
+            await self._wechat_backfill(payload)
         elif kind == "flush_batch":
             flush_open_batches(self.db)
         elif kind == "deliver_batch":
             await deliver_batch(self.db, payload["batch_id"])
         else:
             raise ValueError(f"未知任务类型：{kind}")
+
+    async def _wechat_backfill(self, payload: dict[str, Any]) -> None:
+        """启用公众号后补录最近推文。
+
+        读 4.x 内存盒子 + 两代消息库是同步、可能几秒的活；放线程里跑，
+        别把 worker 的事件循环堵住（后面的归档/精读任务还在等）。
+        """
+        import asyncio
+        from .services import wechat_panel
+        account_pk = int(payload.get("account_pk") or 0)
+        account = self.db.one("SELECT * FROM wechat_accounts WHERE id=?", (account_pk,))
+        if not account or not int(account.get("enabled") or 0):
+            return
+        result = await asyncio.to_thread(
+            wechat_panel.backfill_account, self.db, account,
+            int(payload.get("limit") or 10), int(payload.get("days") or 30))
+        if result.get("created"):
+            self.db.add_event("wechat_account_backfilled",
+                              f"公众号「{account['name']}」补录 {result['created']} 条最近推文")
+        # 名称/简介判不出来时，用刚拿到的标题再判一次：很多号名是「XX课题组」，
+        # 单看名字只能待判断，看了三五个标题就能落到具体方向。
+        if str(account.get("category_code") or "OTHER") == "OTHER":
+            titles = [str(t or "") for t in (result.get("titles") or [])]
+            category, reason = wechat_panel.classify_account(
+                account["name"], account.get("description") or "", titles)
+            if category != "OTHER":
+                self.db.execute("UPDATE wechat_accounts SET category_code=?,updated_at=? WHERE id=?",
+                                (category, now_iso(), account_pk))
+                self.db.add_event("wechat_account_classified",
+                                  f"公众号「{account['name']}」自动分类：{category}（{reason}）")
 
     async def _poll(self, job: dict[str, Any], payload: dict[str, Any]) -> None:
         source = self.db.one("SELECT * FROM sources WHERE id=?", (payload["source_id"],))

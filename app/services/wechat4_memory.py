@@ -23,6 +23,7 @@ import ctypes
 import json
 import re
 import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Iterator
@@ -336,3 +337,69 @@ def scan(budget: float = SCAN_BUDGET) -> Snapshot:
                  for idx, url in bucket.items()}
     return Snapshot(at=now, cards=out, accounts=accounts, urls=flat_urls,
                     scanned_mb=scanned / 1048576, elapsed=time.time() - t0)
+
+
+# ---------------------------------------------------------------------------
+# 会话内快照缓存
+# ---------------------------------------------------------------------------
+# 一次扫描要读几百 MB 进程内存（实测 1.5–2.6 秒）。公众号详情页每次打开都扫一遍
+# 是不可接受的，而 90 秒的窗口足够让「打开几个号对比一下」都命中同一份快照。
+_SNAPSHOT_TTL = 90.0
+_SNAPSHOT_LOCK = threading.Lock()
+_SNAPSHOT: dict[str, Any] = {"at": 0.0, "snap": None}
+
+
+def snapshot(ttl: float = _SNAPSHOT_TTL, force: bool = False) -> Snapshot:
+    """返回最近一次扫描结果；ttl 内直接复用，避免反复读进程内存。"""
+    now = time.monotonic()
+    with _SNAPSHOT_LOCK:
+        snap = _SNAPSHOT.get("snap")
+        if snap is not None and not force and now - float(_SNAPSHOT.get("at") or 0) < ttl:
+            return snap
+    snap = scan()
+    with _SNAPSHOT_LOCK:
+        _SNAPSHOT["snap"] = snap
+        _SNAPSHOT["at"] = time.monotonic()
+    return snap
+
+
+def recent_for(username: str, days: int = 365, limit: int = 50,
+               force: bool = False) -> list[dict[str, Any]]:
+    """某个号在订阅号盒子里的最近推送（只有 gh + 标题 + 时间 + 链接）。"""
+    if not username:
+        return []
+    snap = snapshot(force=force)
+    if not snap.ok:
+        return []
+    floor = int(time.time() - max(1, int(days)) * 86400)
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for card in snap.cards:
+        if card.get("gh") != username:
+            continue
+        ts = int(card.get("ts") or 0)
+        url = card.get("url") or ""
+        if ts < floor or not url:
+            continue
+        canonical = card.get("canonical_url") or ""
+        if not canonical:
+            try:
+                canonical = canonical_url(url)
+            except ValueError:
+                continue
+        if canonical in seen:
+            continue
+        seen.add(canonical)
+        rows.append({
+            "create_time": ts,
+            "local_id": int(card.get("mid") or 0),
+            "title": card.get("title") or "",
+            "url": url,
+            "canonical_url": canonical,
+            "digest": "",
+            "cover": "",
+            "idx": int(card.get("idx") or 1),
+            "via": "memory_box",
+        })
+    rows.sort(key=lambda item: item["create_time"], reverse=True)
+    return rows[:max(1, int(limit))]

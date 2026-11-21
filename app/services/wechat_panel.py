@@ -13,8 +13,10 @@
 """
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
@@ -455,3 +457,354 @@ def rules_for_account(db: Any, account: dict[str, Any], gh_id: str) -> list[dict
 
 def preset_payload() -> dict[str, Any]:
     return {"presets": EXCLUDE_PRESETS}
+
+
+# ---------------------------------------------------------------------------
+# 新关注的号：启用时自动分类 + 补录最近推文
+# ---------------------------------------------------------------------------
+# 分类是**规则**，不是模型：新号只在启用那一刻判一次，判错可以手改；为了这一步
+# 去调云模型，会让「点一下启用」变成一次计费调用，不值得。
+# 权重：名字命中 3 分，简介/最近标题命中 1 分；低于 2 分保留 OTHER——
+# 宁可在界面上说「没有可判依据」，也不要猜一个看起来很像的分类。
+CATEGORY_KEYWORDS: dict[str, list[str]] = {
+    "STRUCT_BIO": ["结构生物", "冷冻电镜", "cryo-em", "晶体学", "蛋白结构", "结构解析"],
+    "OMICS_BIOINFO": ["生物信息", "生信", "基因组", "转录组", "蛋白质组", "代谢组",
+                      "单细胞", "测序", "多组学", "组学", "bioinformatics"],
+    "SYNTH_BIO": ["合成生物", "基因编辑", "crispr", "底盘细胞", "代谢工程", "合成基因"],
+    "NEURO": ["神经科学", "神经生物", "脑科学", "突触", "神经元", "认知神经",
+              "阿尔茨海默", "帕金森", "neuroscience"],
+    "CHEM_BIOL": ["化学生物", "化学探针", "点击化学", "生物正交", "chemical biology"],
+    "LIFE_MOLECULAR": ["分子生物", "细胞生物", "蛋白质", "基因表达", "转录", "表观遗传",
+                       "免疫学", "微生物", "植物", "动物学", "生理", "生化", "代谢",
+                       "干细胞", "发育生物", "细胞死亡", "自噬", "生命科学",
+                       "biotech", "biotechnology", "molecular biology"],
+    "BIOMED": ["生物医学", "临床", "医学", "疾病", "肿瘤", "癌症", "药物", "药理",
+               "治疗", "疫苗", "诊断", "医院", "病理", "护理", "公共卫生", "流行病",
+               "抗体", "免疫治疗", "biomed", "medicine", "clinical"],
+    "CHEM_MAT": ["化学", "材料", "催化", "高分子", "纳米材料", "电化学", "有机化学",
+                 "无机化学", "分析化学", "能源材料", "mof", "chemistry", "materials"],
+    "PHYS_MATH": ["物理", "数学", "天文", "宇宙", "量子", "凝聚态", "光学", "统计物理",
+                  "physics", "mathematics", "astronomy"],
+    "CS_AI": ["人工智能", "机器学习", "深度学习", "计算机", "算法", "编程", "大模型",
+              "数据科学", "神经网络", "ai", "machine learning"],
+    "ENG_TECH": ["工程", "机械", "电子", "微流控", "器件", "机器人", "自动化", "制造",
+                 "engineering", "robotics"],
+    "INTERDISCIPLINARY": ["交叉学科", "交叉研究", "跨学科", " interdisciplinary"],
+    "SCI_COMM": ["nature", "science", "cell", "期刊", "论文", "文献", "学术", "科研",
+                 "顶刊", "综述", "投稿", "影响因子", "中国科学", "科学网", "preprint"],
+    "ACADEMIC_TOOL": ["科研工具", "科研服务", "绘图", "统计软件", "试剂", "测序服务",
+                      "实验外包", "招聘", "求职", "仪器", "生物公司", "论文润色"],
+    "CAMPUS_EDU": ["大学", "学院", "研究生", "招生", "校园", "教务", "教育", "保研",
+                   "考研", "博士", "硕士"],
+    "SOCIAL_HUMANITIES": ["人文", "社科", "历史", "哲学", "社会", "经济", "法律",
+                          "政治", "文化", "艺术"],
+    "LIFE_ENTERTAINMENT": ["生活", "美食", "旅游", "动漫", "娱乐", "电影", "音乐",
+                           "游戏", "搞笑", "情感", "养生", "母婴", "广告"],
+}
+
+
+def classify_account(name: str, description: str = "",
+                     titles: Iterable[str] = ()) -> tuple[str, str]:
+    """Return (category_code, reason). 规则判不出来就老实返回 OTHER。"""
+    name_text = (name or "").lower()
+    body_text = " ".join([description or "", *[str(t or "") for t in titles]]).lower()
+    scores: dict[str, int] = {}
+    matched: dict[str, list[str]] = {}
+    for code, words in CATEGORY_KEYWORDS.items():
+        score = 0
+        hits: list[str] = []
+        for word in words:
+            token = word.strip().lower()
+            if not token:
+                continue
+            if token in name_text:
+                score += 3
+                hits.append(word)
+            elif token in body_text:
+                score += 1
+                hits.append(word)
+        if score:
+            scores[code] = score
+            matched[code] = hits
+    if not scores:
+        return "OTHER", "名称和简介里没有可判定的主题词"
+    best = max(scores, key=lambda code: scores[code])
+    if scores[best] < 2:
+        return "OTHER", f"只有弱线索（{matched[best][0]}），保留待判断"
+    return best, "、".join(matched[best][:4])
+
+
+def resolve_gh(db: Any, account: dict[str, Any]) -> tuple[str, str]:
+    """(gh_id, channel)。顺手把编号补回账户行，后续面板/采集都靠它对号。"""
+    from . import wechat4_live, wechat_public, wechat_self_archive
+    channel = wechat_self_archive.local_channel()
+    gh_id = str(account.get("account_id") or "").strip()
+    if channel == "4.x" and not gh_id:
+        gh_id = wechat4_live.gh_for_name(account["name"])
+    if not gh_id:
+        gh_id = wechat_public.gh_id_for(account["name"], gh_id)
+    if gh_id and str(account.get("account_id") or "") != gh_id:
+        db.execute("UPDATE wechat_accounts SET account_id=?,updated_at=? WHERE id=?",
+                   (gh_id, now_iso(), account["id"]))
+        account["account_id"] = gh_id
+    return gh_id, channel
+
+
+# ---------------------------------------------------------------------------
+# 详情页缓存
+# ---------------------------------------------------------------------------
+ARTICLE_CACHE_TTL = 900          # 15 分钟
+ARTICLE_CACHE_DAYS = 730
+
+
+def _cache_age(row: dict[str, Any] | None) -> float:
+    if not row:
+        return 1e9
+    try:
+        stamp = datetime.fromisoformat(str(row.get("synced_at") or ""))
+        if stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=timezone.utc)
+        return max(0.0, (datetime.now(timezone.utc) - stamp).total_seconds())
+    except (TypeError, ValueError):
+        return 1e9
+
+
+def _cache_read(db: Any, account_pk: int) -> dict[str, Any] | None:
+    row = db.one("SELECT * FROM wechat_article_cache WHERE account_pk=?", (account_pk,))
+    if not row:
+        return None
+    try:
+        items = json.loads(row.get("payload_json") or "[]")
+        meta = json.loads(row.get("meta_json") or "{}")
+    except ValueError:
+        return None
+    if not isinstance(items, list):
+        return None
+    return {"items": items, "meta": meta if isinstance(meta, dict) else {},
+            "newest_ts": int(row.get("newest_ts") or 0), "synced_at": row.get("synced_at") or ""}
+
+
+def _cache_write(db: Any, account_pk: int, items: list[dict[str, Any]], meta: dict[str, Any],
+                 signal: int = 0) -> None:
+    newest = max([int(item.get("create_time") or 0) for item in items] or [0])
+    # 记下这次读到的「最新推送信号」。留的推文可能没有链接（微信只存了会话摘要），
+    # 那种信号永远不会体现在 items 里，只比 newest_ts 会让缓存每开一次都作废。
+    meta = {**meta, "signal": max(0, int(signal or 0))}
+    db.execute("""INSERT INTO wechat_article_cache(account_pk,payload_json,item_count,newest_ts,meta_json,synced_at)
+        VALUES(?,?,?,?,?,?)
+        ON CONFLICT(account_pk) DO UPDATE SET payload_json=excluded.payload_json,
+        item_count=excluded.item_count,newest_ts=excluded.newest_ts,
+        meta_json=excluded.meta_json,synced_at=excluded.synced_at""",
+               (account_pk, json.dumps(items, ensure_ascii=False), len(items),
+                newest, json.dumps(meta, ensure_ascii=False), now_iso()))
+
+
+def newest_signal(gh_id: str) -> int:
+    """比缓存新不新的轻量信号：会话摘要时间 + 内存盒子里该号最新一条。
+
+    不能只靠「15 分钟过期」：用户刚关注一个号、刚收到一条推送，再点开详情
+    却看不到，体验就是「同步了但没同步」。这里只读一个 sqlite 行和一份 90 秒
+    的内存快照，通常几十毫秒。
+    """
+    newest = 0
+    if not gh_id:
+        return newest
+    try:
+        from . import wechat4_live
+        newest = max(newest, int(wechat4_live.session_hint(gh_id).get("at") or 0))
+    except Exception:                                # noqa: BLE001
+        pass
+    try:
+        from . import wechat4_memory
+        for item in wechat4_memory.recent_for(gh_id, days=30, limit=3):
+            newest = max(newest, int(item.get("create_time") or 0))
+    except Exception:                                # noqa: BLE001
+        pass
+    return newest
+
+
+def _to_panel_item(row: dict[str, Any]) -> dict[str, Any]:
+    create_time = int(row.get("create_time") or 0)
+    if not create_time and row.get("published_at"):
+        try:
+            create_time = int(datetime.fromisoformat(str(row["published_at"])).timestamp())
+        except (TypeError, ValueError):
+            create_time = 0
+    return {
+        "canonical_url": row.get("canonical_url") or "",
+        "url": row.get("url") or "",
+        "title": row.get("title") or "(无标题)",
+        "summary": (row.get("digest") or row.get("summary") or "")[:160],
+        "cover": row.get("cover") or "",
+        "published_at": row.get("published_at") or (
+            datetime.fromtimestamp(create_time, timezone.utc).isoformat(timespec="seconds")
+            if create_time else ""),
+        "message_id": row.get("local_id") or row.get("message_id") or 0,
+        "idx": int(row.get("idx") or 1),
+        "create_time": create_time,
+    }
+
+
+def collect_recent(db: Any, account: dict[str, Any], gh_id: str, channel: str,
+                   days: int = ARTICLE_CACHE_DAYS, window: int = 240) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """三路合并：4.x/3.x 微信库 + 内存盒子 + 雷达资料库。"""
+    from . import wechat_public
+    meta: dict[str, Any] = {"channel": channel, "note": "", "legacy_filled": False,
+                            "memory_cards": 0}
+    merged: dict[str, dict[str, Any]] = {}
+    if channel == "4.x":
+        from . import wechat4_live, wechat4_memory
+        rows = wechat4_live.recent_for(gh_id, limit=window, days=days)
+        try:
+            from . import wechat3_public
+            legacy = wechat3_public.recent_for(gh_id, limit=window, days=days)
+        except Exception:                            # noqa: BLE001
+            legacy = []
+        meta["legacy_filled"] = bool(legacy)
+        try:
+            memory = wechat4_memory.recent_for(gh_id, days=days, limit=window)
+        except Exception:                            # noqa: BLE001
+            memory = []
+        meta["memory_cards"] = len(memory)
+        known = library_articles(db, gh_id, account["name"], days=days, limit=window)
+        for source in (rows, memory, legacy, known):
+            for row in source:
+                canonical = row.get("canonical_url") or ""
+                if canonical:
+                    merged.setdefault(canonical, row)
+        hint = wechat4_live.session_hint(gh_id)
+        meta["hint"] = hint
+    else:
+        # 3.x 的 recent_articles 单次最多 60 条；缓存要支持翻页就得把前几页取齐。
+        # 它是按 TalkerId 走索引的，取 4 页仍然很便宜。
+        total_hint = 0
+        has_more = False
+        try:
+            for start in range(0, max(60, window), 60):
+                payload = wechat_public.recent_articles(gh_id, limit=60, offset=start, days=days)
+                total_hint = max(total_hint, int(payload.get("total") or 0))
+                has_more = bool(payload.get("has_more"))
+                meta["note"] = payload.get("note") or meta["note"]
+                for row in payload.get("items") or []:
+                    canonical = row.get("canonical_url") or ""
+                    if canonical:
+                        merged.setdefault(canonical, row)
+                if not has_more:
+                    break
+        except wechat_public.PublicMsgUnavailable as exc:
+            raise RuntimeError(str(exc)) from exc
+        meta["total_hint"] = total_hint
+        meta["api_has_more"] = has_more
+        known = library_articles(db, gh_id, account["name"], days=days, limit=window)
+        for row in known:
+            merged.setdefault(row.get("canonical_url") or "", row)
+
+    items = [_to_panel_item(row) for row in merged.values() if row.get("canonical_url")]
+    items.sort(key=lambda item: item["create_time"], reverse=True)
+    hint = meta.get("hint") or {}
+    hint_at = int(hint.get("at") or 0) if isinstance(hint, dict) else 0
+    if not items:
+        if hint_at:
+            items.append({
+                "canonical_url": f"hint:{gh_id}:{hint_at}", "url": "",
+                "title": (hint.get("title") or "").strip() or "(标题已被微信清空)",
+                "summary": "微信只保留了这个号的会话摘要，正文和链接没有落盘。",
+                "cover": "", "published_at": datetime.fromtimestamp(hint_at, timezone.utc).isoformat(timespec="seconds"),
+                "message_id": 0, "idx": 1, "create_time": hint_at, "hint": True,
+            })
+            meta["note"] = (f"微信在 {hint.get('at_display')} 收到过这个号的推送，"
+                            "但客户端只留下会话摘要，正文没有保存到本地。")
+        else:
+            # 空白不等于坏了：4.x 只在收到推送、或你打开过会话时才把正文落盘。
+            # 说清楚原因，免得用户以为「同步了但没显示」是面板的 bug。
+            meta["note"] = ("本机微信里还没有这个号的推送记录。微信只在收到推送"
+                            "或打开过该号会话时才把文章落盘，等它下次推送后再看。")
+    elif hint_at and hint_at > (items[0]["create_time"] or 0) + 60:
+        # 有旧卡片，但更近的那条只留在会话摘要里——说清楚，别让人以为列表就这些。
+        title = (hint.get("title") or "").strip()
+        meta["note"] = (f"更近的一条（{hint.get('at_display')}"
+                        + (f"「{title[:36]}」" if title else "")
+                        + "）微信没把正文存下来，所以列表里没有它。")
+    return items, meta
+
+
+def _page(items: list[dict[str, Any]], offset: int, limit: int, days: int) -> dict[str, Any]:
+    since = int(time.time() - max(1, int(days)) * 86400)
+    rows = [item for item in items if not item.get("create_time") or item["create_time"] >= since]
+    page = rows[offset:offset + limit]
+    for item in page:
+        if item.get("hint"):
+            item["state"] = "hint"
+    return {"items": page, "total": len(rows), "has_more": len(rows) > offset + len(page)}
+
+
+def recent_articles_for_panel(db: Any, account: dict[str, Any], limit: int = 24,
+                              offset: int = 0, days: int = 365,
+                              refresh: bool = False) -> dict[str, Any]:
+    """详情页唯一入口：缓存优先，信号显示有新推文就自动重读一次。"""
+    from . import wechat_public
+    gh_id, channel = resolve_gh(db, account)
+    base: dict[str, Any] = {
+        "account": {"id": account["id"], "name": account["name"], "account_id": gh_id,
+                    "category_code": account.get("category_code"), "fit": account.get("fit"),
+                    "enabled": int(account.get("enabled") or 0)},
+        "total": 0, "offset": offset, "limit": limit, "has_more": False, "items": [],
+        "channel": channel, "cached": False, "cache_age": 0, "synced_at": "",
+    }
+    if not gh_id:
+        return {**base, "error": "没能把网页上的号名对到微信内部编号：微信里可能没关注它，或者备注名和清单不一致"}
+
+    cache = _cache_read(db, account["id"])
+    signal = newest_signal(gh_id)
+    if cache and not refresh:
+        seen = max(int(cache["newest_ts"]), int((cache["meta"] or {}).get("signal") or 0))
+        fresh = _cache_age(cache) <= ARTICLE_CACHE_TTL and signal <= seen + 5
+        if fresh:
+            if channel == "3.x" and offset + limit > len(cache["items"]):
+                # 缓存只装得下前几页；更深的页码直接问 3.x 库，避免翻到第 5 页变空。
+                payload = wechat_public.recent_articles(gh_id, limit=limit, offset=offset, days=days)
+                return {**base, "items": payload.get("items") or [],
+                        "total": int(payload.get("total") or 0),
+                        "has_more": bool(payload.get("has_more")),
+                        "cached": True, "cache_age": int(_cache_age(cache)),
+                        "synced_at": cache["synced_at"], "note": payload.get("note") or ""}
+            page = _page(cache["items"], offset, limit, days)
+            return {**base, **page, "cached": True,
+                    "cache_age": int(_cache_age(cache)), "synced_at": cache["synced_at"],
+                    "note": cache["meta"].get("note") or "",
+                    "legacy_filled": bool(cache["meta"].get("legacy_filled")),
+                    "memory_cards": int(cache["meta"].get("memory_cards") or 0)}
+
+    try:
+        items, meta = collect_recent(db, account, gh_id, channel, days=ARTICLE_CACHE_DAYS)
+        _cache_write(db, account["id"], items, meta, signal=signal)
+    except Exception as exc:                         # noqa: BLE001
+        if cache:
+            page = _page(cache["items"], offset, limit, days)
+            return {**base, **page, "cached": True, "cache_age": int(_cache_age(cache)),
+                    "synced_at": cache["synced_at"],
+                    "note": f"这次读取微信失败（{exc}），先显示 {_cache_age(cache)/60:.0f} 分钟前的缓存。",
+                    "stale": True}
+        raise
+    page = _page(items, offset, limit, days)
+    return {**base, **page, "cached": False, "cache_age": 0, "synced_at": now_iso(),
+            "note": meta.get("note") or "",
+            "legacy_filled": bool(meta.get("legacy_filled")),
+            "memory_cards": int(meta.get("memory_cards") or 0)}
+
+
+def backfill_account(db: Any, account: dict[str, Any], limit: int = 10,
+                     days: int = 30, refresh: bool = True) -> dict[str, Any]:
+    """把一个号最近未收录的推文补进资料库。启用时调用，幂等。"""
+    if str(account.get("fit") or "").upper() == "EXCLUDE":
+        return {"account": account["name"], "skipped": "fit=EXCLUDE", "created": 0, "existing": 0}
+    payload = recent_articles_for_panel(db, account, limit=limit, offset=0, days=days, refresh=refresh)
+    items = payload.get("items") or []
+    titles = [str(item.get("title") or "") for item in items[:12]]
+    articles = [item for item in items if item.get("url")]
+    if not articles:
+        return {"account": account["name"], "created": 0, "existing": 0, "found": 0,
+                "titles": titles,
+                "note": payload.get("note") or payload.get("error") or ""}
+    result = import_articles(db, account, str(account.get("account_id") or ""), articles)
+    return {"account": account["name"], "found": len(articles), "titles": titles, **result}
