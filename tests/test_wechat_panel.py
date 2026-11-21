@@ -424,7 +424,7 @@ class MergeAccountsTest(unittest.TestCase):
 
 
 class SyncDueTest(unittest.TestCase):
-    """每日同步的限流：一天内不重复跑，时间戳坏掉就当作到期。"""
+    """关注列表同步的限流：半小时内不重复跑，时间戳坏掉就当作到期。"""
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -439,12 +439,17 @@ class SyncDueTest(unittest.TestCase):
     def test_due_when_never_synced(self):
         self.assertTrue(self.worker._accounts_sync_due())
 
-    def test_not_due_within_a_day(self):
+    def test_not_due_within_the_interval(self):
         self._set_stamp(now_iso())
         self.assertFalse(self.worker._accounts_sync_due())
 
-    def test_due_after_a_day(self):
+    def test_due_after_the_interval(self):
         self._set_stamp((datetime.now(timezone.utc) - timedelta(hours=25)).isoformat())
+        self.assertTrue(self.worker._accounts_sync_due())
+
+    def test_due_forty_minutes_later(self):
+        """按天同步时用户上午关注的号第二天才出现，看起来就是同步坏了。"""
+        self._set_stamp((datetime.now(timezone.utc) - timedelta(minutes=40)).isoformat())
         self.assertTrue(self.worker._accounts_sync_due())
 
     def test_garbage_stamp_is_due(self):

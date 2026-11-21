@@ -1,4 +1,5 @@
 import logging
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -14,6 +15,27 @@ from .services.filters import load_rules, match as match_rules
 from .utils import ARCHIVE_PAUSE_KEY, now_iso, redact_secrets, stable_json
 
 log = logging.getLogger(__name__)
+
+# 第三方接口的 401/402/403 是「账户状态」而不是「网络抖动」：重试不会变好，只会把
+# 同一句话重复几十遍。表里给出人话原因和用户该做的事，调度层据此停用来源。
+SOURCE_FATAL_STATUS = {
+    401: ("凭据无效或已过期", "换一个有效的 Key"),
+    402: ("余额不足，接口拒绝服务", "充值"),
+    403: ("凭据无权访问该接口", "检查账号权限"),
+}
+
+
+def source_fatal_error(exc: Exception) -> tuple[int, str, str] | None:
+    """认出「重试也没用」的 HTTP 状态，返回 (码, 原因, 待办)，其余一律返回 None。"""
+    response = getattr(exc, "response", None)
+    code = getattr(response, "status_code", None)
+    if not isinstance(code, int):
+        # httpx 的格式固定是 "Client error '402 Payment Required' for url '...'"；
+        # 只认这个短语，避免把 URL 或正文里恰好出现的数字当成状态码。
+        match = re.search(r"(?:Client|Server) error '(401|402|403)\b", str(exc))
+        code = int(match.group(1)) if match else None
+    hit = SOURCE_FATAL_STATUS.get(code) if code else None
+    return (code, hit[0], hit[1]) if hit else None
 
 
 def start_archive_batch(db: Database) -> dict[str, Any]:
@@ -134,6 +156,20 @@ class JobRunner:
                 self.db.add_event("source_warning", f"{source['name']}：{warning_text}", source_id=source["id"])
         except Exception as exc:
             message = redact_secrets(str(exc))
+            fatal = source_fatal_error(exc)
+            if fatal:
+                # 付费与鉴权失败不是「这一轮运气不好」：DataX 余额不足时每个账号都回
+                # 402，每 5 分钟报一次，一晚上能刷出几十条一模一样的红字，把真正要
+                # 看的问题埋掉。这种来源直接停用，等用户充值/换 Key 后自己重新勾。
+                code, why, todo = fatal
+                note = (f"{source['name']}：第三方接口返回 {code}（{why}），"
+                        f"已自动停用该来源，{todo}后可在来源页重新启用。")
+                self.db.execute("""UPDATE sources SET enabled=0,last_poll_at=?,
+                    error_count=error_count+1,last_error=?,updated_at=? WHERE id=?""",
+                    (now_iso(), note[:4000], now_iso(), source["id"]))
+                self.db.add_event("source_disabled", note, source_id=source["id"])
+                log.warning("来源已停用：%s", note)
+                return
             self.db.execute("UPDATE sources SET last_poll_at=?,error_count=error_count+1,last_error=?,updated_at=? WHERE id=?",
                             (now_iso(), message[:4000], now_iso(), source["id"]))
             self.db.add_event("source_error", f"{source['name']}：{message}", source_id=source["id"])

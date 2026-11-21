@@ -179,8 +179,10 @@ dialog{position:fixed;inset:0;margin:auto;z-index:40;overflow:auto}
 .card .panel-head{padding-right:26px}
 .collection-chips{display:inline-flex;gap:4px;flex-wrap:wrap;vertical-align:middle}
 .collection-chip{background:#fff2cf;color:#8a5a00;border-radius:5px;padding:1px 6px;font-size:11px}
-.collection-pop{position:fixed;width:min(320px,90vw);background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 16px 44px rgba(20,35,45,.18);padding:12px 14px;z-index:96}
-.collection-pop[hidden]{display:none}
+/* 收藏弹层是 dialog：只有进 top layer 才能压在精读页上面。
+   margin/inset 要清掉，否则 dialog 会自己居中，JS 算出来的 left/top 全落空。 */
+.collection-pop{position:fixed;inset:auto;margin:0;width:min(320px,90vw);background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 16px 44px rgba(20,35,45,.18);padding:12px 14px}
+.collection-pop::backdrop{background:transparent}
 .collection-pop-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
 .collection-pop-head button{border:0;background:transparent;font-size:18px;color:var(--muted);cursor:pointer}
 .collection-pop-list{display:grid;gap:4px;max-height:240px;overflow:auto;margin-bottom:8px}

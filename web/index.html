@@ -471,14 +471,14 @@ B站 UP 主：也可使用你自建的 RSSHub 地址，kind 设为 video。</pre
   <textarea id="notePopBody" rows="3" placeholder="补一句你的想法（可留空）"></textarea>
   <div class="actions"><button id="notePopSave" class="primary" type="button">保存笔记</button><span id="notePopFrom" class="muted"></span></div>
 </div>
-<div id="collectionPop" class="collection-pop" hidden>
+<dialog id="collectionPop" class="collection-pop" aria-label="收藏到收藏夹">
   <div class="collection-pop-head"><b>收藏到</b><button id="collectionPopClose" type="button">×</button></div>
   <div id="collectionPopList" class="collection-pop-list"></div>
   <div class="collection-pop-new">
     <input id="collectionNewName" placeholder="新建收藏夹">
     <button id="collectionCreate" type="button">新建并加入</button>
   </div>
-</div>
+</dialog>
 <dialog id="collectionDialog" class="mini-dialog">
   <div class="dialog-head"><b id="collectionDialogTitle">管理收藏夹</b><button id="collectionDialogClose" type="button">关闭</button></div>
   <div id="collectionDialogList" class="collection-manage"></div>

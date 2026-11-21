@@ -356,7 +356,10 @@ async function openCollectPop(entryType,entryId,ids,anchor,refresh){
   await loadCollections(collectScope(entryType));
   renderCollectPop();
   const pop=$('#collectionPop');
-  pop.hidden=false;
+  // 必须 showModal()：精读页也是 modal，普通 div 的 z-index 压不过 top layer，
+  // 从精读页点「收藏到…」时弹层会长在对话框背后，看起来就是点了没反应。
+  if(pop.open)pop.close();
+  pop.showModal();
   const rect=anchor.getBoundingClientRect();
   const width=pop.offsetWidth||300,height=pop.offsetHeight||220;
   const left=Math.min(window.innerWidth-width-12,Math.max(12,rect.right-width));
@@ -371,7 +374,7 @@ function renderCollectPop(){
   const list=scope==='library'?itemCollections:ideaCollections;
   $('#collectionPopList').innerHTML=list.length?list.map(c=>`<label><input type="checkbox" data-collect-toggle="${esc(c.id)}" ${collectTarget.ids.includes(c.id)?'checked':''}><span>${esc(c.name)}</span><small class="muted">${c.count||0}</small></label>`).join(''):'<span class="muted">还没有收藏夹，先在下面新建一个。</span>';
 }
-function closeCollectPop(){$('#collectionPop').hidden=true;collectTarget=null}
+function closeCollectPop(){const pop=$('#collectionPop');if(pop&&pop.open)pop.close();collectTarget=null}
 async function toggleCollect(collectionId,member){
   if(!collectTarget)return;
   const target=collectTarget;
@@ -643,10 +646,13 @@ $('#detailDialog').addEventListener('click',e=>{
   const r=e.currentTarget.getBoundingClientRect();
   if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)closeDetail();
 });
-document.addEventListener('keydown',e=>{if(e.key!=='Escape')return;if(!$('#collectionPop').hidden){e.preventDefault();closeCollectPop();return}if($('#chatDrawer').classList.contains('open')){e.preventDefault();$('#chatClose').click()}});
+document.addEventListener('keydown',e=>{if(e.key!=='Escape')return;// 收藏弹层的 Esc 交给浏览器：它会先关最上层，手动 preventDefault 会连带把下一层一起关掉
+if($('#collectionPop').open)return;if($('#chatDrawer').classList.contains('open')){e.preventDefault();$('#chatClose').click()}});
 // Esc 不在这里手动关精读页：模态层自带「先关最上面那层」的顺序，
 // 手动 close 会让浏览器接着把下面那层公众号面板一起关掉。
 $('#collectionPopClose').onclick=closeCollectPop;
+// 点弹层外面（含遮罩）关掉；dialog 的遮罩点击在事件里表现为 target===dialog。
+$('#collectionPop').addEventListener('click',e=>{if(e.target!==e.currentTarget)return;const r=e.currentTarget.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)closeCollectPop()});
 $('#collectionCreate').onclick=()=>{const scope=collectTarget?collectScope(collectTarget.entryType):'library';const input=$('#collectionNewName');createCollectionFor(input.value,scope,true).then(()=>{input.value=''}).catch(e=>toast(e.message))};
 $('#collectionDialogClose').onclick=()=>$('#collectionDialog').close();
 $('#collectionManageCreate').onclick=async()=>{const input=$('#collectionManageName');const scope=window.__manageScope||'library';try{await createCollectionFor(input.value,scope,false);input.value='';renderCollectionManage()}catch(e){toast(e.message)}};

@@ -21,6 +21,10 @@ from .utils import job_error_is_environmental, json_loads, now_iso, stable_json
 log = logging.getLogger(__name__)
 _MUTEX_HANDLE = None
 
+# 关注列表的同步间隔。定 30 分钟是因为代价只有「解一次密 + 读一张联系人表」，
+# 而按天同步的体感就是「我上午关注的号，第二天才出现」。
+ACCOUNTS_SYNC_INTERVAL = 30 * 60
+
 
 def single_instance() -> bool:
     """同一个数据目录只允许一个 Worker。
@@ -153,15 +157,18 @@ class Worker:
             return True
         if last.tzinfo is None:
             last = last.replace(tzinfo=timezone.utc)
-        return (datetime.now(timezone.utc) - last).total_seconds() >= 24 * 3600
+        return (datetime.now(timezone.utc) - last).total_seconds() >= ACCOUNTS_SYNC_INTERVAL
 
     async def account_sync_loop(self) -> None:
-        """每天把本机新关注的公众号补进库：只新增、不追踪。
+        """每半小时把本机新关注的公众号补进库：只新增、不追踪。
 
-        「读到关注列表」和「决定收谁的推文」是两件事。库里的 1460 条是 11-13
+        「读到关注列表」和「决定收谁的推文」是两件事。库里的 1741 条是 11-13
         一次性 OCR 快照，之后再关注一个号，库里根本不会出现——用户的体感就是
-        「我明明关注了，公众号库里却没有」。这里每天读一次本机 contact.db 补齐，
+        「我明明关注了，公众号库里却没有」。这里读本机 contact.db 补齐，
         新号一律 enabled=0，收不收仍由用户在面板里勾。
+
+        间隔定 30 分钟而不是一天：解一次密读一张联系人表只要一秒，按天同步的
+        代价是用户上午关注的号要到第二天才出现，看起来就是「同步坏了」。
 
         两个坑：
         * ``refresh()``/``account_rows()`` 都是同步的磁盘活（SQLCipher 解密 + 全表读），
@@ -173,7 +180,7 @@ class Worker:
         from .services import wechat4_live, wechat_panel
 
         while not self.stop_event.is_set():
-            wait = 6 * 3600
+            wait = ACCOUNTS_SYNC_INTERVAL
             try:
                 if self._accounts_sync_due():
                     status = await asyncio.to_thread(wechat4_live.quick_status)
