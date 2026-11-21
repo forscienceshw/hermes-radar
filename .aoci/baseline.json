@@ -1,7 +1,7 @@
 {
   "version": 1,
   "created_at": "2026-11-20T17:42:55Z",
-  "updated_at": "2026-11-21T17:57:01Z",
+  "updated_at": "2026-11-21T18:02:03Z",
   "files": {
     ".gitattributes": {
       "role": "index",
@@ -383,9 +383,9 @@
     },
     "config/settings.json": {
       "role": "index",
-      "sha256": "1717e6aa4c683ecaa4b51d74fe195caf744975f3fa9ff6a8c52c67a3935876dd",
-      "size": 2698,
-      "normalized_sha256": "35a33b16cfe25ba1c8853ccbb69edd0489adb19001745f943e2926fe488ddc62"
+      "sha256": "cde9f4dae4e304bcd88b7d53ce6dd03111f6df8e4594f79e0882317a328ab786",
+      "size": 2700,
+      "normalized_sha256": "3f1031d102c2c0d2353d79500385edb5152b162462cb713d1e1f4a3b544377dd"
     },
     "docs/wechat4/01-技术原理.md": {
       "role": "index",
