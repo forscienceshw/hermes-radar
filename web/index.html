@@ -335,6 +335,18 @@
     <div class="panel"><h2>自动汇报</h2><div class="form-grid three"><label>渠道<select id="notifyChannel"><option value="inbox">站内收件箱</option><option value="wecom_webhook">企业微信群机器人 Webhook</option><option value="serverchan">Server酱（个人微信）</option><option value="generic_webhook">通用 JSON Webhook</option></select></label><label>Webhook（留空保持不变）<input id="notifyWebhook" type="password" autocomplete="off"><small id="webhookStatus"></small></label><label>即时汇报阈值（0-100）<input id="instantThreshold" type="number" min="0" max="100"></label></div><div class="form-grid four"><label>每次至少积攒<input id="batchSize" type="number" min="1"></label><label>最长等待（分钟）<input id="maxWait" type="number" min="1"></label><label>最低科研相关度<input id="minRelevance" type="number" min="0" max="100"></label><label>每日最多汇报次数<input id="maxPerDay" type="number" min="1" max="12"></label></div><div class="form-grid three"><label>发送时段（逗号分隔）<input id="sendWindows" placeholder="08:30,13:00,20:30"><small>只在时段前后发送；其余时间自动攒着</small></label><label>重点方向细讲阈值<input id="highlightThreshold" type="number" min="0" max="100"><small>达到阈值的重点方向文章用三段讲清，其余只列一行</small></label><label>速览最多列几条<input id="digestLimit" type="number" min="3" max="30"></label></div><div class="form-grid three"><label>免打扰开始<input id="quietStart" type="time"></label><label>免打扰结束<input id="quietEnd" type="time"></label><label>重要内容可突破免打扰<select id="quietCritical"><option value="true">允许</option><option value="false">不允许</option></select></label></div><p class="muted">Server酱填写完整发送地址：https://sctapi.ftqq.com/你的SendKey.send。免费版每天 5 条，请用合并汇报控制条数。企业微信机器人 Webhook 通常为 https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...</p></div>
     <div class="panel"><h2>公众号与论文</h2><div class="form-grid two"><label>DataXAPI Key（可选，留空保持不变）<input id="dataxKey" type="password" autocomplete="off"><small id="dataxKeyStatus"></small></label><label>学术 API 联系邮箱<input id="paperEmail" type="email" placeholder="用于 Crossref / Unpaywall 礼貌调用"></label></div><p class="muted">这里只存凭据。装了哪些来源、哪个在报错、要改检查间隔，都去「采集来源」页看。<button type="button" class="link" id="gotoSources">去采集来源 →</button></p></div>
     <h2 class="group-title">高级与诊断</h2>
+    <div class="panel" id="proxyPanel">
+      <h2>联网与代理</h2>
+      <p class="muted">联网检索里 360、Bing、PubMed（Europe PMC）、Crossref、arXiv 全部直连，<b>没有梯子也能用</b>；只有维基百科和 DuckDuckGo 需要能访问海外。雷达启动时会自己找本机正在运行的代理——系统代理开关、Clash / v2rayN 的常见端口都会认——认不出来才需要在这里手填。</p>
+      <div id="proxyStatus" class="muted">正在检测…</div>
+      <div class="form-grid two">
+        <label>代理地址<input id="proxyUrl" placeholder="留空 = 自动检测，例如 http://127.0.0.1:7897"><small>支持 http:// 与 socks5://；填了优先于自动检测，填错会自动退回直连，不会把搜索弄挂</small></label>
+      </div>
+      <div class="actions">
+        <button id="proxyProbe" type="button">重新检测</button>
+        <span id="proxyResult" class="muted"></span>
+      </div>
+    </div>
     <div class="panel"><h2>原文删除识别自检</h2><p class="muted">拿资料库里已经确认被删除的文章、一篇正常文章、一个必然 404 的地址各探测一次，直接告诉你这套判断到底管不管用。也可以在任意条目详情页点「检查原文」单独验证。</p><div class="actions"><button id="goneSelfCheck" type="button">运行自检</button><span id="goneSelfCheckInfo" class="muted"></span></div><div id="goneSelfCheckResult"></div></div>
     <div class="panel" id="wechatSpacePanel">
       <h2>微信文件与 C 盘</h2>

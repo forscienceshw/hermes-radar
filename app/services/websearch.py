@@ -18,7 +18,7 @@ import re
 import time
 import xml.etree.ElementTree as ET
 from typing import Any
-from urllib.parse import parse_qs, quote_plus, urlencode, urlsplit
+from urllib.parse import parse_qs, quote, quote_plus, urlencode, urlsplit
 
 from bs4 import BeautifulSoup
 
@@ -29,6 +29,20 @@ BROWSER_HEADERS = {
                    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"),
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+}
+# DDG 的风控不看 UA，看"这次请求像不像人点进来的"：只给 User-Agent 会被判成
+# 脚本，一律回 202 + 人机验证页（页面 15KB，没有结果，很容易被当成"搜不到"）。
+# 下面这几个头是 Chrome 从地址栏打开页面时必带的，补齐后实测连续 4 次都是 200。
+DUCK_HEADERS = {
+    **BROWSER_HEADERS,
+    "Sec-Ch-Ua": '"Chromium";v="131", "Not_A Brand";v="24"',
+    "Sec-Ch-Ua-Mobile": "?0",
+    "Sec-Ch-Ua-Platform": '"Windows"',
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Upgrade-Insecure-Requests": "1",
 }
 
 SNIPPET_CHARS = 300
@@ -150,6 +164,9 @@ async def bing(query: str, limit: int = 4) -> list[dict[str, Any]]:
 
 
 SO360_ENDPOINT = "https://www.so.com/s"
+# 360 在结果里会塞自家聚合页：图片搜索（pic.360.com）、站内搜索（sou.360.cn）。
+# 这些点进去是同一批结果的另一个视图，当成"资料"喂给模型只会浪费位置。
+JUNK_HOSTS = {"pic.360.com", "image.so.com", "sou.360.cn", "www.so.com", "so.com"}
 # 360 每条结果尾巴上挂一行「cdmd.cnki.com.cn 反馈」，纯粹是站点标注，不是摘要。
 # 这行经常和摘要挤在同一个 <p> 里，所以必须从文本尾部剥掉，不能整段匹配。
 SITE_FEEDBACK = re.compile(r"\s*[\w.-]+\.[a-z]{2,}(?::\d+)?\s*反\s*馈\s*$", re.I)
@@ -178,7 +195,7 @@ def _parse_so360(html: str, limit: int) -> list[dict[str, Any]]:
         # data-mdurl 是 360 自己塞在结果链接上的真实地址；没有它就只能拿到
         # so.com/link?m=... 那串加密跳转，既认不出域名，也点不进原文。
         url = (link.get("data-mdurl") if link else "") or ""
-        if not url.startswith("http") or url in seen:
+        if not url.startswith("http") or url in seen or _host(url) in JUNK_HOSTS:
             continue
         title = _squash(heading, 180)
         if not title:
@@ -213,6 +230,112 @@ async def so360(query: str, limit: int = 6) -> list[dict[str, Any]]:
     response = await request(f"{SO360_ENDPOINT}?{params}", headers=BROWSER_HEADERS,
                              timeout=18, max_bytes=3_000_000)
     return _parse_so360(response.text, limit)
+
+
+DUCK_ENDPOINT = "https://html.duckduckgo.com/html/"
+
+
+def _unwrap_ddg(url: str) -> str:
+    """DDG 的结果链接是 //duckduckgo.com/l/?uddg=<encode>，真实地址在 uddg 里。"""
+    if "uddg=" not in url:
+        return url
+    probe = url if url.startswith("http") else "https:" + url
+    try:
+        value = (parse_qs(urlsplit(probe).query).get("uddg") or [""])[0]
+    except ValueError:
+        return url
+    return value if value.startswith("http") else url
+
+
+def _parse_ddg(html: str, limit: int) -> list[dict[str, Any]]:
+    soup = BeautifulSoup(html or "", "lxml")
+    hits: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for block in soup.select("div.result"):
+        classes = " ".join(block.get("class") or [])
+        if "result--ad" in classes:                  # 广告位，标题往往还像正文
+            continue
+        link = block.select_one("a.result__a")
+        if link is None:
+            continue
+        url = _unwrap_ddg((link.get("href") or "").strip())
+        if not url.startswith("http") or url in seen:
+            continue
+        title = _squash(link, 180)
+        if not title:
+            continue
+        seen.add(url)
+        hits.append({
+            "title": title,
+            "url": url,
+            "snippet": _squash(block.select_one(".result__snippet")),
+            "source": f"网页 · {_host(url)}",
+            "published": "",
+        })
+        if len(hits) >= limit:
+            break
+    return hits
+
+
+async def duckduckgo(query: str, limit: int = 5) -> list[dict[str, Any]]:
+    """DuckDuckGo 的纯 HTML 出口。
+
+    只在 resolve_overseas() 判为可达时才挂上来：直连必失败，硬发只会白等一次超时，
+    还会往 errors 里塞一条噪音。它的价值是补 360/Bing 都覆盖不到的英文内容和
+    海外站点，排序不占优势（source 仍记作「网页 · 域名」，靠 _authority 压权重）。
+    """
+    params = urlencode({"q": query, "kl": "wt-wt"})
+    response = await request(f"{DUCK_ENDPOINT}?{params}", headers=DUCK_HEADERS,
+                             timeout=12, max_bytes=3_000_000)
+    if response.status == 202:                       # 202 = 人机验证页，不是空结果
+        return []
+    return _parse_ddg(response.text, limit)
+
+
+WIKI_REST = "https://zh.wikipedia.org"
+# 维基的 bot 策略很硬：UA 里必须有一个"能联系上"的地址，只写产品名一律 403
+# （"Please respect our robot policy"）。`.invalid` 是 RFC 2606 保留域，明确表示
+# 这个地址不可投递——比编一个真域名诚实，也能过它的格式检查。
+WIKI_HEADERS = {
+    "Accept": "application/json",
+    "User-Agent": "HermesResearchRadar/0.1 (local research archive; radar@localhost.invalid)",
+}
+
+
+async def wikipedia(query: str, limit: int = 2) -> list[dict[str, Any]]:
+    """中文维基：REST 搜索，一次请求返回标题 + 定义片段。
+
+    不用 `action=query&generator=search`：那个端点被 bot 策略拦成 403，而
+    `/w/rest.php/v1/search/page` 放行。也不再逐条取 summary——两个 RTT 加起来
+    要 3 秒，在 6.5 秒的检索预算里经常来不及，而 excerpt 已经带着定义
+    （"单域抗体是指包含抗体中单个可变域的片段…"），模型够用了。
+    只取 2 条且权重低于文献库：百科给的是背景，不是一手来源。
+    """
+    params = {"q": query, "limit": str(max(limit, 2))}
+    found = await request(f"{WIKI_REST}/w/rest.php/v1/search/page?{urlencode(params)}",
+                          headers=WIKI_HEADERS, timeout=9, max_bytes=2_000_000)
+    hits: list[dict[str, Any]] = []
+    for page in found.json().get("pages") or []:
+        title = str(page.get("title") or "").strip()
+        if not title:
+            continue
+        # excerpt 里包着 <span class="searchmatch"> 高亮，得先剥标签再合并空格，
+        # 否则「单域 抗体」会被切开，后面按 bigram 算覆盖率时这一半就丢了。
+        excerpt = BeautifulSoup(str(page.get("excerpt") or ""), "lxml").get_text("")
+        summary = _clean(" ".join(part for part in (str(page.get("description") or "").strip(),
+                                                    excerpt.strip()) if part))
+        if not summary:
+            continue
+        hits.append({
+            "title": title,
+            "url": f"{WIKI_REST}/wiki/{quote(title, safe='')}",
+            "snippet": summary,
+            "source": "维基百科",
+            "published": "",
+        })
+        if len(hits) >= limit:
+            break
+    return hits
 
 
 CROSSREF_COOLDOWN_UNTIL = 0.0
@@ -449,7 +572,11 @@ def plan_queries(question: str, item_title: str = "",
     return {"science": science[:2], "web": web}
 
 
-SOURCE_WEIGHT = (("Europe PMC", 1.05), ("Crossref", 1.0), ("arXiv", 0.9))
+SOURCE_WEIGHT = (("Europe PMC", 1.05), ("Crossref", 1.0), ("维基百科", 0.95), ("arXiv", 0.9))
+# 这两个是"有更好、没有也行"的补充源。它们返回空很常见（维基对中文专有名词
+# 覆盖有限、DDG 偶尔判限流），记进 errors 只会让界面显示"覆盖可能不完整"，
+# 把用户的注意力引到一个其实没影响的地方。
+OPTIONAL_SOURCES = {"DuckDuckGo", "维基百科"}
 
 # 域名权威度。DeepSeek 的搜索 API 把 authority 单独列成一个 0-4 的字段，
 # 因为同一个查询里"微博热搜"和"学校官网通知"的字面相关度可能一模一样，
@@ -583,9 +710,28 @@ async def gather(question: str, *, item_title: str = "", limit: int = 10,
         # 谁挂了都不影响另一个，errors 里会留下原因。
         tasks.append(("web", plan["web"], f"360:{plan['web']}", so360(plan["web"], 6)))
         tasks.append(("web", plan["web"], f"Bing:{plan['web']}", bing(plan["web"], 4)))
+        # 海外源按本机连通性挂载：有代理（或本机本来就在墙外）才加 DDG 与维基。
+        # 探测结果缓存 3 分钟；没代理的机器这里只是一次毫秒级的端口扫描，
+        # 不会因为"没有梯子"就让整条检索链失败。
+        overseas = False
+        try:
+            from ..net import resolve_overseas
+            overseas = bool((await asyncio.to_thread(resolve_overseas)).get("overseas"))
+        except Exception:                            # noqa: BLE001 - 探不到就按出不去处理
+            overseas = False
+        if overseas:
+            # DDG 用英文主题词而不是用户原话：它的强项是英文网页，拿中文长句去搜
+            # 既搜不到东西，回来的一堆英文结果还会因为"跟中文查询没有字面重合"
+            # 被 _overlap 判成 0 分丢掉。打分也用同一个查询，口径才对得上。
+            ddg_query = (plan["science"][0] if plan["science"] else plan["web"])
+            tasks.append(("web", ddg_query, f"DuckDuckGo:{ddg_query}",
+                          duckduckgo(ddg_query, 5)))
+            tasks.append(("web", plan["web"], f"维基百科:{plan['web']}",
+                          wikipedia(plan["web"], 2)))
 
     # 一个慢源不该拖死整次问答：Europe PMC 从这台机器出去有时 3 秒、有时 14 秒。
     # 到点就用手上已有的，慢的那个记一条 error 说明，用户至少能立刻看到结果。
+    # 预算从源真正开跑算起，不让代理探测那一下吃掉检索时间。
     futures = [asyncio.ensure_future(coro) for *_, coro in tasks]
     done, pending = await asyncio.wait(futures, timeout=SEARCH_BUDGET)
     for task in pending:
@@ -608,7 +754,8 @@ async def gather(question: str, *, item_title: str = "", limit: int = 10,
             continue
         rows = future.result() or []
         if not rows:
-            errors.append(f"{name} 没有返回结果")
+            if name not in OPTIONAL_SOURCES:
+                errors.append(f"{name} 没有返回结果")
             continue
         latin_head = [w.lower() for w in LATIN_TOKEN.findall(query)
                       if w.lower() not in STOP_TOKENS][:1]

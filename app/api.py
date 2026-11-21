@@ -72,10 +72,27 @@ def _warm_setup_snapshot(delay: float = 8.0) -> None:
     threading.Thread(target=run, daemon=True, name="setup-snapshot").start()
 
 
+def _warm_proxy_probe() -> None:
+    """开机后先探一次代理，别让第一次联网问答白等那几秒。
+
+    探测要试十来个本机端口、还要做一次 TLS 握手，冷启动约 2 秒。用户第一次点
+    「问 AI」时正好撞上就是明显的卡顿，所以提前在后台算好，结果缓存 3 分钟。
+    """
+    def run() -> None:
+        try:
+            from . import net
+            net.resolve_overseas()
+        except Exception:                                   # noqa: BLE001
+            pass
+
+    threading.Thread(target=run, daemon=True, name="proxy-probe").start()
+
+
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     _check_updates_in_background()
     _warm_setup_snapshot()
+    _warm_proxy_probe()
     yield
 
 
@@ -294,6 +311,20 @@ async def search_probe(q: str, limit: int = 6) -> dict[str, Any]:
     """临时诊断入口：直接看检索聚合结果，不调用模型。"""
     from .services.websearch import gather
     return await gather(q, limit=limit)
+
+
+@app.get("/api/net_status")
+def net_status(refresh: int = 0) -> dict[str, Any]:
+    """本机能不能访问墙外站点，以及走的是哪个代理。
+
+    普通 `def` 而不是 `async def`：探测最长要两秒多，放事件循环里会把同时到达的
+    其他请求一起卡住，FastAPI 会把这个函数丢进线程池跑。
+    """
+    from . import net
+    state = net.resolve_overseas(force=bool(refresh))
+    return {"proxy": state["proxy"], "overseas": bool(state["overseas"]),
+            "source": state.get("source", ""),
+            "configured": (net._configured_proxy() or "").strip()}
 
 
 @app.get("/api/health")

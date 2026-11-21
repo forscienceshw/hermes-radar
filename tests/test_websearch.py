@@ -4,7 +4,9 @@
 "抓不到正文就整条消失"重新发生，用户看到的就是"联网搜索不好使"。
 """
 import unittest
+from unittest import mock
 
+from app import net
 from app.services import pagefetch, websearch
 
 
@@ -65,6 +67,118 @@ class So360ParseTests(unittest.TestCase):
 
     def test_limit_is_respected(self):
         self.assertEqual(len(websearch._parse_so360(self.HTML, 1)), 1)
+
+    def test_aggregator_pages_are_dropped(self):
+        """360 把自家图片搜索塞进结果里；它点进去还是同一批结果，占位没意义。"""
+        html = """<html><body><ul><li class="res-list">
+          <h3><a data-mdurl="https://pic.360.com/search?q=x">纳米抗体 图片</a></h3>
+          <p class="res-desc">海量高清图片</p></li></ul></body></html>"""
+        self.assertEqual(websearch._parse_so360(html, 5), [])
+
+
+class ProxyRoutingTests(unittest.TestCase):
+    """只有"直连必失败"的站点才挂代理，其余一律直连。
+
+    这条边界是"别人的电脑也能用"的支点：把 arXiv / Europe PMC 也塞进代理名单，
+    一旦某台机器没有梯子，整条学术检索链就跟着废掉。
+    """
+
+    def test_only_walled_hosts_need_proxy(self):
+        self.assertTrue(net.needs_proxy("https://zh.wikipedia.org/w/api.php"))
+        self.assertTrue(net.needs_proxy("https://html.duckduckgo.com/html/?q=x"))
+        self.assertFalse(net.needs_proxy("https://www.so.com/s?q=x"))
+        self.assertFalse(net.needs_proxy("https://www.ebi.ac.uk/europepmc/webservices/rest/search"))
+        self.assertFalse(net.needs_proxy("https://export.arxiv.org/api/query"))
+        self.assertFalse(net.needs_proxy("https://api.crossref.org/works"))
+
+    def test_no_proxy_means_no_proxy_argument(self):
+        """没探到代理时必须原样直连，不能把空串塞进 httpx 让它崩。"""
+        state = {"at": 0.0, "proxy": "", "overseas": False, "source": ""}
+        with mock.patch.object(net, "_proxy_state", state):
+            self.assertEqual(net._client_options("https://zh.wikipedia.org/"), {})
+            self.assertEqual(net._client_options("https://www.so.com/s"), {})
+
+    def test_missing_proxy_degrades_instead_of_raising(self):
+        """一台没有梯子的电脑：探测结果是"出不去"，不是异常。"""
+        state = {"at": 0.0, "proxy": "", "overseas": False, "source": ""}
+        with mock.patch.object(net, "_proxy_state", state), \
+                mock.patch.object(net, "_candidates", return_value=[("http://127.0.0.1:9", "本机端口")]), \
+                mock.patch.object(net, "_probe_proxy", return_value=False), \
+                mock.patch.object(net, "_direct_overseas", return_value=False):
+            result = net.resolve_overseas(force=True)
+        self.assertEqual(result["proxy"], "")
+        self.assertFalse(result["overseas"])
+
+    def test_probe_result_is_cached(self):
+        """每次搜索都重新探端口会白花两秒，缓存必须真的生效。"""
+        calls: list[str] = []
+
+        def fake_probe(url: str) -> bool:
+            calls.append(url)
+            return True
+
+        state = {"at": 0.0, "proxy": "", "overseas": False, "source": ""}
+        with mock.patch.object(net, "_proxy_state", state), \
+                mock.patch.object(net, "_candidates", return_value=[("http://127.0.0.1:7897", "本机端口")]), \
+                mock.patch.object(net, "_probe_proxy", side_effect=fake_probe), \
+                mock.patch.object(net, "_direct_overseas", return_value=False):
+            first = net.resolve_overseas(force=True)
+            second = net.resolve_overseas()
+        self.assertEqual(first["proxy"], "http://127.0.0.1:7897")
+        self.assertEqual(second["proxy"], "http://127.0.0.1:7897")
+        self.assertEqual(len(calls), 1)
+
+
+class DuckDuckGoParseTests(unittest.TestCase):
+    """DDG 补的是 360/Bing 覆盖不到的英文站点，链接是跳转壳，必须还原。"""
+
+    HTML = """<html><body>
+      <div class="result results_links results_links_deep web-result">
+        <a rel="nofollow" class="result__a"
+           href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fwww.nature.com%2Farticles%2Fx&amp;rut=1">
+          Modeling and <b>affinity</b> maturation of a nanobody</a>
+        <a class="result__snippet">We describe a nanobody affinity tag system.</a>
+      </div>
+      <div class="result result--ad">
+        <a class="result__a" href="https://ads.example.com/buy">Buy nanobody kit</a>
+      </div>
+    </body></html>"""
+
+    def test_redirect_shell_is_unwrapped_to_the_real_url(self):
+        href = "//duckduckgo.com/l/?uddg=https%3A%2F%2Fa.org%2Fb&amp;rut=1"
+        self.assertEqual(websearch._unwrap_ddg(href), "https://a.org/b")
+
+    def test_result_links_and_snippets_are_parsed(self):
+        hits = websearch._parse_ddg(self.HTML, 5)
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0]["url"], "https://www.nature.com/articles/x")
+        self.assertIn("nanobody", hits[0]["snippet"])
+
+    def test_ads_are_skipped(self):
+        hits = websearch._parse_ddg(self.HTML, 5)
+        self.assertFalse(any("ads.example.com" in hit["url"] for hit in hits))
+
+    def test_limit_is_respected(self):
+        html = self.HTML + self.HTML.replace("nature.com/articles/x", "nature.com/articles/y")
+        self.assertEqual(len(websearch._parse_ddg(html, 1)), 1)
+
+
+class WikipediaTests(unittest.TestCase):
+    """维基会按 UA 判定爬虫：没有联系方式就一律 403。"""
+
+    def test_user_agent_carries_a_contact(self):
+        ua = websearch.WIKI_HEADERS["User-Agent"]
+        self.assertTrue("@" in ua or "http" in ua,
+                        "维基 bot 策略要求 UA 里带可联系地址，否则所有请求都是 403")
+
+    def test_rest_endpoint_is_used_not_the_blocked_generator(self):
+        # generator=search 被维基的 bot 策略拦成 403，只能走 REST 搜索端点。
+        # 断言参数名而不是注释：文档里提一句"不用 generator"是解释，代码里出现
+        # gsrsearch 才是真的用错了端点。
+        import inspect
+        source = inspect.getsource(websearch.wikipedia)
+        self.assertIn("rest.php/v1/search/page", source)
+        self.assertNotIn("gsrsearch", source)
 
 
 class ParagraphPickTests(unittest.TestCase):
