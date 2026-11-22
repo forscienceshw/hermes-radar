@@ -88,11 +88,36 @@ def _warm_proxy_probe() -> None:
     threading.Thread(target=run, daemon=True, name="proxy-probe").start()
 
 
+def _warm_wechat_detail(delay: float = 3.0) -> None:
+    """启动后先把公众号详情要用的几样东西热身。
+
+    第一次点开详情最贵的两步是「扫 Weixin.exe 内存」（1.8 秒起步，冷页更久）和
+    「增量解密微信库」。用户在启动后一两分钟才会点，等到那时现算就是一段空白。
+    这里在后台先跑一遍，详情页首次打开基本只剩一次数据库查询。
+    """
+    def run() -> None:
+        import time as _time
+        _time.sleep(delay)
+        try:
+            from .services import wechat4_live, wechat4_memory
+            status = wechat4_live.status_cached()
+            if not status.get("running"):
+                return
+            wechat4_live.fingerprint_hash()
+            wechat4_memory.snapshot(force=False)
+            wechat4_live.refresh(budget=20)
+        except Exception:                                   # noqa: BLE001 - 热身失败不影响任何功能
+            pass
+
+    threading.Thread(target=run, daemon=True, name="wechat-detail-warm").start()
+
+
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     _check_updates_in_background()
     _warm_setup_snapshot()
     _warm_proxy_probe()
+    _warm_wechat_detail()
     yield
 
 
@@ -724,22 +749,36 @@ def update_wechat_account(account_pk: int, data: WeChatAccountPatch) -> dict[str
 
 @app.get("/api/wechat/accounts/{account_pk}/articles")
 def wechat_account_articles(account_pk: int, limit: int = 24, offset: int = 0, days: int = 365,
-                            refresh: bool = False) -> dict[str, Any]:
+                            refresh: bool = False, wait: bool = False) -> dict[str, Any]:
     """某个号最近的推文，带上「在资料库里是什么状态」。
 
     打开详情就自动读本机微信——不管这个号有没有启用、有没有归档过文章。
     三路合并：4.x/3.x 消息库 + 订阅号盒子的内存卡片 + 雷达资料库；4.x 只留了
     会话摘要时，至少把摘要作为一张不能补录的卡片显示出来，而不是空白。
-    结果缓存 15 分钟；会话摘要或盒子里出现更新的条目时会自动重读一次。
+
+    2026-11-22 起改成两段式：这一次请求只返回缓存与状态（几十毫秒），重活
+    （扫内存、解密微信库）排到后台线程；前端看到 ``refreshing`` 就每 1.2 秒
+    再问一次，直到列表补齐。第一次点开不再像卡死。
+
+    ``wait=1`` 是同步读（老行为），只给命令行体检和测试用；网页不要用它，
+    否则又回到「一次请求等十几秒」。
     """
     account = db.one("SELECT * FROM wechat_accounts WHERE id=?", (account_pk,))
     if not account:
         raise HTTPException(404, "公众号不存在")
-    from .services import filters
+    from .services import filters, wechat_detail
     try:
-        payload = wechat_panel.recent_articles_for_panel(
-            db, account, limit=min(100, max(1, limit)), offset=max(0, offset),
-            days=min(3650, max(1, days)), refresh=refresh)
+        if wait:
+            payload = wechat_panel.recent_articles_for_panel(
+                db, account, limit=min(100, max(1, limit)), offset=max(0, offset),
+                days=min(3650, max(1, days)), refresh=refresh)
+            payload.setdefault("refreshing", False)
+            payload.setdefault("state", "ok" if payload.get("items") else "empty")
+            payload.setdefault("sources", {})
+        else:
+            payload = wechat_detail.peek(
+                db, account, limit=min(100, max(1, limit)), offset=max(0, offset),
+                days=min(3650, max(1, days)), refresh=refresh)
     except Exception as exc:                         # noqa: BLE001
         raise HTTPException(500, f"读取本机微信失败：{exc}") from exc
     if payload.get("error"):
@@ -2207,6 +2246,51 @@ def setup_autostart_toggle(data: dict[str, Any]) -> dict[str, Any]:
         return autostart.enable() if wanted else autostart.disable()
     except OSError as exc:
         raise HTTPException(500, f"改开机自启失败：{exc}") from exc
+
+
+# --------------------------------------------------------------------------- #
+# 桌面外壳（托盘）
+# --------------------------------------------------------------------------- #
+@app.get("/api/system/shell")
+def system_shell() -> dict[str, Any]:
+    """设置页「桌面程序」那一块：关窗行为 + 命令通道。"""
+    from .services import shell
+    settings = get_settings()
+    port = int(settings.get("port") or 8766)
+    return {**shell.status(), "url": f"http://127.0.0.1:{port}", "port": port}
+
+
+@app.post("/api/system/shell")
+def system_shell_action(data: dict[str, Any]) -> dict[str, Any]:
+    """网页这边只能「留个话」：真正关窗口/停服务的是托盘程序。
+
+    没有托盘（直接 start_radar.pyw 起的）时，quit 也要能生效——所以同时写
+    supervisor 的停止标记，那条路不依赖任何常驻外壳。
+    """
+    from .services import shell
+    changed = {}
+    if "close_action" in data:
+        changed = shell.save(close_action=str(data.get("close_action") or "tray"))
+    if "open_on_start" in data:
+        changed = shell.save(open_on_start=bool(data.get("open_on_start")))
+    action = str(data.get("action") or "").strip().lower()
+    if not action:
+        return {"ok": True, **shell.status(), **changed}
+    if action not in shell.COMMANDS:
+        raise HTTPException(400, f"未知命令：{action}")
+    # 没有托盘在跑时别往命令文件里塞 quit：它会在两分钟内有效，用户如果这期间
+    # 双击图标启动托盘，刚起来就被这条旧命令劝退。只写停止标记就够了。
+    if action == "quit" and not shell.status().get("tray_running"):
+        sent = {"ok": True, "cmd": "quit", "tray_running": False, "skipped": True}
+    else:
+        sent = shell.send(action)
+    if action == "quit":
+        # 兜底：托盘没在跑时，写停止标记让 supervisor 自己收尾。
+        try:
+            (DATA_DIR / "STOP_RADAR").write_text("stop", encoding="utf-8")
+        except OSError:
+            pass
+    return {"ok": bool(sent.get("ok")), **sent, **changed}
 
 
 @app.get("/api/settings")

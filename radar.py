@@ -187,6 +187,12 @@ def cmd_start(repo: Repo) -> int:
 def cmd_stop() -> int:
     stop_file = ROOT / "data" / "STOP_RADAR"
     stop_file.parent.mkdir(parents=True, exist_ok=True)
+    # 托盘外壳也要跟着退，否则桌面上会留一个「服务已停止」的图标和空窗口。
+    try:
+        from app.services import shell
+        shell.send("quit")
+    except Exception:                                # noqa: BLE001
+        pass
     stop_file.write_text("stop", encoding="utf-8")
     print("已发出停止信号。窗口和后台进程会在几秒内退出。")
     return 0

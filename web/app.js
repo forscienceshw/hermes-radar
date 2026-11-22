@@ -284,6 +284,7 @@ $('#waRows').addEventListener('change',e=>{if(e.target.matches('[data-wa-check]'
    那正是「补录」的来源。补录＝建条目＋排队抓正文，排除＝记住原因并可选地建一条
    该号专属的过滤规则（以后同类标题在入库那一刻就被挡住）。 */
 let waPanelAcc=null,waPanelItems=[],waPanelRules=[],waPanelOffset=0,waPanelDays=365,waPanelHasMore=false;
+let waPollToken=0,waOpenedAt=0,waPollTimer=null;
 const waPanelSelected=new Set();
 let waPresets=[],waExcludeTargets=[];
 const WA_PANEL_PAGE=24;
@@ -326,6 +327,8 @@ async function openWaPanel(id){
   const acc=waAll.find(x=>x.id===id);
   if(!acc)return;
   waPanelAcc=acc;waPanelSelected.clear();waPanelOffset=0;waPanelItems=[];waPanelRules=[];
+  waPollToken++;                       // 换号就把上一个号的轮询作废
+  waOpenedAt=Date.now();
   const cat=$('#waPanelCategory');
   cat.innerHTML=Object.entries(WA_LABELS).map(([k,v])=>`<option value="${k}">${esc(v)}</option>`).join('');
   cat.value=acc.category_code||'OTHER';
@@ -333,54 +336,118 @@ async function openWaPanel(id){
   $('#waPanelEnabled').checked=!!acc.enabled;
   $('#waPanelName').textContent=acc.name;
   $('#waPanelMeta').innerHTML=`${acc.account_id?`<span class="badge">${esc(acc.account_id)}</span>`:''}<span>${esc(acc.reason||'')}</span>`;
-  $('#waPanelStatus').textContent='正在读取本机微信的公众号消息库…';
-  $('#waArticlesGrid').innerHTML='';
+  $('#waPanelStatus').textContent='正在打开…';
+  $('#waPanelSub').textContent='';
+  $('#waArticlesGrid').innerHTML=waSkeleton();
   $('#waPanelMore').hidden=true;$('#waPanelCount').textContent='';
   syncWaPanelPicked();
   if(!$('#waArticles').open)$('#waArticles').showModal();
   await loadWaPanel(true);
 }
-function closeWaPanel(){const d=$('#waArticles');if(d.open)d.close()}
+function closeWaPanel(){waPollToken++;const d=$('#waArticles');if(d.open)d.close()}
 $('#waPanelRefresh').onclick=()=>loadWaPanel(true,true).catch(e=>toast(e.message));
 
-async function loadWaPanel(reset,refresh){
+/* 详情是两段式的：服务端先给缓存（几十毫秒就回来），重活排在后台线程。
+   这边看到 refreshing 就每 1.2 秒再问一次，直到列表补齐；期间显示已经等了
+   几秒，免得"没反应"被误解成卡死。 */
+function waSkeleton(){
+  return Array.from({length:3},()=>`<article class="wa-card wa-skel">
+    <div class="wa-cover noimg"><span class="wa-skel-box"></span></div>
+    <div class="wa-body"><span class="wa-skel-line w80"></span><span class="wa-skel-line w60"></span><span class="wa-skel-line w40"></span></div>
+  </article>`).join('');
+}
+
+function stopWaPoll(){if(waPollTimer){clearTimeout(waPollTimer);waPollTimer=null}}
+function scheduleWaPoll(token){
+  stopWaPoll();
+  waPollTimer=setTimeout(()=>{
+    if(token!==waPollToken)return;
+    loadWaPanel(true,false,true).catch(()=>{});
+  },1200);
+}
+
+function waAgo(iso){
+  if(!iso)return '';
+  const t=new Date(iso).getTime();
+  if(!Number.isFinite(t))return '';
+  const s=Math.max(0,(Date.now()-t)/1000);
+  if(s<90)return '刚刚';
+  if(s<3600)return `${Math.round(s/60)} 分钟前`;
+  if(s<86400)return `${Math.round(s/3600)} 小时前`;
+  return `${Math.round(s/86400)} 天前`;
+}
+
+function waSubLine(d){
+  const s=d.sources||{},bits=[];
+  if(d.channel)bits.push(`通道 ${d.channel}`);
+  if(s.wechat_running===false)bits.push('微信当前未运行，只能看本地归档');
+  else if(s.wechat_running)bits.push('微信运行中');
+  if(s.db_synced_at)bits.push(`微信库 ${waAgo(s.db_synced_at.replace(' ','T'))}同步`);
+  if(s.in_contacts===false&&s.wechat_running)bits.push('本机关注列表里没有这个号');
+  if(s.newest_item_display){
+    const days=s.days_since;
+    bits.push(`最后一条 ${s.newest_item_display.slice(0,10)}${Number.isFinite(days)&&days>=7?`（${days} 天前，本机微信里没有更新的记录）`:''}`);
+  }else if(s.hint_at_display){
+    bits.push(`微信 ${s.hint_at_display} 收到过推送，但正文没落盘`);
+  }
+  if(d.cached&&d.cache_age!==undefined)bits.push(`本机缓存 ${Math.max(0,Math.round((d.cache_age||0)/60))} 分钟前`);
+  return bits.join(' · ');
+}
+
+async function loadWaPanel(reset,refresh,poll){
   if(!waPanelAcc)return;
-  if(reset){waPanelOffset=0;waPanelItems=[];}
+  const token=waPollToken;
+  if(reset&&!poll){waPanelOffset=0;waPanelItems=[];}
   const more=$('#waPanelMore');more.hidden=true;more.disabled=true;
+  const offset=poll?0:waPanelOffset;
   try{
-    const data=await api(`/api/wechat/accounts/${waPanelAcc.id}/articles?limit=${WA_PANEL_PAGE}&offset=${waPanelOffset}&days=${waPanelDays}${refresh?'&refresh=1':''}`);
+    let url=`/api/wechat/accounts/${waPanelAcc.id}/articles?limit=${WA_PANEL_PAGE}&offset=${offset}&days=${waPanelDays}`;
+    if(refresh)url+='&refresh=1';
+    const data=await api(url);
+    if(token!==waPollToken)return;                 // 期间换了号，丢弃这次结果
     if(data.error){
       $('#waPanelStatus').textContent=data.error;
-      if(reset)$('#waArticlesGrid').innerHTML='<div class="wa-empty">这台电脑上暂时看不到它的推文</div>';
+      $('#waPanelSub').textContent='';
+      if(reset||poll)$('#waArticlesGrid').innerHTML='<div class="wa-empty">这台电脑上暂时看不到它的推文</div>';
+      stopWaPoll();
       return;
     }
-    waPanelItems=waPanelItems.concat(data.items||[]);
+    const list=poll?(data.items||[]):(reset?(data.items||[]):waPanelItems.concat(data.items||[]));
+    waPanelItems=list;
     waPanelRules=data.rules||[];
     waPanelHasMore=!!data.has_more;
-    waPanelOffset+=WA_PANEL_PAGE;
+    waPanelOffset=(poll||reset)?WA_PANEL_PAGE:offset+(data.items||[]).length;
     const bits=[`共 ${data.total} 篇`];
     bits.push(`资料库已收录 ${waPanelItems.filter(x=>x.state==='archived'||x.state==='index_only').length} 篇`);
     if(waPanelRules.length)bits.push(`本号排除规则 ${waPanelRules.length} 条`);
-    if(data.cached)bits.push(`本机缓存 ${Math.max(0,Math.round((data.cache_age||0)/60))} 分钟前${data.stale?'（刷新失败）':''}`);
-    else bits.push('刚刚从本机微信重读');
     if(data.memory_cards)bits.push(`盒子卡片 ${data.memory_cards} 条`);
+    if(poll)bits.push(`已等 ${Math.round((Date.now()-waOpenedAt)/1000)} 秒`);
     if(data.category_note){
       bits.push(data.category_note);
-      // 列表在弹层后面，顺手刷新一次，关掉详情就能看到分类已变。
       setTimeout(()=>loadWechatAccounts().catch(()=>{}),0);
     }
-    if(data.note)bits.push(data.note);
+    let note=data.note||'';
+    if(!note&&data.refreshing)note='首次读取要扫一遍微信进程内存，通常几秒；读到之后会自己刷新，不用关掉重开。';
+    $('#waPanelStatus').textContent=[note,...bits].filter(Boolean).join(' · ');
+    $('#waPanelSub').textContent=waSubLine(data);
     if(data.account&&data.account.category_code){
       waPanelAcc.category_code=data.account.category_code;
       const pick=$('#waPanelCategory');
       if(pick&&[...pick.options].some(o=>o.value===data.account.category_code))pick.value=data.account.category_code;
     }
-    $('#waPanelStatus').textContent=bits.join(' · ');
-    $('#waArticlesGrid').innerHTML=waPanelItems.map(waCard).join('')||'<div class="wa-empty">这段时间里它没有推文</div>';
-    more.hidden=!waPanelHasMore;
+    if(data.refreshing&&!waPanelItems.length){
+      if(poll)$('#waPanelStatus').textContent=`正在读取本机微信… 已等 ${Math.round((Date.now()-waOpenedAt)/1000)} 秒`;
+      $('#waArticlesGrid').innerHTML=waSkeleton();
+    }else{
+      $('#waArticlesGrid').innerHTML=waPanelItems.map(waCard).join('')
+        ||`<div class="wa-empty">${esc(note||'这段时间里它没有推文')}</div>`;
+    }
+    more.hidden=!(waPanelHasMore&&!data.refreshing);
     $('#waPanelCount').textContent=waPanelHasMore?`已显示 ${waPanelItems.length} / ${data.total} 篇`:`共 ${waPanelItems.length} 篇`;
+    if(data.refreshing)scheduleWaPoll(token); else stopWaPoll();
   }catch(e){
-    $('#waPanelStatus').textContent=e.message;
+    if(token===waPollToken)$('#waPanelStatus').textContent=e.message;
+    stopWaPoll();
   }finally{
     more.disabled=false;
   }
@@ -439,6 +506,8 @@ function applyWaPreset(){
 }
 
 $('#waPanelClose').onclick=closeWaPanel;
+// Esc 关窗不经过 closeWaPanel，补一个 close 事件把轮询停掉，否则它会一直问下去。
+$('#waArticles').addEventListener('close',()=>{waPollToken++;stopWaPoll()});
 $('#waPanelMore').onclick=()=>loadWaPanel(false).catch(e=>toast(e.message));
 $('#waPanelRange').onchange=e=>{waPanelDays=+e.target.value;waPanelSelected.clear();loadWaPanel(true).catch(e=>toast(e.message))};
 $('#waPanelSelectNew').onclick=()=>{waPanelItems.filter(x=>x.state==='new'||x.state==='index_only').forEach(x=>waPanelSelected.add(x.canonical_url));syncWaPanelPicked()};
@@ -963,7 +1032,40 @@ async function refreshProxyStatus(force){const box=$('#proxyStatus');if(!box)ret
 const proxyProbeBtn=$('#proxyProbe');if(proxyProbeBtn)proxyProbeBtn.onclick=()=>refreshProxyStatus(true);
 async function refreshEmbedStatus(){const box=$('#embedStatus');if(!box)return;try{const d=await api('/api/embedding/status');if(d.available){box.innerHTML=`已启用（模型 ${(d.size/1048576).toFixed(1)} MB，纯 CPU 推理）`;$('#embedFetch').textContent='重新下载';}else{box.innerHTML=`未启用：${esc(d.reason||'模型未下载')}。检索仍然可用，只是同义改写会漏。`;}}catch(err){box.textContent='检测失败：'+err.message}}
 const embedBtn=$('#embedFetch');if(embedBtn)embedBtn.onclick=async()=>{const out=$('#embedResult');try{embedBtn.disabled=true;out.textContent='正在下载（约 24 MB）…';const d=await api('/api/embedding/fetch',{method:'POST'});out.textContent=d.ok?`完成：${d.detail}`:`失败：${d.detail}`;await refreshEmbedStatus()}catch(err){out.textContent='下载失败：'+err.message}finally{embedBtn.disabled=false}};
-async function loadSettings(){const data=await api('/api/settings'),s=data.settings;$('#llmEnabled').value=bool(s.llm.enabled);$('#llmProvider').value=s.llm.provider||'openai_compatible';$('#llmBase').value=s.llm.base_url;$('#llmModel').value=s.llm.model;$('#llmAutoCheapest').value=bool(s.llm.auto_cheapest??true);$('#visionEnabled').value=bool(s.llm.vision_enabled);$('#llmDaily').value=s.llm.daily_call_limit;$('#llmPrefilter').value=s.llm.min_local_relevance??40;$('#llmLongMaterial').value=s.llm.long_material_strategy||'head_tail';$('#readingPrompt').value=s.analysis.custom_reading_prompt;$('#llmConcurrency').value=s.analysis.concurrency??3;$('#notifyChannel').value=s.notifications.channel;$('#instantThreshold').value=s.notifications.instant_threshold;$('#batchSize').value=s.notifications.batch_size;$('#maxWait').value=s.notifications.max_wait_minutes;$('#minRelevance').value=s.notifications.min_relevance;$('#quietStart').value=s.notifications.quiet_start;$('#quietEnd').value=s.notifications.quiet_end;$('#quietCritical').value=bool(s.notifications.quiet_allow_critical);$('#paperEmail').value=s.papers.email;window.__secretProviders=data.secrets.providers||[];$('#maxPerDay').value=s.notifications.max_per_day??3;$('#sendWindows').value=(s.notifications.send_windows||[]).join(',');$('#highlightThreshold').value=s.notifications.highlight_threshold??74;$('#digestLimit').value=s.notifications.digest_limit??10;if(window.renderAccounts)renderAccounts(s.llm.accounts||[]);$('#asrEnabled').value=bool(s.video.asr_enabled);$('#asrModel').value=s.video.asr_model;$('#asrDuration').value=s.video.max_duration_minutes;$('#llmKey').disabled=$('#llmProvider').value!=='openai_compatible';$('#llmBase').disabled=$('#llmProvider').value!=='openai_compatible';$('#llmKeyStatus').textContent=data.secrets.llm_api_key?'已安全保存':'未配置';$('#dataxKeyStatus').textContent=data.secrets.datax_api_key?'已安全保存':'未配置';$('#webhookStatus').textContent=data.secrets.notification_webhook?'已安全保存':'未配置';$('#wecomKfSecretStatus').textContent=data.secrets.wecom_kf_secret?'已安全保存':'未配置';$('#proxyUrl').value=s.http_proxy||'';refreshProxyStatus();refreshEmbedStatus()}
+async function loadSettings(){const data=await api('/api/settings'),s=data.settings;$('#llmEnabled').value=bool(s.llm.enabled);$('#llmProvider').value=s.llm.provider||'openai_compatible';$('#llmBase').value=s.llm.base_url;$('#llmModel').value=s.llm.model;$('#llmAutoCheapest').value=bool(s.llm.auto_cheapest??true);$('#visionEnabled').value=bool(s.llm.vision_enabled);$('#llmDaily').value=s.llm.daily_call_limit;$('#llmPrefilter').value=s.llm.min_local_relevance??40;$('#llmLongMaterial').value=s.llm.long_material_strategy||'head_tail';$('#readingPrompt').value=s.analysis.custom_reading_prompt;$('#llmConcurrency').value=s.analysis.concurrency??3;$('#notifyChannel').value=s.notifications.channel;$('#instantThreshold').value=s.notifications.instant_threshold;$('#batchSize').value=s.notifications.batch_size;$('#maxWait').value=s.notifications.max_wait_minutes;$('#minRelevance').value=s.notifications.min_relevance;$('#quietStart').value=s.notifications.quiet_start;$('#quietEnd').value=s.notifications.quiet_end;$('#quietCritical').value=bool(s.notifications.quiet_allow_critical);$('#paperEmail').value=s.papers.email;window.__secretProviders=data.secrets.providers||[];$('#maxPerDay').value=s.notifications.max_per_day??3;$('#sendWindows').value=(s.notifications.send_windows||[]).join(',');$('#highlightThreshold').value=s.notifications.highlight_threshold??74;$('#digestLimit').value=s.notifications.digest_limit??10;if(window.renderAccounts)renderAccounts(s.llm.accounts||[]);$('#asrEnabled').value=bool(s.video.asr_enabled);$('#asrModel').value=s.video.asr_model;$('#asrDuration').value=s.video.max_duration_minutes;$('#llmKey').disabled=$('#llmProvider').value!=='openai_compatible';$('#llmBase').disabled=$('#llmProvider').value!=='openai_compatible';$('#llmKeyStatus').textContent=data.secrets.llm_api_key?'已安全保存':'未配置';$('#dataxKeyStatus').textContent=data.secrets.datax_api_key?'已安全保存':'未配置';$('#webhookStatus').textContent=data.secrets.notification_webhook?'已安全保存':'未配置';$('#wecomKfSecretStatus').textContent=data.secrets.wecom_kf_secret?'已安全保存':'未配置';$('#proxyUrl').value=s.http_proxy||'';refreshProxyStatus();refreshEmbedStatus();loadShellPanel()}
+
+/* ---------- 桌面程序（托盘外壳） ---------- */
+async function loadShellPanel(){
+  try{
+    const d=await api('/api/system/shell');
+    $('#shellCloseAction').value=d.close_action||'tray';
+    $('#shellInfo').textContent=(d.tray_running?'托盘程序在运行':'托盘程序没在运行（当前是浏览器窗口）')
+      +` · ${d.url}`;
+  }catch(e){$('#shellInfo').textContent=e.message}
+}
+$('#shellCloseAction').onchange=async e=>{
+  try{
+    await api('/api/system/shell',{method:'POST',body:{close_action:e.target.value}});
+    toast(e.target.value==='quit'?'以后关窗口就连服务一起退出':'以后关窗口只关窗口，服务留在托盘');
+    loadShellPanel();
+  }catch(err){toast(err.message)}
+};
+$('#shellOpen').onclick=async()=>{
+  try{
+    const r=await api('/api/system/shell',{method:'POST',body:{action:'open'}});
+    if(!r.tray_running)window.open(r.url||'','_blank');
+    else toast('已在桌面窗口打开');
+  }catch(e){toast(e.message)}
+};
+$('#shellRestart').onclick=async()=>{
+  if(!confirm('重启后台服务？正在抓取的条目会重新排队，已完成的不会丢。'))return;
+  try{await api('/api/system/shell',{method:'POST',body:{action:'restart'}});toast('已通知托盘重启服务，约 10 秒后自动刷新');setTimeout(()=>location.reload(),12000)}catch(e){toast(e.message)}
+};
+$('#shellQuit').onclick=async()=>{
+  if(!confirm('彻底退出？会停止后台服务，正在抓取的任务下次启动后继续。'))return;
+  try{await api('/api/system/shell',{method:'POST',body:{action:'quit'}});toast('正在退出…');document.body.innerHTML='<div style="padding:60px;font:15px/1.8 system-ui;color:#556">Hermes 科研雷达已退出。要重新开始，双击桌面图标。</div>'}catch(e){toast(e.message)}
+};
+
 function fmtDuration(seconds){if(seconds===null||seconds===undefined)return '—';const s=Math.max(0,Math.round(seconds));if(s<60)return s+' 秒';if(s<3600)return Math.round(s/60)+' 分钟';return (s/3600).toFixed(1)+' 小时'}
 async function loadProgress(){
   let p;try{p=await api('/api/progress')}catch(e){return}

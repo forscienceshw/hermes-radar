@@ -335,6 +335,19 @@
     <div class="panel"><h2>自动汇报</h2><div class="form-grid three"><label>渠道<select id="notifyChannel"><option value="inbox">站内收件箱</option><option value="wecom_webhook">企业微信群机器人 Webhook</option><option value="serverchan">Server酱（个人微信）</option><option value="generic_webhook">通用 JSON Webhook</option></select></label><label>Webhook（留空保持不变）<input id="notifyWebhook" type="password" autocomplete="off"><small id="webhookStatus"></small></label><label>即时汇报阈值（0-100）<input id="instantThreshold" type="number" min="0" max="100"></label></div><div class="form-grid four"><label>每次至少积攒<input id="batchSize" type="number" min="1"></label><label>最长等待（分钟）<input id="maxWait" type="number" min="1"></label><label>最低科研相关度<input id="minRelevance" type="number" min="0" max="100"></label><label>每日最多汇报次数<input id="maxPerDay" type="number" min="1" max="12"></label></div><div class="form-grid three"><label>发送时段（逗号分隔）<input id="sendWindows" placeholder="08:30,13:00,20:30"><small>只在时段前后发送；其余时间自动攒着</small></label><label>重点方向细讲阈值<input id="highlightThreshold" type="number" min="0" max="100"><small>达到阈值的重点方向文章用三段讲清，其余只列一行</small></label><label>速览最多列几条<input id="digestLimit" type="number" min="3" max="30"></label></div><div class="form-grid three"><label>免打扰开始<input id="quietStart" type="time"></label><label>免打扰结束<input id="quietEnd" type="time"></label><label>重要内容可突破免打扰<select id="quietCritical"><option value="true">允许</option><option value="false">不允许</option></select></label></div><p class="muted">Server酱填写完整发送地址：https://sctapi.ftqq.com/你的SendKey.send。免费版每天 5 条，请用合并汇报控制条数。企业微信机器人 Webhook 通常为 https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...</p></div>
     <div class="panel"><h2>公众号与论文</h2><div class="form-grid two"><label>DataXAPI Key（可选，留空保持不变）<input id="dataxKey" type="password" autocomplete="off"><small id="dataxKeyStatus"></small></label><label>学术 API 联系邮箱<input id="paperEmail" type="email" placeholder="用于 Crossref / Unpaywall 礼貌调用"></label></div><p class="muted">这里只存凭据。装了哪些来源、哪个在报错、要改检查间隔，都去「采集来源」页看。<button type="button" class="link" id="gotoSources">去采集来源 →</button></p></div>
     <h2 class="group-title">高级与诊断</h2>
+    <div class="panel" id="shellPanel">
+      <h2>桌面程序</h2>
+      <p class="muted">桌面图标启动的是一个托盘程序：它负责开窗口、拉起后台服务。关掉窗口后服务继续在托盘里跑，双击托盘图标就能重新打开；要连服务一起停，用「彻底退出」。</p>
+      <div class="form-grid two">
+        <label>关闭窗口时<select id="shellCloseAction"><option value="tray">只关窗口，服务留在托盘（推荐）</option><option value="quit">连后台服务一起退出</option></select></label>
+      </div>
+      <div class="actions">
+        <button id="shellOpen" type="button">在桌面窗口打开</button>
+        <button id="shellRestart" type="button">重启服务</button>
+        <button id="shellQuit" type="button" class="danger">彻底退出（停止服务）</button>
+        <span id="shellInfo" class="muted">正在读取…</span>
+      </div>
+    </div>
     <div class="panel" id="proxyPanel">
       <h2>联网与代理</h2>
       <p class="muted">联网检索里 360、Bing、PubMed（Europe PMC）、Crossref、arXiv 全部直连，<b>没有梯子也能用</b>；只有维基百科和 DuckDuckGo 需要能访问海外。雷达启动时会自己找本机正在运行的代理——系统代理开关、Clash / v2rayN 的常见端口都会认——认不出来才需要在这里手填。</p>
@@ -445,6 +458,7 @@
     <span id="waPanelSelected" class="muted">已选 0 篇</span>
   </div>
   <div id="waPanelStatus" class="wa-status muted"></div>
+  <div id="waPanelSub" class="wa-sub muted"></div>
   <div id="waArticlesGrid" class="wa-grid"></div>
   <div class="wa-foot"><button id="waPanelMore" type="button" hidden>加载更多</button><span id="waPanelCount" class="muted"></span></div>
 </dialog>

@@ -33,6 +33,7 @@ import sqlite3
 import struct
 import subprocess
 import sys
+import threading
 import time
 from ctypes import wintypes
 from dataclasses import dataclass
@@ -939,6 +940,104 @@ def available() -> bool:
         except OSError:
             return False
     return False
+
+
+# --------------------------------------------------------------------------- #
+# 4.5 轻量状态：详情页每次打开都要问，不能每次都去枚举进程、扫目录
+# --------------------------------------------------------------------------- #
+_STATUS_TTL = 30.0
+_status_cache: dict[str, Any] = {"at": 0.0, "value": {}}
+_FP_TTL = 10.0
+_fp_cache: dict[str, Any] = {"at": 0.0, "value": ""}
+_NAMES_TTL = 300.0
+_names_cache: dict[str, Any] = {"at": 0.0, "cache": None, "value": {}}
+_cache_lock = threading.Lock()
+
+
+def status_cached(ttl: float = _STATUS_TTL) -> dict[str, Any]:
+    """``quick_status`` 的 30 秒缓存。
+
+    它要枚举进程、还要 ``rglob("*.db")`` 数一遍库文件，实测一百毫秒出头。
+    详情页每次都调一次的话，冷启动那一下会白等；缓存住就够了——微信开没开
+    不是毫秒级变化的事。
+    """
+    now = time.time()
+    with _cache_lock:
+        if _status_cache["value"] and now - float(_status_cache["at"]) < ttl:
+            return dict(_status_cache["value"])
+    try:
+        value = quick_status()
+    except Exception:                                # noqa: BLE001 - 探测失败按没在跑算
+        value = {"running": False, "pids": [], "storages": [], "databases": 0}
+    with _cache_lock:
+        _status_cache.update(at=time.time(), value=value)
+    return dict(value)
+
+
+def fingerprint_hash(ttl: float = _FP_TTL) -> str:
+    """公众号库写入指纹的短哈希：变了就说明微信刚落了新消息。
+
+    ``biz_fingerprint()`` 只 stat 十来个文件，实测 25ms；这里再缓存 10 秒，
+    详情页拿它判断缓存要不要作废，比扫内存（1.8 秒）便宜两个数量级。
+    """
+    now = time.time()
+    with _cache_lock:
+        if _fp_cache["value"] and now - float(_fp_cache["at"]) < ttl:
+            return str(_fp_cache["value"])
+    try:
+        marks = biz_fingerprint()
+    except Exception:                                # noqa: BLE001
+        marks = ()
+    digest = hashlib.sha1(json.dumps(marks, ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
+    with _cache_lock:
+        _fp_cache.update(at=time.time(), value=digest)
+    return digest
+
+
+def manifest_synced_at(cache: Path | None = None) -> str:
+    """解密缓存最后一次更新的时间。
+
+    用 manifest 文件的 mtime，而不是里面每个库的 ``at``：后者只在真的解密了那个
+    库时才更新，一个安静的号可能几天没变，读出来会让人以为「好久没同步了」。
+    """
+    path = (cache or DEFAULT_CACHE) / "manifest.json"
+    try:
+        stamp = path.stat().st_mtime
+    except OSError:
+        return ""
+    return time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(stamp))
+
+
+def last_refresh_age(cache: Path | None = None) -> float:
+    """距离上一次增量解密过了多少秒。没有缓存时返回一个很大的数。"""
+    path = (cache or DEFAULT_CACHE) / "manifest.json"
+    try:
+        return max(0.0, time.time() - path.stat().st_mtime)
+    except OSError:
+        return 1e9
+
+
+def known_account(username: str, cache: Path | None = None) -> bool:
+    """这个 gh_ 编号在不在本机关注列表里。
+
+    用来区分「没读到」的两种完全不同的原因：号根本没关注（或备注名对不上），
+    还是关注了但这段时间确实没有推送。读 contact.db，缓存 5 分钟。
+    """
+    if not username:
+        return False
+    cache = cache or DEFAULT_CACHE
+    now = time.time()
+    with _cache_lock:
+        cached = _names_cache["value"] if _names_cache["cache"] == str(cache) else None
+        if cached is not None and now - float(_names_cache["at"]) < _NAMES_TTL:
+            return username in cached
+    try:
+        names = account_names(cache)
+    except Exception:                                # noqa: BLE001
+        names = {}
+    with _cache_lock:
+        _names_cache.update(at=time.time(), cache=str(cache), value=names)
+    return username in names
 
 
 def oa_directory(cache: Path | None = None) -> dict[str, dict[str, Any]]:

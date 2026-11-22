@@ -29,6 +29,7 @@ INCLUDE_FILES = (
     "radar.py",
     "install.py",
     "supervisor.pyw",
+    "radar_tray.pyw",
     "start_radar.pyw",
     "stop_radar.pyw",
     "Start Radar.vbs",

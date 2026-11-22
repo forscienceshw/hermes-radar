@@ -207,6 +207,35 @@ class Worker:
             except asyncio.TimeoutError:
                 continue
 
+    async def wechat_cache_loop(self) -> None:
+        """每 3 分钟把 4.x 的库增量解密一次。
+
+        关注列表同步是半小时一趟，拿它兼职刷库的话，用户关掉微信攒了几天推送、
+        重开客户端后，最长要等半小时才能在详情页看见。这里只做解密：库文件指纹
+        没变时整趟七十毫秒，变了才真解；每 3 分钟一次完全不亏。
+
+        微信没运行时不跑——那种情况下 ``refresh`` 会去扫内存找密钥，白白花掉
+        一个预算。库里的旧缓存仍然可读，详情页会明说「微信现在没有运行」。
+        """
+        from .services import wechat4_live
+
+        while not self.stop_event.is_set():
+            try:
+                status = await asyncio.to_thread(wechat4_live.status_cached)
+                if status.get("running"):
+                    state = await asyncio.to_thread(wechat4_live.refresh, None, None, 25)
+                    self.db.set_runtime("wechat4_refreshed_at", now_iso())
+                    if state.refreshed:
+                        log.info("微信库增量解密 %s 个（失败 %s 个）",
+                                 state.refreshed, len(state.failed))
+            except Exception:                       # noqa: BLE001 - 同步失败不该拖垮采集
+                log.exception("微信库增量同步失败")
+            try:
+                await asyncio.wait_for(self.stop_event.wait(), timeout=180)
+                return
+            except asyncio.TimeoutError:
+                continue
+
     async def jsonl_watcher(self) -> None:
         """JSONL is a local tail, not a poll job: avoid thousands of queue rows per day."""
         while not self.stop_event.is_set():
@@ -420,6 +449,7 @@ class Worker:
         self.tasks = [asyncio.create_task(self.scheduler()), asyncio.create_task(self.heartbeat()),
                       asyncio.create_task(self.jsonl_watcher()), asyncio.create_task(self.backup_loop()),
                       asyncio.create_task(self.account_sync_loop()),
+                      asyncio.create_task(self.wechat_cache_loop()),
                       asyncio.create_task(self.wechat_watcher()),
                       asyncio.create_task(self.settings_watch()),
                       asyncio.create_task(self.budget_watch())]

@@ -280,6 +280,7 @@ class PanelArticlesApiTest(unittest.TestCase):
                 patch.object(wechat4_live, "recent_for", return_value=[]), \
                 patch.object(wechat4_live, "session_hint", return_value=hint), \
                 patch.object(wechat3_public, "recent_for", return_value=[]):
+            kwargs.setdefault("wait", True)
             return api.wechat_account_articles(int(self.account["id"]), **kwargs)
 
     def test_library_items_fill_the_gap_left_by_wechat(self):
@@ -591,7 +592,7 @@ class DetailAutoClassifyTest(unittest.TestCase):
                 patch.object(wechat4_live, "recent_for", return_value=[]), \
                 patch.object(wechat4_live, "session_hint", return_value=hint), \
                 patch.object(wechat3_public, "recent_for", return_value=[]):
-            payload = api.wechat_account_articles(int(self.account["id"]), limit=10, offset=0, days=60)
+            payload = api.wechat_account_articles(int(self.account["id"]), limit=10, offset=0, days=60, wait=True)
         self.assertEqual(payload["account"]["category_code"], "SYNTH_BIO")
         self.assertTrue(payload.get("category_note"))
         fresh = self.db.one("SELECT category_code FROM wechat_accounts WHERE id=?", (self.account["id"],))

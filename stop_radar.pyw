@@ -28,6 +28,13 @@ def pid_alive(pid: int) -> bool:
 
 def main() -> int:
     STOP_FILE.parent.mkdir(parents=True, exist_ok=True)
+    # 先让托盘外壳自己退：它带着图标和一个 Edge 应用窗口，只杀服务会留下
+    # 「服务已停止」的图标和空窗口。托盘没在跑时这一步只是写个文件，无害。
+    try:
+        from app.services import shell
+        shell.send("quit")
+    except Exception:                                # noqa: BLE001
+        pass
     STOP_FILE.write_text("stop", encoding="utf-8")
 
     try:

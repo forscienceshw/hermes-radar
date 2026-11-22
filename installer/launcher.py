@@ -148,6 +148,22 @@ def _wait_port(timeout: float = 40.0) -> bool:
 
 
 def start(open_browser: bool = True) -> int:
+    # 从 2026-11-22 起，桌面启动交给托盘外壳：它开窗口、管关窗驻留、负责彻底
+    # 退出。没有 radar_tray.pyw 的旧安装仍然走下面这条浏览器路径。
+    tray = ROOT / "radar_tray.pyw"
+    if tray.is_file():
+        args = [str(_pythonw()), str(tray)] + ([] if open_browser else ["--background"])
+        env = dict(os.environ)
+        env.setdefault("PYTHONIOENCODING", "utf-8")
+        subprocess.Popen(args, cwd=str(ROOT), env=env,
+                         creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW,
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if not _wait_port():
+            message("服务没能在 40 秒内启动。\n请打开安装目录下的 data\\logs\\supervisor.log 查看原因。", error=True)
+            return 3
+        if not open_browser:
+            _say(f"已启动（托盘）：{_url()}")
+        return 0
     if _alive(_supervisor_pid()):
         if open_browser:
             webbrowser.open(_url())
@@ -175,6 +191,13 @@ def start(open_browser: bool = True) -> int:
 
 def stop() -> int:
     pid = _supervisor_pid()
+    # 托盘外壳也要退，否则它会认为服务挂了、又把它拉起来。
+    try:
+        sys.path.insert(0, str(ROOT))
+        from app.services import shell
+        shell.send("quit")
+    except Exception:                                # noqa: BLE001
+        pass
     STOP.parent.mkdir(parents=True, exist_ok=True)
     STOP.write_text("stop", encoding="utf-8")
     deadline = time.monotonic() + 45

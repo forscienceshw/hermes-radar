@@ -33,8 +33,9 @@ def launcher_command() -> list[str]:
     """The command Windows should run at login.
 
     A frozen build ships Radar.exe next to the code, so that wins. A source
-    checkout has no exe, and pythonw.exe + supervisor.pyw is exactly what the
-    old VBS did — same result, one less layer.
+    checkout prefers the tray shell in ``--background`` mode: service starts,
+    icon lands in the notification area, no window steals focus at login.
+    ``supervisor.pyw`` stays as the fallback for a copy without the tray script.
     """
     exe = BASE_DIR / "Radar.exe"
     if exe.is_file():
@@ -45,6 +46,9 @@ def launcher_command() -> list[str]:
         candidate = pythonw.with_name("pythonw.exe")
         if candidate.is_file():
             pythonw = candidate
+    tray = BASE_DIR / "radar_tray.pyw"
+    if tray.is_file():
+        return [str(pythonw), str(tray), "--background"]
     return [str(pythonw), str(BASE_DIR / "supervisor.pyw")]
 
 

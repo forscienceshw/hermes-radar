@@ -28,12 +28,28 @@ python radar.py save "一句话说清改了什么"     # 存
 
 ## data/ 目录是用户的资料，不是缓存
 
-`data/` 里是 3.6G 的离线文档、图片、数据库和日志，**不在版本库里**，回滚动不到它，也意味着改坏了没得退。
+`data/` 里是近 28G 的离线文档、图片、数据库和日志，**不在版本库里**，回滚动不到它，也意味着改坏了没得退。
 所以：
 
 - 不要为了"清理"批量删 `data/` 下的东西。要清理先输出清单让人确认。
 - 不要往 `data/` 里塞临时文件。临时文件放 `.tmp/`（已被忽略）。
 - 数据库结构改动要同步把 `app/db.py` 的 `SCHEMA_VERSION` 加一。
+
+### raw.html 是 gzip 压缩存储的（2026-11-22 起）
+
+`data/documents/*/raw.html` 已全部压成 `raw.html.gz`，documents 从 15.5G 降到 4.1G。
+**读取必须走 `app/services/archive.py` 的三个函数，不要直接 `open(raw_path)`**：
+
+```python
+from .archive import raw_file, read_raw_text
+
+text = read_raw_text(item["raw_path"])   # 自动识别 .gz 并解压
+```
+
+- `raw_file(path)`：返回实际存在的文件（原文件优先，其次 `.gz`）
+- `read_raw_text(path)`：解压并按 utf-8 容错解码
+- 新归档仍写未压缩的 `raw.html`；定期跑 `scripts/compress_raw.py --apply` 收口
+- 当前已接入的位置：`app/api.py`（下载原始快照）、`app/services/papers.py`（提取 DOI）、`scripts/fill_image_alts.py`（补图片描述）
 
 ## 资料库有四道闸门，别搞混
 
@@ -73,6 +89,44 @@ python radar.py save "一句话说清改了什么"     # 存
 
 面板的「排除」不是删：它写 `wechat_article_marks`（这张卡变灰）**并且**按原因在该号名下
 建一条 `filter_rules`。所以入库闸门只有 `filter_rules` 这一处，别再给面板单独加一套过滤逻辑。
+
+## 桌面外壳是托盘，关窗不等于停服务（2026-11-22 起）
+
+双击图标后真正跑的是 `radar_tray.pyw`：起 supervisor、用 Edge 的 `--app` 窗口打开界面、
+在右下角放托盘图标。三条硬规矩：
+
+1. **关窗口只关窗口**。默认 `close_action=tray`，服务继续跑；只有托盘菜单「彻底退出」
+   或设置页「彻底退出」才写 `STOP_RADAR` 并等两个子进程收尾。别把「关窗口」实现成停服务。
+2. **Edge 窗口必须带独立 `--user-data-dir`**（`data/.appwin`）。共用默认配置时，新进程
+   会把请求转给已经在跑的 Edge、自己立刻退出，我们的「窗口已关闭」检测就会误触发。
+3. **单实例按安装目录**：第二个托盘实例不抢图标，而是往 `data/shell_cmd.json` 写 `open`，
+   让已经跑着的那个开窗口。停止路径（`stop_radar.pyw`、`radar.py stop`、`installer/launcher.py`）
+   必须同时发 `quit`，否则托盘会把刚停掉的服务又拉起来。
+
+网页和托盘之间只通过 `data/shell.json`（偏好）与 `data/shell_cmd.json`（一次性命令）通信，
+托盘不开端口。`data/shell_alive.json` 是 5 秒心跳，网页靠它决定要不要退化成浏览器窗口。
+
+## 详情页先给缓存，再后台补读（2026-11-22 起）
+
+第一次点公众号详情的真实耗时在「扫 Weixin.exe 内存」：1.1 GB，冷页十几秒。以前在请求里
+同步做，弹层只有一行「正在读取…」，用户以为卡死；关掉再点能开，是因为第一次即使被关掉
+也把缓存写好了。现在拆成两段：
+
+- `wechat_detail.peek()` 只读 `wechat_article_cache` + 三个毫秒级信号（会话摘要时间、
+  `biz_message_*` 文件指纹、是否在关注列表），立刻返回；缓存不新就排一个**单飞**后台线程。
+- 前端看到 `refreshing` 就每 1.2 秒再问一次，直到 `refreshing=false`。
+
+三条不许退回去：
+
+1. **别把 `wechat4_memory` 的扫描放回请求路径**。它只在后台刷新里跑；`newest_signal`
+   默认 `memory=False` 就是为这个。
+2. **新不新的判断要包含库文件指纹**，不能只比会话摘要。微信关着时攒下的推送，重开客户端
+   可能只落盘不更新摘要；只比摘要会让详情页一直显示旧列表。
+3. **空列表必须说清原因**（微信没运行 / 没关注 / 真没推送 / 读取失败）。四种情况在用户
+   眼里都是空白，处理方式却完全不同。
+
+worker 的 `wechat_cache_loop` 每 3 分钟增量解密一次（指纹没变时整趟 70ms），这是「重开
+微信后 3 分钟内能看到新推文」的保证，别拿关注列表同步（30 分钟）兼职。
 
 ## 删除必须直删，别走回收站
 
@@ -118,13 +172,15 @@ python radar.py save "一句话说清改了什么"     # 存
 
 ## 改完之后服务要重启
 
-`app/` 下任何文件改动后，Worker 进程不会自己重载：
+`app/` 下任何文件改动后，Worker 进程不会自己重载。有托盘的时候别直接杀进程——托盘会
+以为服务崩了，两秒后又把它拉起来。走这条：
 
 ```bash
 python radar.py stop && python radar.py start
 ```
 
-或者只杀 API/Worker 子进程让 `supervisor.pyw` 拉起来。改了 `web/` 下的静态文件不用重启 ——
+或者托盘右键 →「重启服务」，它会先让 supervisor 收干净再拉新的。只杀 API/Worker
+子进程也可以，`supervisor.pyw` 会重新拉起。改了 `web/` 下的静态文件不用重启 ——
 `api.py` 会按文件 mtime 给 `?v=` 版本号，浏览器不会用旧缓存。
 
 ## 不要在代码里写死绝对路径

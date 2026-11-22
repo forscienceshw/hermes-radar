@@ -15,7 +15,7 @@ from .utils import canonical_url, humanize_error_text, now_iso, parse_time, stab
 # 库结构版本。加字段/改表时把这个数字 +1，init() 会把新值写进
 # PRAGMA user_version，于是"这是哪个版本的库"可以和代码版本对得上。
 # 目前只用于诊断：新代码遇到旧库靠下面的补列逻辑自动升级。
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sources (
@@ -293,6 +293,15 @@ class Database:
             if "exclusion_reason" not in columns:
                 conn.execute("ALTER TABLE items ADD COLUMN exclusion_reason TEXT")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_items_excluded ON items(excluded_at)")
+            # 公众号详情要把「这个 gh 编号名下的条目」找出来。原先是
+            # json_extract(metadata_json,'$.wechat_account_id')=?，一万一千里条目
+            # 里全表扫，实测 180ms；详情页每次打开都要付一次。表达式索引把它压到
+            # 毫秒级。老 SQLite 不支持表达式索引时不至于启动失败。
+            try:
+                conn.execute("""CREATE INDEX IF NOT EXISTS idx_items_wechat_account
+                    ON items(json_extract(metadata_json,'$.wechat_account_id'))""")
+            except sqlite3.OperationalError:
+                pass
             # 只升不降：代码回滚到旧版本时不该把库版本改小，否则下次升级会重复跑。
             if conn.execute("PRAGMA user_version").fetchone()[0] < SCHEMA_VERSION:
                 conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")

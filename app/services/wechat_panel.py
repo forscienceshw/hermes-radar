@@ -585,11 +585,13 @@ def _cache_read(db: Any, account_pk: int) -> dict[str, Any] | None:
 
 
 def _cache_write(db: Any, account_pk: int, items: list[dict[str, Any]], meta: dict[str, Any],
-                 signal: int = 0) -> None:
+                 signal: int = 0, db_fp: str = "") -> None:
     newest = max([int(item.get("create_time") or 0) for item in items] or [0])
     # 记下这次读到的「最新推送信号」。留的推文可能没有链接（微信只存了会话摘要），
     # 那种信号永远不会体现在 items 里，只比 newest_ts 会让缓存每开一次都作废。
     meta = {**meta, "signal": max(0, int(signal or 0))}
+    if db_fp:
+        meta["db_fp"] = str(db_fp)
     db.execute("""INSERT INTO wechat_article_cache(account_pk,payload_json,item_count,newest_ts,meta_json,synced_at)
         VALUES(?,?,?,?,?,?)
         ON CONFLICT(account_pk) DO UPDATE SET payload_json=excluded.payload_json,
@@ -599,21 +601,30 @@ def _cache_write(db: Any, account_pk: int, items: list[dict[str, Any]], meta: di
                 newest, json.dumps(meta, ensure_ascii=False), now_iso()))
 
 
-def newest_signal(gh_id: str) -> int:
-    """比缓存新不新的轻量信号：会话摘要时间 + 内存盒子里该号最新一条。
+def hint_signal(gh_id: str) -> int:
+    """会话摘要里的最后推送时间。一条 sqlite 查询，几毫秒。
 
-    不能只靠「15 分钟过期」：用户刚关注一个号、刚收到一条推送，再点开详情
-    却看不到，体验就是「同步了但没同步」。这里只读一个 sqlite 行和一份 90 秒
-    的内存快照，通常几十毫秒。
+    详情页每次打开都要判断「缓存还算不算新」，这条查询是允许付的成本；
+    扫内存（1.8 秒）不行，那只放在真正的刷新路径里。
     """
-    newest = 0
     if not gh_id:
-        return newest
+        return 0
     try:
         from . import wechat4_live
-        newest = max(newest, int(wechat4_live.session_hint(gh_id).get("at") or 0))
+        return int(wechat4_live.session_hint(gh_id).get("at") or 0)
     except Exception:                                # noqa: BLE001
-        pass
+        return 0
+
+
+def newest_signal(gh_id: str, memory: bool = True) -> int:
+    """比缓存新不新的信号：会话摘要时间 +（可选）内存盒子里该号最新一条。
+
+    不能只靠「15 分钟过期」：用户刚关注一个号、刚收到一条推送，再点开详情
+    却看不到，体验就是「同步了但没同步」。
+    """
+    newest = hint_signal(gh_id)
+    if not memory or not gh_id:
+        return newest
     try:
         from . import wechat4_memory
         for item in wechat4_memory.recent_for(gh_id, days=30, limit=3):
@@ -621,6 +632,47 @@ def newest_signal(gh_id: str) -> int:
     except Exception:                                # noqa: BLE001
         pass
     return newest
+
+
+def _db_fingerprint() -> str:
+    """公众号库写入指纹。单独包一层是为了测试里能直接替换掉。"""
+    try:
+        from . import wechat4_live
+        return wechat4_live.fingerprint_hash()
+    except Exception:                                # noqa: BLE001
+        return ""
+
+
+def cache_state(db: Any, account: dict[str, Any], gh_id: str) -> dict[str, Any]:
+    """只读判断缓存还能不能用，不做任何重活。
+
+    三个条件同时成立才算新：15 分钟内、会话摘要没有更新过、微信库文件没有
+    被写过。第三条是 2026-11-22 补的：微信关着的时候攒下的推送，重开客户端
+    后可能只落盘不进会话摘要，只比摘要会让详情页一直显示旧列表。
+    """
+    cache = _cache_read(db, account["id"])
+    age = _cache_age(cache)
+    signal = newest_signal(gh_id, memory=False)
+    fp = _db_fingerprint()
+    fresh = False
+    if cache:
+        seen = max(int(cache["newest_ts"]), int((cache["meta"] or {}).get("signal") or 0))
+        remembered = str((cache["meta"] or {}).get("db_fp") or "")
+        fresh = (age <= ARTICLE_CACHE_TTL and signal <= seen + 5
+                 and (not fp or not remembered or fp == remembered))
+    return {"cache": cache, "age": age, "signal": signal, "fingerprint": fp, "fresh": fresh}
+
+
+def refresh_cached(db: Any, account: dict[str, Any], days: int = ARTICLE_CACHE_DAYS,
+                   window: int = 240) -> dict[str, Any]:
+    """真正去读本机微信并写缓存。慢的那条路，只在后台线程或任务里调用。"""
+    gh_id, channel = resolve_gh(db, account)
+    if not gh_id:
+        raise RuntimeError("没能把网页上的号名对到微信内部编号：微信里可能没关注它，或者备注名和清单不一致")
+    items, meta = collect_recent(db, account, gh_id, channel, days=days, window=window)
+    signal = max(newest_signal(gh_id), hint_signal(gh_id))
+    _cache_write(db, account["id"], items, meta, signal=signal, db_fp=_db_fingerprint())
+    return {"items": items, "meta": meta, "gh_id": gh_id, "channel": channel}
 
 
 def _to_panel_item(row: dict[str, Any]) -> dict[str, Any]:
@@ -741,7 +793,11 @@ def _page(items: list[dict[str, Any]], offset: int, limit: int, days: int) -> di
 def recent_articles_for_panel(db: Any, account: dict[str, Any], limit: int = 24,
                               offset: int = 0, days: int = 365,
                               refresh: bool = False) -> dict[str, Any]:
-    """详情页唯一入口：缓存优先，信号显示有新推文就自动重读一次。"""
+    """同步版详情读取：缓存优先，信号显示有新推文就自动重读一次。
+
+    只给任务队列（补录）和命令行用。网页打开详情走 ``wechat_detail`` 的两段式：
+    先返回这里能秒出的东西，重活放后台线程，否则第一次点开要等扫描内存。
+    """
     from . import wechat_public
     gh_id, channel = resolve_gh(db, account)
     base: dict[str, Any] = {
@@ -754,36 +810,33 @@ def recent_articles_for_panel(db: Any, account: dict[str, Any], limit: int = 24,
     if not gh_id:
         return {**base, "error": "没能把网页上的号名对到微信内部编号：微信里可能没关注它，或者备注名和清单不一致"}
 
-    cache = _cache_read(db, account["id"])
-    signal = newest_signal(gh_id)
-    if cache and not refresh:
-        seen = max(int(cache["newest_ts"]), int((cache["meta"] or {}).get("signal") or 0))
-        fresh = _cache_age(cache) <= ARTICLE_CACHE_TTL and signal <= seen + 5
-        if fresh:
-            if channel == "3.x" and offset + limit > len(cache["items"]):
-                # 缓存只装得下前几页；更深的页码直接问 3.x 库，避免翻到第 5 页变空。
-                payload = wechat_public.recent_articles(gh_id, limit=limit, offset=offset, days=days)
-                return {**base, "items": payload.get("items") or [],
-                        "total": int(payload.get("total") or 0),
-                        "has_more": bool(payload.get("has_more")),
-                        "cached": True, "cache_age": int(_cache_age(cache)),
-                        "synced_at": cache["synced_at"], "note": payload.get("note") or ""}
-            page = _page(cache["items"], offset, limit, days)
-            return {**base, **page, "cached": True,
-                    "cache_age": int(_cache_age(cache)), "synced_at": cache["synced_at"],
-                    "note": cache["meta"].get("note") or "",
-                    "legacy_filled": bool(cache["meta"].get("legacy_filled")),
-                    "memory_cards": int(cache["meta"].get("memory_cards") or 0)}
+    state = cache_state(db, account, gh_id)
+    cache = state["cache"]
+    if cache and not refresh and state["fresh"]:
+        if channel == "3.x" and offset + limit > len(cache["items"]):
+            # 缓存只装得下前几页；更深的页码直接问 3.x 库，避免翻到第 5 页变空。
+            payload = wechat_public.recent_articles(gh_id, limit=limit, offset=offset, days=days)
+            return {**base, "items": payload.get("items") or [],
+                    "total": int(payload.get("total") or 0),
+                    "has_more": bool(payload.get("has_more")),
+                    "cached": True, "cache_age": int(state["age"]),
+                    "synced_at": cache["synced_at"], "note": payload.get("note") or ""}
+        page = _page(cache["items"], offset, limit, days)
+        return {**base, **page, "cached": True,
+                "cache_age": int(state["age"]), "synced_at": cache["synced_at"],
+                "note": cache["meta"].get("note") or "",
+                "legacy_filled": bool(cache["meta"].get("legacy_filled")),
+                "memory_cards": int(cache["meta"].get("memory_cards") or 0)}
 
     try:
-        items, meta = collect_recent(db, account, gh_id, channel, days=ARTICLE_CACHE_DAYS)
-        _cache_write(db, account["id"], items, meta, signal=signal)
+        result = refresh_cached(db, account)
+        items, meta = result["items"], result["meta"]
     except Exception as exc:                         # noqa: BLE001
         if cache:
             page = _page(cache["items"], offset, limit, days)
-            return {**base, **page, "cached": True, "cache_age": int(_cache_age(cache)),
+            return {**base, **page, "cached": True, "cache_age": int(state["age"]),
                     "synced_at": cache["synced_at"],
-                    "note": f"这次读取微信失败（{exc}），先显示 {_cache_age(cache)/60:.0f} 分钟前的缓存。",
+                    "note": f"这次读取微信失败（{exc}），先显示 {state['age']/60:.0f} 分钟前的缓存。",
                     "stale": True}
         raise
     page = _page(items, offset, limit, days)
