@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import atexit
 import gc
+import os
 import tempfile
 import time
 from pathlib import Path
@@ -45,7 +46,14 @@ if purge is not None and hasattr(tempfile.TemporaryDirectory, "_rmtree"):
 # 上面那层只管得住 TemporaryDirectory。SQLite 自己在关闭连接时删 `-shm` /
 # `-journal` 走的是 CPython 的 `os.unlink`，垫片照样接管——一趟全量测试能留下
 # 四百多条。测试跑完统一扫一次，只认本项目前缀，别的软件一条不碰。
-_ROOT = Path(__file__).resolve().parent.parent
+_ROOTS = [Path(__file__).resolve().parent.parent]
+# 测试库常被 `RADAR_DATA_DIR=D:/tmp/tdata` 甩到仓库外，只清仓库前缀会漏；
+# `tempfile` 造的临时目录同理。三处一起扫，净增量才是真的零。
+_extra = os.environ.get("RADAR_DATA_DIR")
+if _extra:
+    _ROOTS.append(Path(_extra))
+_ROOTS.append(Path(tempfile.gettempdir()))
+_PREFIXES = [str(item) for item in _ROOTS]
 
 
 def _sweep_trash(rounds: int = 3) -> None:
@@ -65,7 +73,7 @@ def _sweep_trash(rounds: int = 3) -> None:
         except Exception:                            # noqa: BLE001
             pass
         try:
-            backup.sweep_trash(prefixes=[str(_ROOT)])
+            backup.sweep_trash(prefixes=_PREFIXES)
         except Exception:                            # noqa: BLE001 - 清扫失败不许影响测试结果
             pass
         if index + 1 < rounds:

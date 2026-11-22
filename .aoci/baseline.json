@@ -1,7 +1,7 @@
 {
   "version": 1,
   "created_at": "2026-11-20T17:42:55Z",
-  "updated_at": "2026-11-22T17:21:43Z",
+  "updated_at": "2026-11-22T17:43:50Z",
   "files": {
     ".gitattributes": {
       "role": "index",
@@ -17,9 +17,9 @@
     },
     "AGENTS.md": {
       "role": "index",
-      "sha256": "7858a07da6ae864dd1aa3434c783164e44320716286f722ff1a41cf745f6fdb4",
-      "size": 59547,
-      "normalized_sha256": "7858a07da6ae864dd1aa3434c783164e44320716286f722ff1a41cf745f6fdb4"
+      "sha256": "1a9db7a3b6a3ff8be661067ae56f816f93431ee34f4daa3afd89630d2eff3873",
+      "size": 60449,
+      "normalized_sha256": "1a9db7a3b6a3ff8be661067ae56f816f93431ee34f4daa3afd89630d2eff3873"
     },
     "Install.vbs": {
       "role": "index",
@@ -53,9 +53,9 @@
     },
     "aoci.code.txt": {
       "role": "index",
-      "sha256": "511f84c06fa25d01259e8e75378fbebc9f28f9f8eef21b6dcf15711ea7a473a9",
-      "size": 53742,
-      "normalized_sha256": "511f84c06fa25d01259e8e75378fbebc9f28f9f8eef21b6dcf15711ea7a473a9"
+      "sha256": "75c01c680384a8af33a9cb8fc1085e63f5e9b8ac1ee3008726d225a29692eae1",
+      "size": 53930,
+      "normalized_sha256": "75c01c680384a8af33a9cb8fc1085e63f5e9b8ac1ee3008726d225a29692eae1"
     },
     "aoci.meta.txt": {
       "role": "index",
@@ -635,9 +635,9 @@
     },
     "tests/__init__.py": {
       "role": "observe",
-      "sha256": "d4b7219fb0e3d05f755081f355b542f8105397ea4aba2a1257b8d61422398f08",
-      "size": 3298,
-      "normalized_sha256": "d4b7219fb0e3d05f755081f355b542f8105397ea4aba2a1257b8d61422398f08"
+      "sha256": "d9051204f1c90bb1a7a057d07daa77ccc7d6dd0eb82ec7e255d9a19e92ea5021",
+      "size": 3659,
+      "normalized_sha256": "d9051204f1c90bb1a7a057d07daa77ccc7d6dd0eb82ec7e255d9a19e92ea5021"
     },
     "tests/test_account_name_match.py": {
       "role": "observe",
@@ -851,9 +851,9 @@
     },
     "tools/trash.py": {
       "role": "index",
-      "sha256": "dc6e83137382168a30b16f4d0e51600007c198d89252bd6f9d0b1f80490ca877",
-      "size": 10038,
-      "normalized_sha256": "dc6e83137382168a30b16f4d0e51600007c198d89252bd6f9d0b1f80490ca877"
+      "sha256": "6a5069b43b06230f8d237f98f4dbf46be1900710fff1a700be61e75f66023536",
+      "size": 10076,
+      "normalized_sha256": "6a5069b43b06230f8d237f98f4dbf46be1900710fff1a700be61e75f66023536"
     },
     "tools/vcs.py": {
       "role": "index",

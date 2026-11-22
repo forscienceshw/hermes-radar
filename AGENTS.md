@@ -192,6 +192,15 @@ worker 的 `wechat_cache_loop` 每 3 分钟增量解密一次（指纹没变时�
 - 跑测试带 `-t .`：`python -m unittest discover -s tests -t .`。少了它模块会以顶层名
   导入，`tests/__init__.py` 的 `purge` 加速层不生效（不会脏回收站，但删临时库要慢十倍）。
 - 收尾跑一次 `python radar.py tidy`：清 `.tmp`，再把回收站里属于本项目的条目直删。
+- **大批量删除（>50 个文件或 >10 MB）之后必须自检**：`python tools/trash.py list` 看
+  分组，命中本项目、`D:\tmp`、`RADAR_DATA_DIR`、Temp 的就 `purge --under '<前缀>'` 清掉。
+  2026-11-23 一次窗口调试就在回收站堆了 1375 条、874 MB（Edge profile 副本与测试库），
+  用户第四次问"回收站怎么总也清不干净"。删除命令别指望"下次一起清"，当场核账。
+- `--under` 传 Windows 路径要**用单引号**：bash 双引号里 `"D:\\tmp"` 会被再吃一层反斜杠，
+  结果 `_matches` 一条都对不上，命令还显示"匹配 0 条"——看起来像没残留。
+- 临时目录一律建在 `RADAR_DATA_DIR` 或仓库 `.tmp/` 下。`tests/__init__.py` 退出时会把
+  **仓库 + `RADAR_DATA_DIR` + `tempfile.gettempdir()`** 三处前缀的回收站条目一起扫掉，
+  所以库甩到仓库外也不会漏。
 - 用户自己删的东西（桌面文件、录屏、网盘资料）不在此列，**不要**替他清。
 
 **二、不是我们造的东西，删之前先留底。**

@@ -230,7 +230,7 @@ def cmd_wipe(args: argparse.Namespace) -> int:
     return 0
 
 
-def check() -> int:
+def check(args: argparse.Namespace | None = None) -> int:
     """给人工复查用：仓库里有没有被垫片拦下的残留。"""
     root = Path(__file__).resolve().parents[1]
     leftovers = sorted(root.glob("data/tmp*"))
