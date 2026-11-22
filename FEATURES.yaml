@@ -1,0 +1,224 @@
+# 科研雷达功能清单
+#
+# 规矩见 skill `software-project-playbook` 的 references/01-scope.md。
+# 对账：python <skill>/scripts/feature_audit.py .
+#
+# surfaces 里每一项都要能在代码里搜到（路由原文 / 元素 id / 测试文件名）。
+# status: planned | doing | done | broken | dropped
+
+- id: ingest-quick
+  title: 手动投喂链接或文本，立刻进资料库
+  status: done
+  since: 2026-09-20
+  surfaces:
+    api: ["POST /api/ingest"]
+    ui: ["#quickText", "#ingestBtn"]
+  manual: 粘一条公众号链接，点「立即处理」，看任务队列出现并完成
+  notes: 投喂是唯一不依赖轮询的入口，坏了用户会以为整个采集停了
+
+- id: library-list
+  title: 资料库列表，可按来源/状态/时间筛选
+  status: done
+  surfaces:
+    api: ["GET /api/items"]
+    ui: ["#library", "#hideLow"]
+    test: ["test_library_filters.py"]
+  manual: 勾「隐藏低相关」，条数应变少；取消勾选恢复
+
+- id: library-search
+  title: 关键词全文检索（标题/简介/正文）
+  status: done
+  surfaces:
+    api: ["GET /api/items?q="]
+    ui: ["#searchQ", "#searchBtn"]
+  manual: 搜一个罕见词，结果应只含该词；清空后恢复全量
+
+- id: item-soft-delete
+  title: 条目软删除与恢复（不删正文）
+  status: done
+  surfaces:
+    api: ["POST /api/items/{item_id}/delete", "POST /api/items/{item_id}/restore"]
+  manual: 删一条 → 勾「含已删除」能看到 → 点恢复后回到正常列表
+  notes: 正文与图片留在磁盘，恢复入口是「含已删除」
+
+- id: bulk-delete
+  title: 批量选择与批量删除
+  status: done
+  surfaces:
+    api: ["POST /api/items/bulk-delete"]
+    ui: ["#bulkBar", "#bulkDelete"]
+  manual: 勾三条 → 批量删除 → 三条都进已删除，未选的没动
+
+- id: filter-rules
+  title: 自定义过滤规则（标题/简介匹配）
+  status: done
+  surfaces:
+    api: ["GET /api/filter-rules", "POST /api/filter-rules/preview"]
+    ui: ["#filterRulesBtn"]
+  manual: 加一条「招聘」，预览命中数应大于 0，且不误伤论文
+  notes: 只匹配标题或「标题+简介」，不读正文
+
+- id: wechat-accounts
+  title: 公众号清单（启用/分类/分页/搜索）
+  status: done
+  surfaces:
+    api: ["GET /api/wechat/accounts"]
+    ui: ["#waRows", "#waQ"]
+    test: ["test_wechat_panel.py"]
+  manual: 搜一个号名，列表应只剩它；清空恢复
+
+- id: wechat-sync-local
+  title: 同步本机微信关注列表
+  status: done
+  surfaces:
+    api: ["POST /api/wechat/accounts/sync-local"]
+    ui: ["#waSyncLocal"]
+    test: ["test_wechat_panel.py"]
+  manual: 点同步，新关注的号 30 秒内出现
+  notes: 每 30 分钟自动同步一次；401/402/403 视为账户状态，自动停用
+
+- id: wechat-articles
+  title: 近期推文三路合并（4.x 会话库 / 3.x 库 / 已收录）
+  status: done
+  surfaces:
+    api: ["GET /api/wechat/accounts/{account_pk}/articles"]
+    ui: ["#wechat"]
+    test: ["test_wechat_panel.py", "test_wechat_detail.py"]
+  manual: 打开一个有历史的号，条目应含尚未进雷达的推文
+  notes: 只问一路会停在换通道那天；分页在合并后切
+
+- id: wechat-cover
+  title: 封面图代理（绕开图床防盗链）
+  status: done
+  surfaces:
+    api: ["GET /api/wechat/cover"]
+  manual: 列表缩略图能显示，不是「未经允许不可引用」占位图
+  notes: mmbiz.qpic.cn 校验 Referer，服务端请求不能带
+
+- id: wechat-exclude
+  title: 面板内排除/恢复某篇推文
+  status: done
+  surfaces:
+    api: ["POST /api/wechat/accounts/{account_pk}/articles/exclude"]
+    ui: ["#wechat"]
+    test: ["test_wechat_panel.py"]
+  manual: 排除一篇，卡片灰掉；恢复后变正常
+
+- id: papers
+  title: 论文库（PDF 归档、打开、重新抓取）
+  status: done
+  surfaces:
+    api: ["GET /api/papers", "POST /api/papers/{paper_id}/retry"]
+    ui: ["#papersList"]
+    test: ["test_text_and_papers.py"]
+  manual: 打开一篇论文详情，PDF 能下能看
+
+- id: ideas
+  title: Ideas 记录与收藏夹归类
+  status: done
+  surfaces:
+    ui: ["#ideasList", "#ideaFormTitle"]
+  manual: 新建一条 idea，选中收藏夹保存，列表里能看到
+
+- id: collections
+  title: 收藏夹管理（新建/删除/条目数）
+  status: done
+  surfaces:
+    api: ["GET /api/collections", "DELETE /api/collections/{collection_id}"]
+    ui: ["#manageCollections"]
+    test: ["test_library_filters.py"]
+  manual: 新建一个收藏夹，删除后相关条目回到未归类
+
+- id: sources
+  title: 采集来源管理（启停、间隔、健康状态）
+  status: done
+  surfaces:
+    api: ["GET /api/sources", "POST /api/sources/{source_id}/run"]
+    ui: ["#sourcesList"]
+    test: ["test_source_health.py"]
+  manual: 停一个来源，进度面板不再出现它的任务
+
+- id: backup
+  title: 数据库每日快照与手动备份
+  status: done
+  surfaces:
+    api: ["GET /api/backup", "POST /api/backup/run"]
+    test: ["test_backup.py"]
+  manual: 点立即备份，data/backups 下出现当天文件，保留 7 份
+
+- id: credits
+  title: 总览页点数与 API token 统计
+  status: done
+  surfaces:
+    api: ["GET /api/credits"]
+    ui: ["#creditsPanel"]
+    test: ["test_credits.py", "test_api_usage.py"]
+  manual: 打开总览，点数与 token 两块都有数字，不空白
+  notes: 局部变量曾遮蔽顶层 api() 函数导致整块空白，catch 静默吞掉
+
+- id: desktop-window
+  title: 软件窗口（WebView2），可切换浏览器标签页打开
+  status: done
+  surfaces:
+    api: ["GET /api/system/shell", "POST /api/system/shell"]
+    ui: ["#shellWindowMode"]
+    test: ["test_desktop_shell.py"]
+  manual: 选「软件窗口」→ 双击 exe 出现无地址栏窗口；选浏览器 → 开标签页
+
+- id: desktop-close
+  title: 关窗三态（每次问 / 只关窗口 / 连服务退）
+  status: done
+  surfaces:
+    ui: ["#shellCloseAction"]
+    test: ["test_desktop_shell.py"]
+  manual: 设为「每次问」，点叉应弹出确认框且窗口不先消失
+  notes: 窗口必须归本进程，closing 先返回 False，用户选完才 hide/destroy
+
+- id: autostart
+  title: 开机自启（可调是否弹窗）
+  status: done
+  surfaces:
+    ui: ["#shellAutostart", "#shellOpenOnStart"]
+    test: ["test_desktop_shell.py"]
+  manual: 打开自启，注销重登，托盘出现；关掉「启动时打开窗口」则只进托盘
+  notes: 注册表命令固定为 Radar.exe start，弹窗由 open_on_start 运行时决定
+
+- id: jobs-queue
+  title: 任务队列与进度面板
+  status: done
+  surfaces:
+    ui: ["#taskQueueBtn", "#taskPendingBadge"]
+    test: ["test_archive_pause.py"]
+  manual: 触发一次归档，进度条动，完成后角标消失
+
+- id: setup-wizard
+  title: 配置向导（微信/模型/通知三步）
+  status: done
+  surfaces:
+    ui: ["#step-wechat", "#setupScoreChip"]
+    test: ["test_setup_wizard.py"]
+  manual: 新装环境下向导能走完三步并保存
+
+- id: notifications
+  title: 通知推送（渠道配置、测试发送）
+  status: done
+  surfaces:
+    ui: ["#notificationsList", "#testNotification"]
+  manual: 配一个渠道，点测试，手机收到消息
+
+- id: export-markdown
+  title: 把一条资料导出为 Markdown 文件
+  status: planned
+  surfaces:
+    api: []
+  manual: 详情页点导出，生成 .md 并打开所在目录
+  notes: 还没做。需要的落点：后端 /api/items/{id}/export，前端 #exportItem
+
+- id: wechat4-live
+  title: 微信 4.x 实时订阅（每有新推文立即抓）
+  status: dropped
+  surfaces:
+    api: []
+  manual: -
+  notes: 2026-11-16 放弃：4.x 只在收到推送或打开会话时落盘正文，实时订阅做不到稳定，
+        改为「打开面板时按需读内存 + 每 30 分钟补同步」
