@@ -1,7 +1,7 @@
 #AOCI-ROOT-MANIFEST: 1
 #Format-Version: cognition-volumes/v1
 #Locale: zh-CN
-#Project: HermesResearchRadar
-#Global-Invariants: -
+#Project: 本地科研信息雷达：采集公众号、B 站与学术源的内容，判相关、去重、归档正文与配图，供检索、精读、收藏与论文下载；托盘外壳拉后端起服务，浏览器/Edge 窗口操作。
+#Global-Invariants: data/ 是用户资料与证据，代码与配置的任何改动都不动它；删除一律直删，不往回收站堆；读本机微信只读、不写库，3.x 与 4.x 通道不可混读；改完代码必须 radar.py save 存版本，回滚只动代码与配置；第三方接口的 401/402/403 是账户状态，命中即停用来源而不是重试；AOCI 条目与源码指纹绑定，改完代码要 maintain 到 aligned。
 #Volume: id=meta kind=meta path=aoci.meta.txt format=meta-v1 depends=- state=enabled
 #Volume: id=code kind=code path=aoci.code.txt format=object-fras-v2 depends=meta state=enabled
