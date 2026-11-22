@@ -1,7 +1,7 @@
 {
   "version": 1,
   "created_at": "2026-11-20T17:42:55Z",
-  "updated_at": "2026-11-22T15:10:26Z",
+  "updated_at": "2026-11-22T15:16:12Z",
   "files": {
     ".gitattributes": {
       "role": "index",
@@ -29,9 +29,9 @@
     },
     "README.md": {
       "role": "index",
-      "sha256": "c7318b083543b9d750de132694c749945c225d5b64c21f735226851c78e92db9",
-      "size": 18653,
-      "normalized_sha256": "c7318b083543b9d750de132694c749945c225d5b64c21f735226851c78e92db9"
+      "sha256": "5c85a0ae6b0d972d42a76cf68d32987c43993e031a6fefbf655886146b750911",
+      "size": 18810,
+      "normalized_sha256": "5c85a0ae6b0d972d42a76cf68d32987c43993e031a6fefbf655886146b750911"
     },
     "Start Radar.vbs": {
       "role": "index",
@@ -53,9 +53,9 @@
     },
     "aoci.code.txt": {
       "role": "index",
-      "sha256": "1429009d9c6d986894d21871ae1c0b21fe1c7ebe8706702303180f17479b153b",
-      "size": 51813,
-      "normalized_sha256": "1429009d9c6d986894d21871ae1c0b21fe1c7ebe8706702303180f17479b153b"
+      "sha256": "5c86f2a4d600501042f6945b114aa3c1c5e996ae72dabc24521c6afd080901c9",
+      "size": 52304,
+      "normalized_sha256": "5c86f2a4d600501042f6945b114aa3c1c5e996ae72dabc24521c6afd080901c9"
     },
     "aoci.meta.txt": {
       "role": "index",
@@ -443,15 +443,15 @@
     },
     "docs/迁移到新电脑.md": {
       "role": "index",
-      "sha256": "6e9cd08dabceb8141dbaed1eb828ee3222cb3438993aaefafeae7efd0ae1b89d",
-      "size": 3835,
-      "normalized_sha256": "6e9cd08dabceb8141dbaed1eb828ee3222cb3438993aaefafeae7efd0ae1b89d"
+      "sha256": "feba0a1a80be863a218b753cff41a618ee16211dba269788854f9bbd5943bdc6",
+      "size": 4038,
+      "normalized_sha256": "feba0a1a80be863a218b753cff41a618ee16211dba269788854f9bbd5943bdc6"
     },
     "install.py": {
       "role": "index",
-      "sha256": "c5170fba7791c1009f70d776b021c5f5b037f128c4ac3113e25724f42b9f4932",
-      "size": 15356,
-      "normalized_sha256": "c5170fba7791c1009f70d776b021c5f5b037f128c4ac3113e25724f42b9f4932"
+      "sha256": "e1a97afa5243ddfb1e431b0019cf6676fa1c267c26ca4cceaeff3f4d35416757",
+      "size": 16231,
+      "normalized_sha256": "e1a97afa5243ddfb1e431b0019cf6676fa1c267c26ca4cceaeff3f4d35416757"
     },
     "installer/launcher.py": {
       "role": "index",
