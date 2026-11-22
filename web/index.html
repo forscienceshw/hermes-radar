@@ -337,12 +337,13 @@
     <h2 class="group-title">高级与诊断</h2>
     <div class="panel" id="shellPanel">
       <h2>桌面程序</h2>
-      <p class="muted">桌面图标启动的是一个托盘程序：它负责开窗口、拉起后台服务。关掉窗口后服务继续在托盘里跑，双击托盘图标就能重新打开；要连服务一起停，用「彻底退出」。</p>
+      <p class="muted">双击 <b>Radar.exe</b> 启动的就是一个托盘程序：它负责开窗口、拉起后台服务。关掉窗口后服务继续在托盘里跑，双击托盘图标就能重新打开；要连服务一起停，用「彻底退出」。</p>
       <div class="form-grid two">
-        <label>关闭窗口时<select id="shellCloseAction"><option value="tray">只关窗口，服务留在托盘（推荐）</option><option value="quit">连后台服务一起退出</option></select></label>
+        <label>双击图标时<select id="shellWindowMode"><option value="app">打开软件窗口（无地址栏，像独立程序）</option><option value="browser">打开浏览器标签页</option></select><small>存在 data/shell.json，双击 exe、托盘菜单、这里的「打开界面」都按它来</small></label>
+        <label>关闭窗口时<select id="shellCloseAction"><option value="tray">只关窗口，服务留在托盘（推荐）</option><option value="quit">连后台服务一起退出</option></select><small>只对软件窗口有效；浏览器标签页关掉本来就不影响服务</small></label>
       </div>
       <div class="actions">
-        <button id="shellOpen" type="button">在桌面窗口打开</button>
+        <button id="shellOpen" type="button">打开界面</button>
         <button id="shellRestart" type="button">重启服务</button>
         <button id="shellQuit" type="button" class="danger">彻底退出（停止服务）</button>
         <span id="shellInfo" class="muted">正在读取…</span>

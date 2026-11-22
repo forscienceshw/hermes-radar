@@ -161,6 +161,14 @@ class ShellPrefsTest(unittest.TestCase):
         data = shell.load()
         self.assertEqual(data["close_action"], "tray")
         self.assertTrue(data["open_on_start"])
+        # 双击 exe 默认开「软件窗口」——用户装的是软件，不是书签
+        self.assertEqual(data["window_mode"], "app")
+
+    def test_window_mode_roundtrip_and_fallback(self):
+        shell.save(window_mode="browser")
+        self.assertEqual(shell.load()["window_mode"], "browser")
+        shell.save(window_mode="modal")          # 拼错的值不许写进文件
+        self.assertEqual(shell.load()["window_mode"], "app")
 
     def test_save_and_reject_unknown_value(self):
         shell.save(close_action="quit")

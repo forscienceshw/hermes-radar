@@ -2283,6 +2283,11 @@ def system_shell_action(data: dict[str, Any]) -> dict[str, Any]:
         changed = shell.save(close_action=str(data.get("close_action") or "tray"))
     if "open_on_start" in data:
         changed = shell.save(open_on_start=bool(data.get("open_on_start")))
+    if "window_mode" in data:
+        mode = str(data.get("window_mode") or "").strip().lower()
+        if mode not in shell.WINDOW_MODES:
+            raise HTTPException(400, f"未知打开方式：{mode}")
+        changed = shell.save(window_mode=mode)
     action = str(data.get("action") or "").strip().lower()
     if not action:
         return {"ok": True, **shell.status(), **changed}

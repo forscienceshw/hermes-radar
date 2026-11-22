@@ -4,12 +4,13 @@
 这样依赖依然住在安装目录的 .venv 里，升级代码不用重新打包这个 exe。
 
 用法：
-    Radar.exe            启动并打开网页（已启动就只打开网页）
-    Radar.exe start      同上，不打开网页
+    Radar.exe            启动并打开界面（已启动就只把窗口叫出来），开成软件窗口
+                         还是浏览器标签页由设置里的「打开方式」决定
+    Radar.exe start      只启动服务，不打开界面
     Radar.exe stop       停止服务
     Radar.exe restart    重启
     Radar.exe status     看状态
-    Radar.exe open       只打开网页
+    Radar.exe open       只打开界面（按设置里的打开方式）
     Radar.exe uninstall  卸载（删快捷方式、自启动、注册表项）
 """
 from __future__ import annotations
@@ -93,14 +94,57 @@ def _pythonw() -> Path:
     return found if found and found.is_file() else Path(sys.executable)
 
 
+class _ConsoleStream:
+    """把 print 的内容按 UTF-16 直接写进控制台。
+
+    GUI 版 exe 没有 std 句柄，只能自己开 CONOUT$；而代码页（936 / 65001）随宿主
+    变来变去，用文本模式写必然有一边是乱码。WriteConsoleW 不吃代码页，谁看都对。
+    """
+
+    def __init__(self) -> None:
+        self._kernel32 = ctypes.windll.kernel32
+        self._handle = self._kernel32.CreateFileW(
+            "CONOUT$", 0x40000000 | 0x80000000, 0x00000003, None, 3, 0, None)  # GEN_WRITE|GEN_READ, SHARE, OPEN_EXISTING
+        self.encoding = "utf-16-le"
+
+    def write(self, text: str) -> int:
+        if not text:
+            return 0
+        if self._handle in (0, -1, None):
+            return len(text)
+        buffer = ctypes.create_unicode_buffer(text)
+        written = ctypes.c_ulong(0)
+        self._kernel32.WriteConsoleW(self._handle, buffer, len(text), ctypes.byref(written), None)
+        return len(text)
+
+    def flush(self) -> None:
+        pass
+
+    def isatty(self) -> bool:
+        return True
+
+
 def _attach_console() -> bool:
-    """从命令行调用时把父窗口的控制台接上，否则窗口版 exe 一句话都看不到。"""
+    """从命令行调用时把父窗口的输出接上，否则窗口版 exe 一句话都看不到。
+
+    三种宿主，三种接法：
+    * 管道（bash、编辑器、任务管理器转存）：PyInstaller 会按系统代码页（936）写，
+      对面按 UTF-8 解就是乱码——这里改成 UTF-8；
+    * 真控制台：交给 WriteConsoleW，跟代码页无关；
+    * 双击：两个都没有，`_say` 会退回弹窗。
+    """
     if sys.stdout is not None:
+        try:
+            if not sys.stdout.isatty():
+                sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+                sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:                        # noqa: BLE001
+            pass
         return True
     try:
         if not ctypes.windll.kernel32.AttachConsole(-1):   # ATTACH_PARENT_PROCESS
             return False
-        stream = open("CONOUT$", "w", encoding="utf-8", buffering=1)
+        stream = _ConsoleStream()
         sys.stdout = stream
         sys.stderr = stream
         return True
@@ -147,11 +191,38 @@ def _wait_port(timeout: float = 40.0) -> bool:
     return False
 
 
+def _shell():
+    """拿到网页/托盘共用的偏好与命令通道；坏掉就返回 None，不阻塞启动。"""
+    try:
+        sys.path.insert(0, str(ROOT))
+        from app.services import shell as module
+        return module
+    except Exception:                                # noqa: BLE001
+        return None
+
+
+def _ask_tray_open() -> bool:
+    """托盘已经在跑就只让它开个窗口——不必再起一个 pythonw 去抢单实例。"""
+    shell = _shell()
+    if not shell:
+        return False
+    try:
+        if not shell.alive():
+            return False
+        shell.send("open")
+        return True
+    except Exception:                                # noqa: BLE001
+        return False
+
+
 def start(open_browser: bool = True) -> int:
     # 从 2026-11-22 起，桌面启动交给托盘外壳：它开窗口、管关窗驻留、负责彻底
-    # 退出。没有 radar_tray.pyw 的旧安装仍然走下面这条浏览器路径。
+    # 退出。窗口开成「软件窗口」还是「浏览器标签页」，由设置里的打开方式决定
+    # （data/shell.json 的 window_mode），这里不再替用户选。
     tray = ROOT / "radar_tray.pyw"
     if tray.is_file():
+        if open_browser and _ask_tray_open():
+            return 0
         args = [str(_pythonw()), str(tray)] + ([] if open_browser else ["--background"])
         env = dict(os.environ)
         env.setdefault("PYTHONIOENCODING", "utf-8")
@@ -192,12 +263,12 @@ def start(open_browser: bool = True) -> int:
 def stop() -> int:
     pid = _supervisor_pid()
     # 托盘外壳也要退，否则它会认为服务挂了、又把它拉起来。
-    try:
-        sys.path.insert(0, str(ROOT))
-        from app.services import shell
-        shell.send("quit")
-    except Exception:                                # noqa: BLE001
-        pass
+    shell = _shell()
+    if shell:
+        try:
+            shell.send("quit")
+        except Exception:                            # noqa: BLE001
+            pass
     STOP.parent.mkdir(parents=True, exist_ok=True)
     STOP.write_text("stop", encoding="utf-8")
     deadline = time.monotonic() + 45
@@ -337,8 +408,9 @@ def main(argv: list[str]) -> int:
         time.sleep(1)
         return start(open_browser=True)
     if action == "open":
-        webbrowser.open(_url())
-        return 0
+        if _ask_tray_open():
+            return 0
+        return start(open_browser=True)
     if action == "status":
         running = _alive(_supervisor_pid())
         _say(f"{APP_NAME}\n地址：{_url()}\n状态：{'运行中' if running else '未运行'}\n目录：{ROOT}")

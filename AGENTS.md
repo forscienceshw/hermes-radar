@@ -92,20 +92,27 @@ text = read_raw_text(item["raw_path"])   # 自动识别 .gz 并解压
 
 ## 桌面外壳是托盘，关窗不等于停服务（2026-11-22 起）
 
-双击图标后真正跑的是 `radar_tray.pyw`：起 supervisor、用 Edge 的 `--app` 窗口打开界面、
-在右下角放托盘图标。三条硬规矩：
+用户双击的是 **`Radar.exe`**（`installer/launcher.py` 打包来的入口），它转身把
+`radar_tray.pyw` 拉起来：起 supervisor、开窗口、在右下角放托盘图标。VBS 只是没有 exe
+时的退路，别再宣传成启动方式。四条硬规矩：
 
 1. **关窗口只关窗口**。默认 `close_action=tray`，服务继续跑；只有托盘菜单「彻底退出」
    或设置页「彻底退出」才写 `STOP_RADAR` 并等两个子进程收尾。别把「关窗口」实现成停服务。
-2. **Edge 窗口必须带独立 `--user-data-dir`**（`.cache/appwin`，不放 `data/`：那份配置
+2. **开哪种窗口由设置决定**（`data/shell.json` 的 `window_mode`：`app` = Edge `--app`
+   无地址栏窗口，`browser` = 默认浏览器标签页）。`open_window()` 每次现读偏好，改完立刻
+   生效；显式传参（托盘菜单点某一项、命令行 `--browser`）优先于偏好。浏览器模式下没有
+   「关窗口」可言——关标签页只是关页面，服务照旧在托盘里跑。
+3. **Edge 窗口必须带独立 `--user-data-dir`**（`.cache/appwin`，不放 `data/`：那份配置
    实测 63 MB，混进用户资料会被备份与迁移当成正文带走）。共用默认配置时，新进程会把
    请求转给已经在跑的 Edge、自己立刻退出，我们的「窗口已关闭」检测就会误触发。
-3. **单实例按安装目录**：第二个托盘实例不抢图标，而是往 `data/shell_cmd.json` 写 `open`，
+4. **单实例按安装目录**：第二个托盘实例不抢图标，而是往 `data/shell_cmd.json` 写 `open`，
    让已经跑着的那个开窗口。停止路径（`stop_radar.pyw`、`radar.py stop`、`installer/launcher.py`）
    必须同时发 `quit`，否则托盘会把刚停掉的服务又拉起来。
 
 网页和托盘之间只通过 `data/shell.json`（偏好）与 `data/shell_cmd.json`（一次性命令）通信，
 托盘不开端口。`data/shell_alive.json` 是 5 秒心跳，网页靠它决定要不要退化成浏览器窗口。
+`Radar.exe` 自己没有控制台，`_attach_console()` 必须按系统输出代码页（936）开 `CONOUT$`，
+写成 UTF-8 的话命令行下中文全是乱码。
 
 ## 详情页先给缓存，再后台补读（2026-11-22 起）
 

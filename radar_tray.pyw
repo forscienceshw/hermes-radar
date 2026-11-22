@@ -58,6 +58,7 @@ WM_TICK = 0x8000 + 21
 WM_WINDOW_CLOSED = 0x8000 + 22
 
 ID_OPEN, ID_BROWSER, ID_STATUS = 1001, 1002, 1003
+ID_APPWIN = 1004
 ID_RESTART, ID_STOP = 1011, 1012
 ID_DATA, ID_AUTOSTART, ID_CLOSE_QUIT = 1021, 1022, 1023
 ID_QUIT = 1099
@@ -186,9 +187,11 @@ def _make_icon() -> Path:
 # 托盘
 # --------------------------------------------------------------------------- #
 class TrayApp:
-    def __init__(self, *, background: bool = False, with_service: bool = True) -> None:
+    def __init__(self, *, background: bool = False, with_service: bool = True,
+                 mode: str = "") -> None:
         self.background = background
         self.with_service = with_service
+        self.forced_mode = mode if mode in ("app", "browser") else ""
         self.hwnd = None
         self.hicon = None
         self.edge: subprocess.Popen | None = None
@@ -220,6 +223,25 @@ class TrayApp:
                 self.auto_restart = bool(data.get("auto_restart", True))
             except Exception:                        # noqa: BLE001
                 pass
+
+    def window_mode(self, override: str = "") -> str:
+        """这一次开哪种窗口。设置页改完立刻生效，不用重启托盘。
+
+        顺序：命令行/菜单的显式指定 → data/shell.json 里的偏好 → 默认软件窗口。
+        """
+        if override in ("app", "browser"):
+            return override
+        if self.forced_mode:
+            return self.forced_mode
+        shell = self.shell()
+        if shell:
+            try:
+                mode = str(shell.load().get("window_mode") or "")
+                if mode in ("app", "browser"):
+                    return mode
+            except Exception:                        # noqa: BLE001
+                pass
+        return "app"
 
     def beat(self) -> None:
         shell = self.shell()
@@ -264,7 +286,22 @@ class TrayApp:
         return not self.service_alive()
 
     # ---- 窗口 -------------------------------------------------------------
-    def open_window(self) -> None:
+    def open_browser_tab(self) -> None:
+        """用默认浏览器开一个标签页。关掉标签页不影响服务，托盘继续留着。"""
+        import webbrowser
+        if not self.service_alive() and not self.start_service():
+            self.balloon("后台服务没起来",
+                         f"看这个文件最后几行：{DATA / 'logs' / 'app-api-console.log'}")
+            return
+        try:
+            webbrowser.open(_url())
+        except Exception as exc:                     # noqa: BLE001
+            self.balloon("打开浏览器失败", f"{exc}\n也可以手动打开：{_url()}")
+
+    def open_window(self, mode: str = "") -> None:
+        if self.window_mode(mode) == "browser":
+            self.open_browser_tab()
+            return
         if self.edge and self.edge.poll() is None:
             # 窗口已经开着。Edge 的独立进程没法用 SetForegroundWindow 激活，
             # 再开一次只会被转发给同一个实例、新进程立刻退出，反而误触发
@@ -277,8 +314,7 @@ class TrayApp:
                 return
         edge = _edge_exe()
         if edge is None:
-            import webbrowser
-            webbrowser.open(_url())
+            self.open_browser_tab()
             return
         try:
             PROFILE.mkdir(parents=True, exist_ok=True)
@@ -289,8 +325,7 @@ class TrayApp:
                 cwd=str(ROOT), close_fds=True)
         except OSError as exc:
             self.balloon("打开窗口失败", f"{exc}\n已改用默认浏览器。")
-            import webbrowser
-            webbrowser.open(_url())
+            self.open_browser_tab()
             return
         proc = self.edge
         threading.Thread(target=self._watch_window, args=(proc,), daemon=True,
@@ -355,8 +390,13 @@ class TrayApp:
         menu = win32gui.CreatePopupMenu()
         try:
             alive = self.service_alive()
+            mode = self.window_mode()
             win32gui.AppendMenu(menu, win32con.MF_STRING, ID_OPEN, "打开界面")
-            win32gui.AppendMenu(menu, win32con.MF_STRING, ID_BROWSER, "在浏览器中打开")
+            win32gui.AppendMenu(menu, win32con.MF_STRING | win32con.MF_GRAYED, 0, "打开方式")
+            app_flag = win32con.MF_STRING | (win32con.MF_CHECKED if mode == "app" else 0)
+            web_flag = win32con.MF_STRING | (win32con.MF_CHECKED if mode == "browser" else 0)
+            win32gui.AppendMenu(menu, app_flag, ID_APPWIN, "    软件窗口（无地址栏）")
+            win32gui.AppendMenu(menu, web_flag, ID_BROWSER, "    浏览器标签页")
             win32gui.AppendMenu(menu, win32con.MF_SEPARATOR, 0, None)
             win32gui.AppendMenu(menu, win32con.MF_STRING | win32con.MF_GRAYED, ID_STATUS,
                                 ("服务：运行中" if alive else "服务：已停止"))
@@ -389,12 +429,25 @@ class TrayApp:
         except Exception:                            # noqa: BLE001
             return False
 
+    def set_window_mode(self, mode: str) -> None:
+        """托盘菜单里选「软件窗口 / 浏览器标签页」＝ 改偏好，下次双击 exe 也按这个来。"""
+        shell = self.shell()
+        if shell:
+            try:
+                shell.save(window_mode=mode)
+            except Exception:                        # noqa: BLE001
+                pass
+        self.balloon(APP_NAME, "以后打开界面用" + ("软件窗口" if mode == "app" else "浏览器标签页"))
+
     def on_command(self, cmd: int) -> None:
         if cmd == ID_OPEN:
             self.open_window()
+        elif cmd == ID_APPWIN:
+            self.set_window_mode("app")
+            self.open_window("app")
         elif cmd == ID_BROWSER:
-            import webbrowser
-            webbrowser.open(_url())
+            self.set_window_mode("browser")
+            self.open_window("browser")
         elif cmd == ID_RESTART:
             self.restart_service()
         elif cmd == ID_STOP:
@@ -617,7 +670,9 @@ def main(argv: list[str]) -> int:
         return _selftest()
     if not _single_instance():
         return 0
-    app = TrayApp(background=("background" in args), with_service=("no-service" not in args))
+    mode = "browser" if "browser" in args else ("app" if "app" in args else "")
+    app = TrayApp(background=("background" in args), with_service=("no-service" not in args),
+                  mode=mode)
     return app.run()
 
 

@@ -1039,10 +1039,18 @@ async function loadShellPanel(){
   try{
     const d=await api('/api/system/shell');
     $('#shellCloseAction').value=d.close_action||'tray';
+    if($('#shellWindowMode'))$('#shellWindowMode').value=d.window_mode||'app';
     $('#shellInfo').textContent=(d.tray_running?'托盘程序在运行':'托盘程序没在运行（当前是浏览器窗口）')
       +` · ${d.url}`;
   }catch(e){$('#shellInfo').textContent=e.message}
 }
+$('#shellWindowMode')&&($('#shellWindowMode').onchange=async e=>{
+  try{
+    await api('/api/system/shell',{method:'POST',body:{window_mode:e.target.value}});
+    toast(e.target.value==='app'?'以后双击图标开软件窗口':'以后双击图标开浏览器标签页');
+    loadShellPanel();
+  }catch(err){toast(err.message)}
+});
 $('#shellCloseAction').onchange=async e=>{
   try{
     await api('/api/system/shell',{method:'POST',body:{close_action:e.target.value}});
@@ -1054,7 +1062,7 @@ $('#shellOpen').onclick=async()=>{
   try{
     const r=await api('/api/system/shell',{method:'POST',body:{action:'open'}});
     if(!r.tray_running)window.open(r.url||'','_blank');
-    else toast('已在桌面窗口打开');
+    else toast(r.window_mode==='browser'?'已用浏览器打开':'已在软件窗口打开');
   }catch(e){toast(e.message)}
 };
 $('#shellRestart').onclick=async()=>{

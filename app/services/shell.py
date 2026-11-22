@@ -35,7 +35,12 @@ DEFAULTS: dict[str, Any] = {
     "close_action": "tray",
     "open_on_start": True,
     "auto_restart": True,
+    # 双击 Radar.exe 时开哪种窗口：
+    #   app      Edge 的 --app 窗口，没有地址栏、独立任务栏图标，像原生软件
+    #   browser  默认浏览器的一个标签页
+    "window_mode": "app",
 }
+WINDOW_MODES = ("app", "browser")
 COMMANDS = ("open", "quit", "restart")
 
 
@@ -62,6 +67,8 @@ def load() -> dict[str, Any]:
     data = {**DEFAULTS, **_read(SHELL_FILE)}
     if data.get("close_action") not in ("tray", "quit"):
         data["close_action"] = DEFAULTS["close_action"]
+    if data.get("window_mode") not in WINDOW_MODES:
+        data["window_mode"] = DEFAULTS["window_mode"]
     for key in ("open_on_start", "auto_restart"):
         data[key] = bool(data.get(key))
     return data
@@ -71,6 +78,8 @@ def save(**patch: Any) -> dict[str, Any]:
     data = {**load(), **{k: v for k, v in patch.items() if k in DEFAULTS}}
     if data.get("close_action") not in ("tray", "quit"):
         data["close_action"] = DEFAULTS["close_action"]
+    if data.get("window_mode") not in WINDOW_MODES:
+        data["window_mode"] = DEFAULTS["window_mode"]
     _write(SHELL_FILE, data)
     return data
 
