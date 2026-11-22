@@ -19,3 +19,8 @@ sqlcipher3-wheels==0.5.7; sys_platform == "win32"
 # 没装或模型没下载时自动退回 bigram 打分，检索照常工作。
 onnxruntime>=1.18,<2
 numpy>=1.26,<3
+# 软件窗口：WebView2 内核，窗口属于我们自己的进程，点右上角叉时能先拦下来
+# 问「只关窗口还是连服务退出」，等用户选完窗口才消失。没装或运行时缺失时
+# radar_tray 会自动退回 Edge 的 --app 窗口（那时关窗询问会晚一拍）。
+pywebview>=6.2,<7; sys_platform == "win32"
+pythonnet>=3.0,<4; sys_platform == "win32"

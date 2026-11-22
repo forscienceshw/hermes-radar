@@ -1,7 +1,7 @@
 {
   "version": 1,
   "created_at": "2026-11-20T17:42:55Z",
-  "updated_at": "2026-11-22T16:18:23Z",
+  "updated_at": "2026-11-22T17:21:43Z",
   "files": {
     ".gitattributes": {
       "role": "index",
@@ -17,9 +17,9 @@
     },
     "AGENTS.md": {
       "role": "index",
-      "sha256": "eac34f3af2637b0b882c2d3ccaf163839bf213f30b128658307e50618b2d7f6b",
-      "size": 58456,
-      "normalized_sha256": "eac34f3af2637b0b882c2d3ccaf163839bf213f30b128658307e50618b2d7f6b"
+      "sha256": "7858a07da6ae864dd1aa3434c783164e44320716286f722ff1a41cf745f6fdb4",
+      "size": 59547,
+      "normalized_sha256": "7858a07da6ae864dd1aa3434c783164e44320716286f722ff1a41cf745f6fdb4"
     },
     "Install.vbs": {
       "role": "index",
@@ -29,9 +29,9 @@
     },
     "README.md": {
       "role": "index",
-      "sha256": "5c85a0ae6b0d972d42a76cf68d32987c43993e031a6fefbf655886146b750911",
-      "size": 18810,
-      "normalized_sha256": "5c85a0ae6b0d972d42a76cf68d32987c43993e031a6fefbf655886146b750911"
+      "sha256": "b2975984d49f251a0416741d8aab0adda4575a72b4f38ba32fc6cbfc264578cc",
+      "size": 19013,
+      "normalized_sha256": "b2975984d49f251a0416741d8aab0adda4575a72b4f38ba32fc6cbfc264578cc"
     },
     "Start Radar.vbs": {
       "role": "index",
@@ -53,9 +53,9 @@
     },
     "aoci.code.txt": {
       "role": "index",
-      "sha256": "e6827de8f78392508e99957ada73120b5d969619449f580eb62483424c14ddfd",
-      "size": 52545,
-      "normalized_sha256": "e6827de8f78392508e99957ada73120b5d969619449f580eb62483424c14ddfd"
+      "sha256": "511f84c06fa25d01259e8e75378fbebc9f28f9f8eef21b6dcf15711ea7a473a9",
+      "size": 53742,
+      "normalized_sha256": "511f84c06fa25d01259e8e75378fbebc9f28f9f8eef21b6dcf15711ea7a473a9"
     },
     "aoci.meta.txt": {
       "role": "index",
@@ -77,9 +77,9 @@
     },
     "app/api.py": {
       "role": "index",
-      "sha256": "9039d6c15e9ae93779fc49d4e8e65d3ffe0c8e12f535529cf81e30a424d9da2e",
-      "size": 117093,
-      "normalized_sha256": "72da9c1cef4fc77687c7dfa94da1e64a5a689b943699b8c47e81773856b1d8c9"
+      "sha256": "266ce29c3be17df5dd1ac197dd7b96f1de5ceca9d539044627aab0d58d894979",
+      "size": 118384,
+      "normalized_sha256": "00a691e286c108fda1c624dd0a7b5f04d6e2397820aff8817a333f2ecb74c8f7"
     },
     "app/collectors/__init__.py": {
       "role": "index",
@@ -443,9 +443,9 @@
     },
     "docs/迁移到新电脑.md": {
       "role": "index",
-      "sha256": "feba0a1a80be863a218b753cff41a618ee16211dba269788854f9bbd5943bdc6",
-      "size": 4038,
-      "normalized_sha256": "feba0a1a80be863a218b753cff41a618ee16211dba269788854f9bbd5943bdc6"
+      "sha256": "343b65ba4598fec10b2b13224131d6b55e2a3603ac7b50241052a755705da70b",
+      "size": 4499,
+      "normalized_sha256": "343b65ba4598fec10b2b13224131d6b55e2a3603ac7b50241052a755705da70b"
     },
     "install.py": {
       "role": "index",
@@ -491,15 +491,15 @@
     },
     "radar_tray.pyw": {
       "role": "index",
-      "sha256": "1686760f8631ec190b1ace027f0cf8f17f40556173d82227621886e4bdda86eb",
-      "size": 36144,
-      "normalized_sha256": "1686760f8631ec190b1ace027f0cf8f17f40556173d82227621886e4bdda86eb"
+      "sha256": "f7055abb54fb876f2a2ec709802f422014c0feba0e05e8d07443958c95587775",
+      "size": 44636,
+      "normalized_sha256": "f7055abb54fb876f2a2ec709802f422014c0feba0e05e8d07443958c95587775"
     },
     "requirements.txt": {
       "role": "index",
-      "sha256": "f9fad16a64973c3556904ad0dd811e291daf3231966492862a6694e598c23970",
-      "size": 701,
-      "normalized_sha256": "f9fad16a64973c3556904ad0dd811e291daf3231966492862a6694e598c23970"
+      "sha256": "f4f8b04a8ef3d86c50bf729ea6cb6d339f0af64cd605bd43aa25e66b33fb6f8f",
+      "size": 1090,
+      "normalized_sha256": "f4f8b04a8ef3d86c50bf729ea6cb6d339f0af64cd605bd43aa25e66b33fb6f8f"
     },
     "run_dev.pyw": {
       "role": "index",
@@ -695,9 +695,9 @@
     },
     "tests/test_desktop_shell.py": {
       "role": "observe",
-      "sha256": "e54d6792e70cd3b133eee330f07d463d17ea4cdf56de98ab7b26e4761ab7fbb2",
-      "size": 11209,
-      "normalized_sha256": "e54d6792e70cd3b133eee330f07d463d17ea4cdf56de98ab7b26e4761ab7fbb2"
+      "sha256": "cf48e814c3f521638bfdb88aa73948b64a66f14e9276126d7aa4563001ca8efe",
+      "size": 16358,
+      "normalized_sha256": "cf48e814c3f521638bfdb88aa73948b64a66f14e9276126d7aa4563001ca8efe"
     },
     "tests/test_library_filters.py": {
       "role": "observe",
@@ -767,8 +767,8 @@
     },
     "tests/test_wechat_panel.py": {
       "role": "observe",
-      "sha256": "8657ae00529fa3b0fb984aa78d4213e9bfd668abfa3708e2b27eb4b5cd133256",
-      "size": 32585,
+      "sha256": "b8a4332825d934e8473e93b179c21b38226d957db553b9ab7af99d9a6ae1bbda",
+      "size": 33184,
       "normalized_sha256": "8657ae00529fa3b0fb984aa78d4213e9bfd668abfa3708e2b27eb4b5cd133256"
     },
     "tests/test_workbuddy_direct.py": {
@@ -869,9 +869,9 @@
     },
     "web/app.js": {
       "role": "index",
-      "sha256": "f5b75bc0fec3b4cdf4e781e58c90f2ec0afc61c39d9f5e316a41ce5a91985333",
-      "size": 134614,
-      "normalized_sha256": "f5b75bc0fec3b4cdf4e781e58c90f2ec0afc61c39d9f5e316a41ce5a91985333"
+      "sha256": "4847bf5def2ab22314e71b81c3c079624a7579acb8b2f9cbd9db90c0ad879218",
+      "size": 135721,
+      "normalized_sha256": "4847bf5def2ab22314e71b81c3c079624a7579acb8b2f9cbd9db90c0ad879218"
     },
     "web/assistant.js": {
       "role": "index",

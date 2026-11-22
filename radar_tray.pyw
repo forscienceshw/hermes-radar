@@ -3,13 +3,16 @@
 双击桌面图标跑的就是这个文件（``pythonw.exe radar_tray.pyw``）。它做的事：
 
 1. 拉起后台（``supervisor.pyw`` → api + worker），等服务端口通了再开窗口；
-2. 用 Edge 的「应用窗口」模式打开界面——没有地址栏和标签页，看起来就是个桌面
-   程序，而且进程生命周期＝窗口生命周期，关窗能被准确感知；
+2. 用 WebView2 开一个属于自己的窗口（pywebview + Edge 内核，没有地址栏）。
+   窗口在我们进程里，点右上角叉时能先拦下来问「只关窗口还是连后台一起退」，
+   等用户选完窗口才消失；
 3. 在右下角放一个托盘图标：双击重新打开窗口，右键菜单能重启服务、看状态、
    改「关窗是否连服务一起退出」、彻底退出。
 
-为什么不用 pywebview：这台机器是 Python 3.14，pythonnet / WebView2 的轮子跟不上，
-装不上就等于没有窗口。Edge 应用窗口零依赖，Windows 10/11 都自带。
+为什么不再用 Edge 的 ``--app`` 窗口：那是别人的进程。用户点叉之后它立刻退出，
+我们只能事后发现窗口没了再弹确认框——顺序反了，还会卡一下。窗口自己不归你，
+就拦不住关闭。现在只在 WebView2 缺失（老机器没装运行时）时退回 Edge 那条路，
+此时关窗询问会晚一拍，属于已知降级。
 
 为什么关窗后服务还在：用户要的就是这个——关掉界面不等于停掉采集。真要停，
 走托盘菜单「彻底退出」或设置页的「彻底退出」，那条路会写停止标记并等
@@ -113,8 +116,14 @@ def _port() -> int:
         return 8766
 
 
-def _url() -> str:
-    return f"http://127.0.0.1:{_port()}"
+def _url(app_window: bool = False) -> str:
+    """`?app=1` 只在软件窗口里带：网页据此把外部链接交给系统浏览器。
+
+    浏览器标签页那条路本来就是真浏览器，带上它只会让「打开原文」多绕一次
+    后端，没必要。
+    """
+    base = f"http://127.0.0.1:{_port()}"
+    return f"{base}/?app=1" if app_window else base
 
 
 def _pythonw() -> Path:
@@ -212,6 +221,15 @@ class TrayApp:
         self.hwnd = None
         self.hicon = None
         self.edge: subprocess.Popen | None = None
+        # 软件窗口（WebView2）。窗口归我们自己所有，点叉能先拦下来问一句，
+        # 等用户选完再决定藏起来还是真退出——Edge 的 --app 窗口做不到这件事，
+        # 它是别人的进程，我们只能在它已经消失之后才发现。
+        self.win = None
+        self._webview_started = False
+        self._webview_running = False
+        self._want_window = False
+        self._force_close = False
+        self._webview_error = ""
         self.quitting = False
         self.close_action = "ask"
         self.auto_restart = True
@@ -339,16 +357,122 @@ class TrayApp:
         if self.window_mode(mode) == "browser":
             self.open_browser_tab()
             return
+        if self.win is not None:
+            self._show_window()
+            return
+        if self.with_service and not self.service_alive():
+            if not self.start_service():
+                self.balloon("后台服务没起来",
+                             f"看这个文件最后几行：{DATA / 'logs' / 'app-api-console.log'}")
+                return
+        # WebView2 已经确认起不来：以后每次开窗都走 Edge，不要每点一次就重试
+        # 一次 start（pywebview 的第二次 start 会直接抛异常）。
+        if self._webview_error:
+            self._open_edge_window()
+            return
+        # pywebview 硬性要求「必须在主线程 start」，所以这里只留意愿，
+        # 由主线程的等待循环去起窗口。
+        self._want_window = True
+
+    def _show_window(self) -> None:
+        try:
+            self.win.show()
+            self.win.restore()
+        except Exception as exc:                     # noqa: BLE001
+            self._log(f"唤起窗口失败：{exc!r}")
+
+    # ---- 软件窗口（WebView2） ---------------------------------------------
+    def _run_webview(self) -> None:
+        """在主线程里起真正的软件窗口，阻塞到窗口被销毁为止。
+
+        用它而不是 Edge 的 --app：窗口属于我们自己的进程，`closing` 回调能
+        返回 False 把关闭拦下来，先问「只关窗口还是连服务退出」，等用户点完
+        窗口才真正消失。Edge 那边只能在进程已经退出后才知道窗口没了，用户
+        看到的就是「界面先关、确认框后弹」。
+        """
+        try:
+            import webview
+        except Exception as exc:                     # noqa: BLE001
+            self._webview_error = f"pywebview 不可用：{exc}"
+            self._log(self._webview_error + "，改用 Edge 应用窗口")
+            self._open_edge_window()
+            return
+        self._webview_started = True
+        self._webview_running = True
+        storage = ROOT / ".cache" / "webview"
+        try:
+            storage.mkdir(parents=True, exist_ok=True)
+            self._log(f"准备开软件窗口：{_url(app_window=True)}，存储 {storage}")
+            window = webview.create_window(
+                APP_NAME, _url(app_window=True), width=1480, height=980,
+                min_size=(900, 620), text_select=True)
+            self.win = window
+            window.events.closing += self._on_window_closing
+            window.events.loaded += self._set_window_icon
+            self._log("窗口对象已创建，进入 WebView2 主循环")
+            webview.start(gui="edgechromium", storage_path=str(storage))
+            self._log("WebView2 主循环已退出")
+        except Exception as exc:                     # noqa: BLE001
+            self._webview_error = f"WebView2 起不来：{exc}"
+            self._log(self._webview_error + "，改用 Edge 应用窗口")
+            self.win = None
+            self._webview_running = False
+            self._open_edge_window()
+            return
+        finally:
+            self._webview_running = False
+        self.win = None
+
+    def _set_window_icon(self) -> None:
+        """WebView2 的窗口默认用 Python 的图标，换成雷达自己的。"""
+        try:
+            import win32con, win32gui
+            deadline = time.monotonic() + 3.0
+            hwnd = 0
+            while time.monotonic() < deadline and not hwnd:
+                hwnd = win32gui.FindWindow(None, APP_NAME)
+                if not hwnd:
+                    time.sleep(0.1)
+            hicon = self._icon_handle()
+            if hwnd and hicon:
+                win32gui.SendMessage(hwnd, win32con.WM_SETICON, win32con.ICON_BIG, hicon)
+                win32gui.SendMessage(hwnd, win32con.WM_SETICON, win32con.ICON_SMALL, hicon)
+        except Exception as exc:                     # noqa: BLE001
+            self._log(f"设置窗口图标失败：{exc!r}")
+
+    def _on_window_closing(self) -> bool:
+        """点右上角叉时先到这里。返回 False 表示「先别关」。
+
+        这里只做判断和派活，绝不在回调里弹框或停服务：它跑在 WebView2 的
+        界面线程上，同步阻塞会把窗口卡成「未响应」。
+        """
+        if self._force_close or self.quitting:
+            return True
+        action = self.close_action
+        self._log(f"窗口被要求关闭，close_action={action}")
+        if action == "quit":
+            self.quit_app()
+            return False
+        if action == "tray":
+            threading.Timer(0.05, self._hide_window).start()
+            return False
+        self.ask_about_close()
+        return False
+
+    def _hide_window(self) -> None:
+        try:
+            if self.win is not None:
+                self.win.hide()
+        except Exception as exc:                     # noqa: BLE001
+            self._log(f"隐藏窗口失败：{exc!r}")
+
+    # ---- 退路：Edge 应用窗口 ---------------------------------------------
+    def _open_edge_window(self) -> None:
         if self.edge and self.edge.poll() is None:
             # 窗口已经开着。Edge 的独立进程没法用 SetForegroundWindow 激活，
             # 再开一次只会被转发给同一个实例、新进程立刻退出，反而误触发
             # 「窗口已关闭」。所以这里什么都不做，用户从任务栏切过去即可。
             return
-        if not self.service_alive():
-            if not self.start_service():
-                self.balloon("后台服务没起来",
-                             f"看这个文件最后几行：{DATA / 'logs' / 'app-api-console.log'}")
-                return
         edge = _edge_exe()
         if edge is None:
             self.open_browser_tab()
@@ -356,7 +480,7 @@ class TrayApp:
         try:
             PROFILE.mkdir(parents=True, exist_ok=True)
             self.edge = subprocess.Popen(
-                [str(edge), f"--app={_url()}", f"--user-data-dir={PROFILE}",
+                [str(edge), f"--app={_url(app_window=True)}", f"--user-data-dir={PROFILE}",
                  "--no-first-run", "--no-default-browser-check", "--disable-features=Translate",
                  "--window-size=1480,980"],
                 cwd=str(ROOT), close_fds=True)
@@ -619,6 +743,7 @@ class TrayApp:
 
     def _shutdown(self) -> None:
         import win32gui
+        self._force_close = True
         if self.with_service:
             self.stop_service()
         if self.edge and self.edge.poll() is None:
@@ -626,14 +751,23 @@ class TrayApp:
                 self.edge.terminate()
             except OSError:
                 pass
+        # 软件窗口是我们自己的，得亲手销毁，否则主线程会卡在 webview.start()
+        # 里，进程留着但没有托盘图标，用户只能去任务管理器杀。
+        if self.win is not None:
+            try:
+                self.win.destroy()
+            except Exception:                        # noqa: BLE001
+                pass
         try:
             win32gui.Shell_NotifyIcon(win32gui.NIM_DELETE, (self.hwnd, 0))
         except Exception:                            # noqa: BLE001
             pass
         try:
-            win32gui.PostMessage(self.hwnd, 0x0010, 0, 0)   # WM_CLOSE → 主线程销毁窗口
+            win32gui.PostMessage(self.hwnd, 0x0010, 0, 0)   # WM_CLOSE → 托盘线程结束
         except Exception:                            # noqa: BLE001
             pass
+        # 兜底：WebView2 卡住时也要保证进程真的退出，别留一个看不见的幽灵。
+        threading.Timer(5.0, lambda: os._exit(0)).start()
 
     # ---- 消息循环 ---------------------------------------------------------
     def _wndproc(self, hwnd, msg, wparam, lparam):
@@ -710,6 +844,8 @@ class TrayApp:
         if answer == win32con.IDYES:
             self.quit_app()
         else:
+            # 用户选的是「只关窗口」：界面得真的收起来，不能问完了还杵在那儿。
+            self._hide_window()
             self.balloon(APP_NAME, "服务还在后台跑。双击托盘图标可以重新打开界面。")
 
     def tick(self) -> None:
@@ -761,36 +897,68 @@ class TrayApp:
         return True
 
     def run(self) -> int:
-        import win32con, win32gui
+        """托盘消息循环放子线程，主线程留给软件窗口。
+
+        pywebview 有一句硬性检查：`start()` 必须在主线程，否则直接抛
+        WebViewException。所以这里把原来的「主线程泵托盘消息」翻过来：
+        托盘在子线程（Win32 允许，只要那个线程自己 PumpMessages），主线程
+        在等待循环里按需启动窗口。
+        """
         self.reload_prefs()
-        hinst = win32gui.GetModuleHandle(None)
-        class_name = "HermesRadarTrayWindow"
-        wc = win32gui.WNDCLASS()
-        wc.hInstance = hinst
-        wc.lpszClassName = class_name
-        wc.lpfnWndProc = self._wndproc
-        wc.hCursor = win32gui.LoadCursor(0, win32con.IDC_ARROW)
-        wc.hbrBackground = win32con.COLOR_WINDOW
-        wc.hIcon = self._icon_handle()
-        win32gui.RegisterClass(wc)
-        self.hwnd = win32gui.CreateWindow(class_name, APP_NAME, win32con.WS_OVERLAPPED,
-                                          0, 0, 0, 0, 0, 0, hinst, None)
-        self.add_icon()
-        self.beat()
-
-        if self.with_service and not self.service_alive():
-            self.start_service()
-        self.update_tip(f"{APP_NAME} · {'服务运行中' if self.service_alive() else '服务未启动'}")
-
-        if self.should_open_window():
-            threading.Thread(target=self._open_after_ready, daemon=True, name="open-window").start()
-
-        threading.Thread(target=self._ticker, daemon=True, name="ticker").start()
-        win32gui.PumpMessages()
+        ready = threading.Event()
+        threading.Thread(target=self._tray_loop, args=(ready,), daemon=True,
+                         name="tray-loop").start()
+        ready.wait(10.0)
+        while not self.quitting:
+            if self._want_window and not self._webview_running:
+                self._want_window = False
+                # 已经起过并且失败过就不再重试，免得每 0.2 秒刷一次日志。
+                if not (self._webview_started and self._webview_error):
+                    self._run_webview()
+            time.sleep(0.2)
         return 0
 
+    def _tray_loop(self, ready: threading.Event) -> None:
+        import win32con, win32gui
+        try:
+            hinst = win32gui.GetModuleHandle(None)
+            class_name = "HermesRadarTrayWindow"
+            wc = win32gui.WNDCLASS()
+            wc.hInstance = hinst
+            wc.lpszClassName = class_name
+            wc.lpfnWndProc = self._wndproc
+            wc.hCursor = win32gui.LoadCursor(0, win32con.IDC_ARROW)
+            wc.hbrBackground = win32con.COLOR_WINDOW
+            wc.hIcon = self._icon_handle()
+            win32gui.RegisterClass(wc)
+            # 这个窗口从不显示，只用来收托盘消息。标题必须和界面窗口区分开：
+            # FindWindow(None, APP_NAME) 是它和 WebView2 窗口的公共查找方式，
+            # 两个同名的话会先命中这个隐藏窗口——点叉的测试、设图标全都打偏，
+            # 表现是「窗口点了关闭没反应」。
+            self.hwnd = win32gui.CreateWindow(class_name, f"{APP_NAME}-托盘消息窗口",
+                                              win32con.WS_OVERLAPPED,
+                                              0, 0, 0, 0, 0, 0, hinst, None)
+            self.add_icon()
+            self.beat()
+
+            if self.with_service and not self.service_alive():
+                self.start_service()
+            self.update_tip(f"{APP_NAME} · {'服务运行中' if self.service_alive() else '服务未启动'}")
+
+            if self.should_open_window():
+                threading.Thread(target=self._open_after_ready, daemon=True,
+                                 name="open-window").start()
+
+            threading.Thread(target=self._ticker, daemon=True, name="ticker").start()
+            ready.set()
+            win32gui.PumpMessages()
+        except Exception as exc:                     # noqa: BLE001
+            self._log(f"托盘循环失败：{exc!r}")
+            ready.set()
+
     def _open_after_ready(self) -> None:
-        deadline = time.monotonic() + 45
+        # 自检和测试实例（with_service=False）不拉服务，也不要傻等 45 秒端口。
+        deadline = time.monotonic() + (45 if self.with_service else 0)
         while time.monotonic() < deadline and not self.quitting:
             if self.service_alive() and _wait_port(2.0):
                 break

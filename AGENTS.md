@@ -101,13 +101,18 @@ text = read_raw_text(item["raw_path"])   # 自动识别 .gz 并解压
    一起退。只有「彻底退出」那条路才写 `STOP_RADAR` 并等两个子进程收尾——别把「关窗口」
    实现成停服务。询问框必须在新线程里弹：`MessageBox` 自己会泵消息，在窗口过程里同步调
    会把托盘消息循环卡住，图标当场变「未响应」。
-2. **开哪种窗口由设置决定**（`window_mode`：`app` = Edge `--app` 无地址栏窗口，`browser` =
+2. **开哪种窗口由设置决定**（`window_mode`：`app` = 自己的 WebView2 窗口，`browser` =
    默认浏览器标签页）。`open_window()` 每次现读偏好，改完立刻生效；显式传参（托盘菜单点
    某一项、命令行 `--browser`）优先于偏好。浏览器模式下没有「关窗口」可言——关标签页只是
    关页面，服务照旧在托盘里跑。
-3. **Edge 窗口必须带独立 `--user-data-dir`**（`.cache/appwin`，不放 `data/`：那份配置
-   实测 63 MB，混进用户资料会被备份与迁移当成正文带走）。共用默认配置时，新进程会把
-   请求转给已经在跑的 Edge、自己立刻退出，我们的「窗口已关闭」检测就会误触发。
+3. **软件窗口是 pywebview，不是 Edge 的 `--app`**。窗口必须归本进程所有，否则点叉那一下
+   拦不住：Edge 是别人的进程，它退出了我们才知道，用户看到的就是「主界面先关、确认框
+   后弹」。`_on_window_closing()` 一律先返回 `False`，按 `close_action` 派活，用户选完
+   才 `hide()` 或 `destroy()`。pywebview 硬性要求 `start()` 在主线程，所以**托盘消息循环
+   在子线程**（`_tray_loop`），主线程留给 `webview.start()`；把这两者调回去窗口就起不来。
+   WebView2 缺失时退回 Edge `--app`（`.cache/appwin` 独立 `--user-data-dir`，别放 `data/`，
+   那份配置 63 MB 会被当用户资料搬走），此时关窗询问会晚一拍，属于已知降级。
+   验证窗口看 `data/logs/tray.log` 里的「准备开软件窗口 / 进入 WebView2 主循环」。
 4. **单实例按安装目录**：第二个托盘实例不抢图标，而是往 `data/shell_cmd.json` 写 `open`，
    让已经跑着的那个开窗口。停止路径（`stop_radar.pyw`、`radar.py stop`、`installer/launcher.py`）
    必须同时发 `quit`，否则托盘会把刚停掉的服务又拉起来。
@@ -121,6 +126,11 @@ text = read_raw_text(item["raw_path"])   # 自动识别 .gz 并解压
    第一版留下的 `Start Radar.vbs.lnk`，否则登录时被拉起两份。**要不要弹窗口不写进命令**，
    由 `open_on_start` 在运行时决定（默认 False：登录只进托盘，不抢焦点）——写死进注册表
    的话，用户改开关就得重写 Run 项，两边必然漂移。
+7. **软件窗口里的外部链接交给系统浏览器**：开窗 URL 带 `?app=1`，`app.js` 据此把
+   `target="_blank"` 的链接改走 `POST /api/system/open-url`（后端 `os.startfile`）。
+   不这么改，点「打开原文」「离线阅读页」只会在同一个无地址栏窗口里再套一层，用户看到的
+   是「浏览器嵌进了软件界面」。浏览器标签页模式不带这个参数，本来就是真浏览器，不受影响。
+   接口只放 http/https，别顺手把 `file:` 或自定义协议放进来。
 
 网页和托盘之间只通过 `data/shell.json`（偏好）与 `data/shell_cmd.json`（一次性命令）通信，
 托盘不开端口。`data/shell_alive.json` 是 5 秒心跳，网页靠它决定要不要退化成浏览器窗口。

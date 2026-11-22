@@ -130,6 +130,138 @@ class CloseActionTest(unittest.TestCase):
             self.assertEqual(bool(quit_calls), expect_quit, f"{value} 是否直接退出")
 
 
+class WebViewClosingTest(unittest.TestCase):
+    """软件窗口（WebView2）点右上角叉的那一刻。
+
+    2026-11-23 之前窗口是 Edge 的 --app，属于别人的进程：点叉之后它立刻退出，
+    我们只能事后发现再弹确认框，用户看到的是「主界面先没了、框才出来」，还
+    会卡一下。换成自己的窗口之后，closing 回调必须**一律返回 False** 把关闭
+    挡住，等用户选完再由我们自己隐藏或销毁。这里锁住这条规矩。
+    """
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        base = Path(self.temp.name)
+        for name, value in (("SHELL_FILE", base / "shell.json"),
+                            ("CMD_FILE", base / "shell_cmd.json"),
+                            ("ALIVE_FILE", base / "shell_alive.json")):
+            ctx = patch.object(shell, name, value)
+            ctx.start()
+            self.addCleanup(ctx.stop)
+        self.tray = _load_tray()
+
+    def _app(self):
+        app = self.tray.TrayApp(background=True, with_service=False)
+        app.ask_about_close = lambda: None
+        app.quit_app = lambda: None
+        return app
+
+    def test_close_is_always_blocked_first(self):
+        """三种偏好都先返回 False：窗口不能抢在确认框前面消失。"""
+        for value in ("ask", "tray", "quit"):
+            app = self._app()
+            app.close_action = value
+            self.assertFalse(app._on_window_closing(), f"{value} 不该让窗口直接关掉")
+
+    def test_ask_starts_the_question(self):
+        app = self._app()
+        asked = []
+        app.ask_about_close = lambda: asked.append(1)
+        app.close_action = "ask"
+        app._on_window_closing()
+        self.assertEqual(asked, [1])
+
+    def test_quit_stops_everything(self):
+        app = self._app()
+        quits = []
+        app.quit_app = lambda: quits.append(1)
+        app.close_action = "quit"
+        app._on_window_closing()
+        self.assertEqual(quits, [1])
+
+    def test_tray_keeps_the_service(self):
+        app = self._app()
+        quits, hides = [], []
+        app.quit_app = lambda: quits.append(1)
+        app._hide_window = lambda: hides.append(1)
+        app.close_action = "tray"
+        app._on_window_closing()
+        self.assertEqual(quits, [])
+        self.assertFalse(app._force_close)
+
+    def test_forced_close_lets_it_go(self):
+        """退出流程里必须放行，否则 window.destroy() 会被自己挡住，进程卡死。"""
+        app = self._app()
+        app._force_close = True
+        self.assertTrue(app._on_window_closing())
+
+
+class AppWindowUrlTest(unittest.TestCase):
+    """软件窗口的 URL 要带 ?app=1，网页据此把外部链接交给系统浏览器。"""
+
+    def setUp(self):
+        self.tray = _load_tray()
+
+    def test_app_window_carries_marker(self):
+        self.assertTrue(self.tray._url(app_window=True).endswith("/?app=1"))
+
+    def test_browser_tab_stays_clean(self):
+        self.assertNotIn("app=1", self.tray._url())
+
+
+class OpenWindowTest(unittest.TestCase):
+    """open_window 只表达意愿，不自己起窗口。"""
+
+    def setUp(self):
+        self.tray = _load_tray()
+
+    def test_app_mode_defers_to_main_thread(self):
+        # pywebview 硬性要求主线程 start，所以 open_window 里不能直接建窗口。
+        app = self.tray.TrayApp(background=True, with_service=False, mode="app")
+        app.service_alive = lambda: True
+        app.open_window()
+        self.assertTrue(app._want_window)
+
+    def test_existing_window_is_shown_not_recreated(self):
+        app = self.tray.TrayApp(background=True, with_service=False, mode="app")
+        shown = []
+        app.win = object()
+        app._show_window = lambda: shown.append(1)
+        app.open_window()
+        self.assertEqual(shown, [1])
+        self.assertFalse(app._want_window)
+
+
+class OpenUrlTest(unittest.TestCase):
+    """软件窗口里的「打开原文」要把链接交给系统浏览器。
+
+    接口只认 http/https：这个端点最终会拉起本机上的程序，别让它变成
+    「网页点什么就开什么」的通道。
+    """
+
+    def test_http_is_forwarded_to_the_browser(self):
+        from app.api import system_open_url
+        opened = []
+        with patch("os.startfile", lambda url: opened.append(url)):
+            result = system_open_url({"url": "http://127.0.0.1:8766/api/items/1/archive"})
+        self.assertTrue(result["ok"])
+        self.assertEqual(opened, ["http://127.0.0.1:8766/api/items/1/archive"])
+
+    def test_other_schemes_are_rejected(self):
+        from fastapi import HTTPException
+        from app.api import system_open_url
+        for bad in ("file:///C:/Windows/System32/calc.exe", "javascript:alert(1)", "", "   "):
+            with self.assertRaises(HTTPException):
+                system_open_url({"url": bad})
+
+    def test_relative_url_is_rejected(self):
+        from fastapi import HTTPException
+        from app.api import system_open_url
+        with self.assertRaises(HTTPException):
+            system_open_url({"url": "/api/items/1/archive"})
+
+
 class OpenOnStartTest(unittest.TestCase):
     """开机自启要不要弹窗口。默认安静：登录时不抢焦点。"""
 

@@ -1,6 +1,17 @@
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const api=async(path,options={})=>{if(options.body&&typeof options.body!=='string'){options.body=JSON.stringify(options.body);options.headers={'Content-Type':'application/json',...(options.headers||{})}}const r=await fetch(path,options);const type=r.headers.get('content-type')||'';const data=type.includes('json')?await r.json():await r.text();if(!r.ok)throw new Error(data.detail||data.message||JSON.stringify(data));return data};
+// 软件窗口（Edge --app）没有地址栏和标签页，target="_blank" 只会在同一个
+// 无地址栏的窗口里再开一层，看着就像「浏览器嵌进了软件界面」。这种窗口里的
+// 外部链接一律交给系统默认浏览器；浏览器标签页模式本来就是真浏览器，不拦。
+// 标记由托盘开窗时带上的 ?app=1 决定，不是靠 UA 猜。
+const APP_WIN=new URLSearchParams(location.search).get('app')==='1';
+if(APP_WIN)document.addEventListener('click',event=>{
+  const link=event.target instanceof Element?event.target.closest('a[target="_blank"]'):null;
+  if(!link||!link.href)return;
+  event.preventDefault();event.stopPropagation();
+  api('/api/system/open-url',{method:'POST',body:{url:link.href}}).catch(err=>toast(err.message));
+},true);
 const toast=message=>{const el=$('#toast');if(!el)return;el.textContent=message;if(el.showPopover&&!el.matches(':popover-open')){try{el.showPopover()}catch(e){}}el.classList.add('show');clearTimeout(el._hideTimer);el._hideTimer=setTimeout(()=>el.classList.remove('show'),3200)};
 const time=value=>value?new Date(value).toLocaleString('zh-CN',{hour12:false}):'—';
 const bool=value=>value?'true':'false';
@@ -1116,9 +1127,12 @@ async function loadCredits(){
   const hostOf=url=>{try{return new URL(url).host}catch(e){return url||''}};
   const cards=[['今日实扣',money(c.today_points)+' 点'],['30 天实扣',money(c.window_points)+' 点'],['累计实扣',money(c.total_points)+' 点'],['平均每次精读',money(c.reading_avg)+' 点'],['精读次数',c.reading_calls],['每篇中位数',money(c.reading_median)+' 点']];
   const models=(c.by_model||[]).slice(0,4).map(m=>`<span class="badge">${esc(m.model)} ${m.calls} 次 · 实扣 ${money(m.points)} 点${m.reference&&m.reference!==m.points?`（原价 ${money(m.reference)}）`:''} · WorkBuddy 侧 ${tokens(m.tokens)} token · 均 ${m.avg_seconds}s</span>`).join(' ');
-  const api=c.api||{};
-  const apiCards=[['今日 API token',tokens(api.today_tokens)],['30 天 API token',tokens(api.window_tokens)],['累计 API token',tokens(api.total_tokens)],['今日调用',api.today_calls||0],['输入 token',tokens(api.prompt_tokens)],['输出 token',tokens(api.completion_tokens)]];
-  const apiModels=(api.by_model||[]).slice(0,6).map(m=>`<span class="badge">${esc(m.label||m.model)} ${m.calls} 次 · ${tokens(m.tokens)} token${m.base_url?` · ${esc(hostOf(m.base_url))}`:''} · 均 ${m.avg_seconds}s</span>`).join(' ');
+  // 不能叫 api：这个函数里已经用 api() 发请求，同名 const 会把整个函数体
+  // 拖进 TDZ，第一行 await api(...) 直接抛 ReferenceError，又被 catch 静默
+  // 吃掉——表现就是「总览里的点数与 token 整块空白」。
+  const apiStats=c.api||{};
+  const apiCards=[['今日 API token',tokens(apiStats.today_tokens)],['30 天 API token',tokens(apiStats.window_tokens)],['累计 API token',tokens(apiStats.total_tokens)],['今日调用',apiStats.today_calls||0],['输入 token',tokens(apiStats.prompt_tokens)],['输出 token',tokens(apiStats.completion_tokens)]];
+  const apiModels=(apiStats.by_model||[]).slice(0,6).map(m=>`<span class="badge">${esc(m.label||m.model)} ${m.calls} 次 · ${tokens(m.tokens)} token${m.base_url?` · ${esc(hostOf(m.base_url))}`:''} · 均 ${m.avg_seconds}s</span>`).join(' ');
   const daily=(c.daily||[]).slice(-14);
   const peak=Math.max(1,...daily.map(d=>d.points));
   const bars=daily.map(d=>`<div class="bar" title="${d.day} · ${money(d.points)} 点 / ${d.calls} 次"><i style="height:${Math.max(3,Math.round(d.points/peak*46))}px"></i><span>${d.day.slice(5)}</span></div>`).join('');

@@ -2325,6 +2325,31 @@ def system_shell_action(data: dict[str, Any]) -> dict[str, Any]:
     return {"ok": bool(sent.get("ok")), **sent, "autostart": boot, **changed}
 
 
+@app.post("/api/system/open-url")
+def system_open_url(data: dict[str, Any]) -> dict[str, Any]:
+    """把一条链接交给系统默认浏览器打开。
+
+    软件窗口是 Edge 的 `--app` 模式，没有地址栏和标签页，`target="_blank"`
+    只会在同一个无地址栏的窗口里再开一层——用户看到的就是「浏览器嵌在软件
+    界面里」。所以 app 窗口里的外部链接（打开原文、原始分享短链、离线阅读页）
+    都走这里，交给真正的浏览器；关掉浏览器不影响雷达本身。
+    """
+    from urllib.parse import urlparse
+    url = str(data.get("url") or "").strip()
+    if not url:
+        raise HTTPException(400, "缺少 url")
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise HTTPException(400, f"只支持 http/https 链接，收到 {parsed.scheme or '空协议'}")
+    if not parsed.netloc:
+        raise HTTPException(400, "链接不完整，缺主机名")
+    try:
+        os.startfile(url)                             # noqa: S606 - 交给默认浏览器
+    except Exception as exc:                          # noqa: BLE001
+        raise HTTPException(500, f"打开浏览器失败：{exc}") from exc
+    return {"ok": True, "url": url}
+
+
 @app.get("/api/settings")
 def settings_view() -> dict[str, Any]:
     return {"settings": get_settings(), "secrets": secret_status(), "restart_required_for": ["host", "port", "worker_concurrency"]}
