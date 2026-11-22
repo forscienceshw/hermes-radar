@@ -1,7 +1,7 @@
 {
   "version": 1,
   "created_at": "2026-11-20T17:42:55Z",
-  "updated_at": "2026-11-21T18:03:21Z",
+  "updated_at": "2026-11-22T14:04:50Z",
   "files": {
     ".gitattributes": {
       "role": "index",
@@ -729,11 +729,17 @@
       "size": 11813,
       "normalized_sha256": "a5957b567821fc2986ff60bc1775ab184d64582ce14b2e2e191d18284bc1b4bd"
     },
+    "tests/test_wechat_detail.py": {
+      "role": "observe",
+      "sha256": "39f742aa725d65007ec22c0cb0db3b8c5477b238c66d91a5b1c40d13859ab90d",
+      "size": 9003,
+      "normalized_sha256": "39f742aa725d65007ec22c0cb0db3b8c5477b238c66d91a5b1c40d13859ab90d"
+    },
     "tests/test_wechat_panel.py": {
       "role": "observe",
-      "sha256": "d30c567ea51bc85b07799b7b7f7722571cc5a90c5d44b8777d6f5418b41ab6cb",
-      "size": 32530,
-      "normalized_sha256": "d30c567ea51bc85b07799b7b7f7722571cc5a90c5d44b8777d6f5418b41ab6cb"
+      "sha256": "8657ae00529fa3b0fb984aa78d4213e9bfd668abfa3708e2b27eb4b5cd133256",
+      "size": 32585,
+      "normalized_sha256": "8657ae00529fa3b0fb984aa78d4213e9bfd668abfa3708e2b27eb4b5cd133256"
     },
     "tests/test_workbuddy_direct.py": {
       "role": "observe",

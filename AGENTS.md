@@ -97,8 +97,9 @@ text = read_raw_text(item["raw_path"])   # 自动识别 .gz 并解压
 
 1. **关窗口只关窗口**。默认 `close_action=tray`，服务继续跑；只有托盘菜单「彻底退出」
    或设置页「彻底退出」才写 `STOP_RADAR` 并等两个子进程收尾。别把「关窗口」实现成停服务。
-2. **Edge 窗口必须带独立 `--user-data-dir`**（`data/.appwin`）。共用默认配置时，新进程
-   会把请求转给已经在跑的 Edge、自己立刻退出，我们的「窗口已关闭」检测就会误触发。
+2. **Edge 窗口必须带独立 `--user-data-dir`**（`.cache/appwin`，不放 `data/`：那份配置
+   实测 63 MB，混进用户资料会被备份与迁移当成正文带走）。共用默认配置时，新进程会把
+   请求转给已经在跑的 Edge、自己立刻退出，我们的「窗口已关闭」检测就会误触发。
 3. **单实例按安装目录**：第二个托盘实例不抢图标，而是往 `data/shell_cmd.json` 写 `open`，
    让已经跑着的那个开窗口。停止路径（`stop_radar.pyw`、`radar.py stop`、`installer/launcher.py`）
    必须同时发 `quit`，否则托盘会把刚停掉的服务又拉起来。
