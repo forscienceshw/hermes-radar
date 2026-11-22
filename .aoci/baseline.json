@@ -1,7 +1,7 @@
 {
   "version": 1,
   "created_at": "2026-11-20T17:42:55Z",
-  "updated_at": "2026-11-22T17:58:07Z",
+  "updated_at": "2026-11-22T18:05:14Z",
   "files": {
     ".gitattributes": {
       "role": "index",
@@ -17,9 +17,9 @@
     },
     "AGENTS.md": {
       "role": "index",
-      "sha256": "16e189178dd781beb3bc0accd07f60a356d377e6287a0323ad8e55947250bd6b",
-      "size": 61396,
-      "normalized_sha256": "16e189178dd781beb3bc0accd07f60a356d377e6287a0323ad8e55947250bd6b"
+      "sha256": "79573a4984ba29c2953a8f7f3455e1b9b8a865fb6983a720c8604cedcb0dfe34",
+      "size": 61669,
+      "normalized_sha256": "79573a4984ba29c2953a8f7f3455e1b9b8a865fb6983a720c8604cedcb0dfe34"
     },
     "FEATURES.yaml": {
       "role": "index",

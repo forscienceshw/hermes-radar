@@ -7,15 +7,17 @@
 项目根的 `FEATURES.yaml` 是"这个功能做过没有"的唯一判据，**不以印象为准**：
 
 ```bash
-SK=D:/program/WorkBuddyData/workbuddy_data/skills/software-project-playbook
-python $SK/scripts/feature_audit.py .          # 清单 vs 代码：MISSING / STALE / UNTESTED / 未登记
-python $SK/scripts/hygiene_scan.py . --payload <打包白名单>   # 打包前体检，必须 0 BLOCK
+# skill 在 WorkBuddy 全局目录，不在本仓库内；换机器用 SKILL_PLAYBOOK 覆盖即可
+SK="${SKILL_PLAYBOOK:-D:/program/WorkBuddyData/workbuddy_data/skills/software-project-playbook}"
+python "$SK/scripts/feature_audit.py" .          # 清单 vs 代码：MISSING / STALE / UNTESTED / 未登记
+python "$SK/scripts/hygiene_scan.py" . --payload <打包白名单>   # 打包前体检，必须 0 BLOCK
 ```
 
 - 加功能：先加条目（`id` + 能 grep 到的落点），再写代码。
 - 改需求：加新条目，旧的标 `dropped` 并在 `notes` 写原因，不要抹掉历史。
 - `feature_audit` 报 `MISSING` 就是真缺，别绕过去；报 `UNLISTED` 是"代码里有、清单没写"，逐条判断补清单还是删残留。
 - 完整方法论（UI 四态、打包白名单、发版、Git、AOCI、删除纪律）见 skill `software-project-playbook`；本文档只写本项目特有的约束。
+- 每次收尾记一条经验（`playbook.py learn`）：现象 → 根因 → 该变成哪条规则。踩过的坑不写，下个会话照样踩。
 
 ## 每次改完代码，必须存版本
 
