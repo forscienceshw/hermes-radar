@@ -66,7 +66,9 @@ python radar.py stop    # 连托盘一起退
 python radar.py where   # 各个目录在哪、数据库是哪一版
 ```
 
-也可以直接双击 `Start Radar.vbs`（它转身去起托盘外壳，只是没有图标、不够像软件）。
+纯源码检出（没有 `Radar.exe`）可以双击 `Start Radar.vbs`，它转身去起同一个托盘外壳，
+只是没有 exe 图标。**开机自启不会用 VBS**：一律写注册表的 `Radar.exe start`
+（源码检出是 `pythonw radar_tray.pyw --autostart`）。
 
 安装版的 `Radar.exe` 仍保留 `start / stop / restart / status / open / uninstall` 子命令，
 供快捷方式和卸载程序调用；日常用托盘就够了。

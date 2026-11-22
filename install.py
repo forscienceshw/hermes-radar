@@ -6,7 +6,7 @@
     python install.py
 
 它会做四件事：建虚拟环境、装依赖、问几个配置问题、把数据库建起来。
-之后再双击 "Start Radar.vbs" 就能用。
+之后再双击 `Radar.exe` 就能用（源码方式没有 exe 时退回双击 `Start Radar.vbs`）。
 
 已经装过的话再运行是安全的：不会覆盖你现有的设置，
 只在缺东西的时候补。要重新配置加 --reconfigure。
@@ -323,27 +323,37 @@ def setup_autostart(assume_yes: bool) -> None:
     step(5, "开机自启")
     if os.name != "nt":
         return
-    script = ROOT / "Start Radar.vbs"
-    target = f'wscript.exe "{script}"'
-    import winreg
-    key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
+    # 统一走 app.services.autostart：装成 exe 就是 Radar.exe start，源码检出是
+    # pythonw radar_tray.pyw --autostart。第一版往注册表里写 wscript + VBS 已经
+    # 废弃——VBS 起不来托盘图标、不像软件，用户明确不要；enable() 还会顺手删掉
+    # 启动文件夹里遗留的 Start Radar.vbs.lnk，免得登录时被拉起两份。
+    from app.services import autostart
+
     try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_READ) as key:
-            existing, _ = winreg.QueryValueEx(key, "HermesResearchRadar")
-    except OSError:
-        existing = ""
-    if existing == target:
+        state = autostart.status()
+        command = state.get("command") or subprocess.list2cmdline(autostart.launcher_command())
+    except Exception as exc:                        # noqa: BLE001
+        say(f"  读不到自启状态：{exc}")
+        return
+    if state.get("enabled"):
         say(f"{OK} 已经在自启项里了，不重复添加")
+        say(f"    {command}")
         return
     say("  会在注册表里加一条（只对当前用户，删掉也容易）：")
-    say(f"    HKCU\\{key_path}")
-    say(f"    HermesResearchRadar = {target}")
+    say(f"    HKCU\\{autostart.RUN_KEY}")
+    say(f"    {autostart.VALUE_NAME} = {command}")
     if not confirm("加吗", False, assume_yes):
-        say("  跳过。以后想开，可以再运行 python install.py。")
+        say("  跳过。以后想开，到 设置 → 桌面程序 →「开机自启」，或再运行 python install.py。")
         return
-    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path) as key:
-        winreg.SetValueEx(key, "HermesResearchRadar", 0, winreg.REG_SZ, target)
-    say(f"{OK} 已加。想取消就运行：python radar.py where 看路径，手动删这条注册表值。")
+    try:
+        result = autostart.enable()
+    except Exception as exc:                        # noqa: BLE001
+        say(f"  没写成：{exc}")
+        return
+    say(f"{OK} 已加。登录后会在托盘里把服务拉起来，不弹窗口（可以在设置里改成弹）。")
+    removed = result.get("removed_legacy") or []
+    if removed:
+        say(f"{OK} 顺手删掉了旧的启动文件夹快捷方式：{'、'.join(removed)}")
 
 
 def finish() -> None:
@@ -351,8 +361,11 @@ def finish() -> None:
     port = settings.get("port", 8766)
     step(6, "完成")
     say(f"  打开网页：http://127.0.0.1:{port}")
-    say(f"  启动：双击 \"Start Radar.vbs\"")
-    say(f"  停止：双击 \"Stop Radar.vbs\"")
+    if (ROOT / "Radar.exe").is_file():
+        say(f"  启动：双击 \"Radar.exe\"（双击后窗口在任务栏，关掉只是收进托盘）")
+    else:
+        say(f"  启动：双击 \"Start Radar.vbs\"（源码方式没有图标）")
+    say(f"  停止：托盘右键 → 彻底退出，或双击 \"Stop Radar.vbs\"")
     say()
     say("  以后改代码改坏了：")
     say("    python radar.py status          看现在改了什么")
