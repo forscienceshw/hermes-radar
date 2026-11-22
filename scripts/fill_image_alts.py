@@ -21,6 +21,7 @@ BASE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE))
 
 from app.db import Database  # noqa: E402
+from app.services.archive import raw_file, read_raw_text  # noqa: E402
 from app.utils import clean_image_alt, json_loads, stable_json  # noqa: E402
 
 IMG_RE = re.compile(r"<img\b[^>]*>", re.I)
@@ -73,11 +74,11 @@ def main() -> int:
                 changed += 1
         needs = [image for image in images if not image.get("alt")]
         if needs:
-            raw_path = Path(row["raw_path"] or "")
-            if not raw_path.is_file():
+            snapshot = raw_file(row["raw_path"])
+            if not snapshot.is_file():
                 missing += 1
             else:
-                mapping = alts_by_url(raw_path.read_text(encoding="utf-8", errors="replace"))
+                mapping = alts_by_url(read_raw_text(snapshot))
                 for image in needs:
                     alt = mapping.get(image["url"])
                     if alt:

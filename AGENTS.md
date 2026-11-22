@@ -28,12 +28,28 @@ python radar.py save "一句话说清改了什么"     # 存
 
 ## data/ 目录是用户的资料，不是缓存
 
-`data/` 里是 3.6G 的离线文档、图片、数据库和日志，**不在版本库里**，回滚动不到它，也意味着改坏了没得退。
+`data/` 里是近 28G 的离线文档、图片、数据库和日志，**不在版本库里**，回滚动不到它，也意味着改坏了没得退。
 所以：
 
 - 不要为了"清理"批量删 `data/` 下的东西。要清理先输出清单让人确认。
 - 不要往 `data/` 里塞临时文件。临时文件放 `.tmp/`（已被忽略）。
 - 数据库结构改动要同步把 `app/db.py` 的 `SCHEMA_VERSION` 加一。
+
+### raw.html 是 gzip 压缩存储的（2026-11-22 起）
+
+`data/documents/*/raw.html` 已全部压成 `raw.html.gz`，documents 从 15.5G 降到 4.1G。
+**读取必须走 `app/services/archive.py` 的三个函数，不要直接 `open(raw_path)`**：
+
+```python
+from .archive import raw_file, read_raw_text
+
+text = read_raw_text(item["raw_path"])   # 自动识别 .gz 并解压
+```
+
+- `raw_file(path)`：返回实际存在的文件（原文件优先，其次 `.gz`）
+- `read_raw_text(path)`：解压并按 utf-8 容错解码
+- 新归档仍写未压缩的 `raw.html`；定期跑 `scripts/compress_raw.py --apply` 收口
+- 当前已接入的位置：`app/api.py`（下载原始快照）、`app/services/papers.py`（提取 DOI）、`scripts/fill_image_alts.py`（补图片描述）
 
 ## 资料库有四道闸门，别搞混
 
