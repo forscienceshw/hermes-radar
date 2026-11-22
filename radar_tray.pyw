@@ -60,8 +60,24 @@ WM_WINDOW_CLOSED = 0x8000 + 22
 ID_OPEN, ID_BROWSER, ID_STATUS = 1001, 1002, 1003
 ID_APPWIN = 1004
 ID_RESTART, ID_STOP = 1011, 1012
-ID_DATA, ID_AUTOSTART, ID_CLOSE_QUIT = 1021, 1022, 1023
+ID_DATA, ID_AUTOSTART, ID_OPENWIN = 1021, 1022, 1023
+ID_CLOSE_ASK, ID_CLOSE_TRAY, ID_CLOSE_QUIT = 1031, 1032, 1033
 ID_QUIT = 1099
+# 托盘菜单的每一项文字。抽成常量是为了测试能直接核对，不用去戳 Win32。
+MENU_TEXT = {
+    ID_OPEN: "打开界面",
+    ID_APPWIN: "    软件窗口（无地址栏）",
+    ID_BROWSER: "    浏览器标签页",
+    ID_RESTART: "重启服务",
+    ID_STOP: "停止服务（保留托盘）",
+    ID_CLOSE_ASK: "    每次问我",
+    ID_CLOSE_TRAY: "    只关窗口，服务留在托盘",
+    ID_CLOSE_QUIT: "    连后台服务一起退出",
+    ID_AUTOSTART: "开机自动启动",
+    ID_OPENWIN: "开机启动时打开界面",
+    ID_DATA: "打开数据文件夹",
+    ID_QUIT: "彻底退出（停止服务）",
+}
 
 
 # --------------------------------------------------------------------------- #
@@ -188,23 +204,44 @@ def _make_icon() -> Path:
 # --------------------------------------------------------------------------- #
 class TrayApp:
     def __init__(self, *, background: bool = False, with_service: bool = True,
-                 mode: str = "") -> None:
+                 mode: str = "", autostart: bool = False) -> None:
         self.background = background
         self.with_service = with_service
         self.forced_mode = mode if mode in ("app", "browser") else ""
+        self.autostart = autostart
         self.hwnd = None
         self.hicon = None
         self.edge: subprocess.Popen | None = None
         self.quitting = False
-        self.close_action = "tray"
+        self.close_action = "ask"
         self.auto_restart = True
         self.restart_count = 0
         self.started_at = time.time()
         self.tip = APP_NAME
         self._last_beat = 0.0
         self._shell = None
+        self._asking = False
 
     # ---- shell 偏好 -------------------------------------------------------
+    def _log(self, text: str) -> None:
+        """托盘的错误只能写文件。
+
+        pythonw 没有 stderr，窗口过程里抛的异常会被 pywin32 打到虚空——用户
+        看到的就是「右键没反应」「点了没动静」。所以凡是走消息循环的入口都要
+        留一行日志，出问题能查。
+        """
+        try:
+            folder = DATA / "logs"
+            folder.mkdir(parents=True, exist_ok=True)
+            path = folder / "tray.log"
+            if path.is_file() and path.stat().st_size > 512 * 1024:
+                path.replace(folder / "tray.log.1")
+            stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(f"{stamp} {text}\n")
+        except OSError:
+            pass
+
     def shell(self):
         if self._shell is None:
             try:
@@ -219,7 +256,7 @@ class TrayApp:
         if shell:
             try:
                 data = shell.load()
-                self.close_action = data.get("close_action") or "tray"
+                self.close_action = data.get("close_action") or "ask"
                 self.auto_restart = bool(data.get("auto_restart", True))
             except Exception:                        # noqa: BLE001
                 pass
@@ -385,42 +422,94 @@ class TrayApp:
         except Exception:                            # noqa: BLE001
             pass
 
-    def show_menu(self) -> None:
+    def build_menu(self):
+        """构造托盘菜单。
+
+        抽成独立方法有两个原因：一是一次构造就能测（selftest 会真的跑一遍
+        再销毁），二是「右键毫无反应」这类问题必须能被钉死——2026-11-22 的
+        事故就是这里 `AppendMenu(MF_SEPARATOR, 0, None)` 抛 TypeError，而
+        pythonw 没有 stderr，异常被吞得一点声音都没有。
+
+        注意：分隔符的文本必须传空串。pywin32 不接受 None，会直接抛。
+        """
         import win32con, win32gui
         menu = win32gui.CreatePopupMenu()
         try:
             alive = self.service_alive()
             mode = self.window_mode()
-            win32gui.AppendMenu(menu, win32con.MF_STRING, ID_OPEN, "打开界面")
-            win32gui.AppendMenu(menu, win32con.MF_STRING | win32con.MF_GRAYED, 0, "打开方式")
-            app_flag = win32con.MF_STRING | (win32con.MF_CHECKED if mode == "app" else 0)
-            web_flag = win32con.MF_STRING | (win32con.MF_CHECKED if mode == "browser" else 0)
-            win32gui.AppendMenu(menu, app_flag, ID_APPWIN, "    软件窗口（无地址栏）")
-            win32gui.AppendMenu(menu, web_flag, ID_BROWSER, "    浏览器标签页")
-            win32gui.AppendMenu(menu, win32con.MF_SEPARATOR, 0, None)
-            win32gui.AppendMenu(menu, win32con.MF_STRING | win32con.MF_GRAYED, ID_STATUS,
-                                ("服务：运行中" if alive else "服务：已停止"))
-            win32gui.AppendMenu(menu, win32con.MF_STRING, ID_RESTART, "重启服务")
-            win32gui.AppendMenu(menu, win32con.MF_STRING, ID_STOP, "停止服务（保留托盘）")
-            win32gui.AppendMenu(menu, win32con.MF_SEPARATOR, 0, None)
-            close_flag = win32con.MF_STRING | (win32con.MF_CHECKED if self.close_action == "quit" else 0)
-            win32gui.AppendMenu(menu, close_flag, ID_CLOSE_QUIT, "关窗口时连服务一起退出")
-            auto_flag = win32con.MF_STRING | (win32con.MF_CHECKED if self._autostart_on() else 0)
-            win32gui.AppendMenu(menu, auto_flag, ID_AUTOSTART, "开机自动启动")
-            win32gui.AppendMenu(menu, win32con.MF_STRING, ID_DATA, "打开数据文件夹")
-            win32gui.AppendMenu(menu, win32con.MF_SEPARATOR, 0, None)
-            win32gui.AppendMenu(menu, win32con.MF_STRING, ID_QUIT, "彻底退出（停止服务）")
+            autostart = self._autostart_on()
+            open_on_start = self._open_on_start()
 
+            def add(flags, item, text):
+                win32gui.AppendMenu(menu, flags | win32con.MF_STRING, item, text)
+
+            add(0, ID_OPEN, MENU_TEXT[ID_OPEN])
+            add(win32con.MF_GRAYED, 0, "打开方式")
+            add(win32con.MF_CHECKED if mode == "app" else 0, ID_APPWIN, MENU_TEXT[ID_APPWIN])
+            add(win32con.MF_CHECKED if mode == "browser" else 0, ID_BROWSER, MENU_TEXT[ID_BROWSER])
+            win32gui.AppendMenu(menu, win32con.MF_SEPARATOR, 0, "")
+            add(win32con.MF_GRAYED, ID_STATUS, "服务：运行中" if alive else "服务：已停止")
+            add(0, ID_RESTART, MENU_TEXT[ID_RESTART])
+            add(0, ID_STOP, MENU_TEXT[ID_STOP])
+            win32gui.AppendMenu(menu, win32con.MF_SEPARATOR, 0, "")
+            add(win32con.MF_GRAYED, 0, "关窗口时")
+            add(win32con.MF_CHECKED if self.close_action == "ask" else 0,
+                ID_CLOSE_ASK, MENU_TEXT[ID_CLOSE_ASK])
+            add(win32con.MF_CHECKED if self.close_action == "tray" else 0,
+                ID_CLOSE_TRAY, MENU_TEXT[ID_CLOSE_TRAY])
+            add(win32con.MF_CHECKED if self.close_action == "quit" else 0,
+                ID_CLOSE_QUIT, MENU_TEXT[ID_CLOSE_QUIT])
+            win32gui.AppendMenu(menu, win32con.MF_SEPARATOR, 0, "")
+            add(win32con.MF_CHECKED if autostart else 0, ID_AUTOSTART, MENU_TEXT[ID_AUTOSTART])
+            add(win32con.MF_CHECKED if open_on_start else 0, ID_OPENWIN, MENU_TEXT[ID_OPENWIN])
+            add(0, ID_DATA, MENU_TEXT[ID_DATA])
+            win32gui.AppendMenu(menu, win32con.MF_SEPARATOR, 0, "")
+            add(0, ID_QUIT, MENU_TEXT[ID_QUIT])
+        except Exception:
+            win32gui.DestroyMenu(menu)
+            raise
+        return menu
+
+    def show_menu(self) -> None:
+        import win32con, win32gui
+        try:
+            menu = self.build_menu()
+        except Exception as exc:                     # noqa: BLE001
+            self._log(f"菜单构造失败：{exc!r}")
+            self.balloon("托盘菜单打不开", f"{exc}\n详情见 data/logs/tray.log")
+            return
+        choice = 0
+        try:
             x, y = win32gui.GetCursorPos()
-            win32gui.SetForegroundWindow(self.hwnd)
+            # 没有这一步，菜单会因为窗口不在前台而立刻失焦消失——表现同样是
+            # 「右键点了没反应」。点图标本身是输入事件，前台权限在这里是给的。
+            try:
+                win32gui.SetForegroundWindow(self.hwnd)
+            except Exception:                        # noqa: BLE001
+                pass
             choice = win32gui.TrackPopupMenu(
                 menu, win32con.TPM_LEFTALIGN | win32con.TPM_RIGHTBUTTON | win32con.TPM_RETURNCMD,
                 x, y, 0, self.hwnd, None)
             win32gui.PostMessage(self.hwnd, win32con.WM_NULL, 0, 0)
+        except Exception as exc:                     # noqa: BLE001
+            self._log(f"弹出菜单失败：{exc!r}")
         finally:
             win32gui.DestroyMenu(menu)
         if choice:
-            self.on_command(int(choice))
+            try:
+                self.on_command(int(choice))
+            except Exception as exc:                 # noqa: BLE001
+                self._log(f"菜单命令 {choice} 执行失败：{exc!r}")
+                self.balloon("操作失败", str(exc))
+
+    def _open_on_start(self) -> bool:
+        shell = self.shell()
+        if shell:
+            try:
+                return bool(shell.load().get("open_on_start"))
+            except Exception:                        # noqa: BLE001
+                pass
+        return False
 
     def _autostart_on(self) -> bool:
         try:
@@ -456,18 +545,26 @@ class TrayApp:
                 self.balloon(APP_NAME, "后台服务已停止，托盘还留着。双击图标可以重新启动。")
             else:
                 self.balloon("停止超时", "supervisor 没有在 25 秒内退出，看任务管理器里还有没有 pythonw.exe。")
-        elif cmd == ID_CLOSE_QUIT:
-            shell = self.shell()
-            wanted = "tray" if self.close_action == "quit" else "quit"
-            self.close_action = wanted
-            if shell:
-                try:
-                    shell.save(close_action=wanted)
-                except Exception:                    # noqa: BLE001
-                    pass
-            self.balloon(APP_NAME, "以后关窗口会" + ("连服务一起退出" if wanted == "quit" else "把服务留在托盘"))
+        elif cmd in (ID_CLOSE_ASK, ID_CLOSE_TRAY, ID_CLOSE_QUIT):
+            wanted = {ID_CLOSE_ASK: "ask", ID_CLOSE_TRAY: "tray",
+                      ID_CLOSE_QUIT: "quit"}[cmd]
+            self.set_close_action(wanted)
+            self.balloon(APP_NAME, {
+                "ask": "以后关窗口会先问你一句",
+                "tray": "以后关窗口只关窗口，服务留在托盘",
+                "quit": "以后关窗口会连后台服务一起退出",
+            }[wanted])
         elif cmd == ID_AUTOSTART:
             self.toggle_autostart()
+        elif cmd == ID_OPENWIN:
+            wanted = not self._open_on_start()
+            shell = self.shell()
+            if shell:
+                try:
+                    shell.save(open_on_start=wanted)
+                except Exception:                    # noqa: BLE001
+                    pass
+            self.balloon(APP_NAME, "以后开机自启会" + ("打开界面" if wanted else "只把图标放进托盘，不弹窗口"))
         elif cmd == ID_DATA:
             try:
                 os.startfile(str(DATA))              # noqa: S606 - 用户自己的数据目录
@@ -475,6 +572,17 @@ class TrayApp:
                 pass
         elif cmd == ID_QUIT:
             self.quit_app()
+
+    def set_close_action(self, value: str) -> None:
+        if value not in ("ask", "tray", "quit"):
+            value = "ask"
+        self.close_action = value
+        shell = self.shell()
+        if shell:
+            try:
+                shell.save(close_action=value)
+            except Exception:                        # noqa: BLE001
+                pass
 
     def toggle_autostart(self) -> None:
         try:
@@ -484,7 +592,9 @@ class TrayApp:
                 self.balloon(APP_NAME, "已取消开机自启")
             else:
                 autostart.enable()
-                self.balloon(APP_NAME, "已设为开机自启：登录后自动起服务，图标在托盘里")
+                self.balloon(APP_NAME, "已设为开机自启：" + (
+                    "登录后自动起服务并打开界面" if self._open_on_start()
+                    else "登录后自动起服务，图标进托盘、不弹窗口"))
         except Exception as exc:                     # noqa: BLE001
             self.balloon("改开机自启失败", str(exc))
 
@@ -527,17 +637,30 @@ class TrayApp:
 
     # ---- 消息循环 ---------------------------------------------------------
     def _wndproc(self, hwnd, msg, wparam, lparam):
+        import win32gui
+        try:
+            return self._handle_message(hwnd, msg, wparam, lparam)
+        except Exception as exc:                     # noqa: BLE001
+            # 托盘窗口过程抛异常时 pywin32 只会往 stderr 打一行，而 pythonw
+            # 没有 stderr。不接住就等于「点了没反应」，所以这里必须留痕。
+            self._log(f"消息 {msg:#06x} 处理失败：{exc!r}")
+            return win32gui.DefWindowProc(hwnd, msg, wparam, lparam)
+
+    def _handle_message(self, hwnd, msg, wparam, lparam):
         import win32con, win32gui
         if msg == WM_TRAY:
-            if lparam == win32con.WM_LBUTTONDBLCLK:
+            event = int(lparam) & 0xFFFF
+            if event == win32con.WM_LBUTTONDBLCLK:
                 self.open_window()
-            elif lparam in (win32con.WM_RBUTTONUP, win32con.WM_CONTEXTMENU):
+            elif event in (win32con.WM_RBUTTONUP, win32con.WM_CONTEXTMENU):
                 self.show_menu()
             return 0
         if msg == WM_WINDOW_CLOSED:
             self.edge = None
             if self.close_action == "quit":
                 self.quit_app()
+            elif self.close_action == "ask":
+                self.ask_about_close()
             else:
                 self.balloon(APP_NAME, "窗口已关闭，服务还在后台跑。双击托盘图标可以重新打开。")
             return 0
@@ -551,6 +674,43 @@ class TrayApp:
             win32gui.DestroyWindow(hwnd)
             return 0
         return win32gui.DefWindowProc(hwnd, msg, wparam, lparam)
+
+    # ---- 关窗询问 ---------------------------------------------------------
+    def ask_about_close(self) -> None:
+        """关了窗口之后问一句：要不要连后台服务一起退。
+
+        MessageBox 必须在别的线程里弹：它自己会泵消息，在窗口过程中同步调用
+        会把托盘的消息循环卡住，图标当场变「未响应」。同一个时间只问一次，
+        连着关两次窗不会叠出两个框。
+        """
+        if self._asking or self.quitting:
+            return
+        self._asking = True
+        threading.Thread(target=self._ask_about_close, daemon=True,
+                         name="tray-ask-close").start()
+
+    def _ask_about_close(self) -> None:
+        import win32con, win32gui
+        try:
+            answer = win32gui.MessageBox(
+                self.hwnd,
+                "界面窗口关掉了，后台服务还在跑。\n\n"
+                "「是」：连后台服务一起退出，采集也停。\n"
+                "「否」：只关窗口，服务留在右下角托盘里，\n"
+                "　　　　双击托盘图标就能重新打开。\n\n"
+                "不想每次都问：设置 → 桌面程序 →「关闭窗口时」选一项。",
+                APP_NAME,
+                win32con.MB_YESNO | win32con.MB_ICONQUESTION
+                | win32con.MB_TOPMOST | win32con.MB_SETFOREGROUND)
+        except Exception as exc:                     # noqa: BLE001
+            self._log(f"关窗询问失败：{exc!r}")
+            answer = win32con.IDNO
+        finally:
+            self._asking = False
+        if answer == win32con.IDYES:
+            self.quit_app()
+        else:
+            self.balloon(APP_NAME, "服务还在后台跑。双击托盘图标可以重新打开界面。")
 
     def tick(self) -> None:
         self.beat()
@@ -587,6 +747,19 @@ class TrayApp:
         else:
             self.update_tip(f"{APP_NAME} · 服务已停止")
 
+    def should_open_window(self) -> bool:
+        """这次启动要不要把界面窗口拉出来。
+
+        * 双击图标（没有 --autostart）＝要，用户点它就是想看界面；
+        * 开机自启（--autostart）＝看设置里的「开机启动时打开界面」；
+        * --background ＝一律不开，命令行和测试用。
+        """
+        if self.background:
+            return False
+        if self.autostart:
+            return self._open_on_start()
+        return True
+
     def run(self) -> int:
         import win32con, win32gui
         self.reload_prefs()
@@ -609,7 +782,7 @@ class TrayApp:
             self.start_service()
         self.update_tip(f"{APP_NAME} · {'服务运行中' if self.service_alive() else '服务未启动'}")
 
-        if not self.background:
+        if self.should_open_window():
             threading.Thread(target=self._open_after_ready, daemon=True, name="open-window").start()
 
         threading.Thread(target=self._ticker, daemon=True, name="ticker").start()
@@ -653,12 +826,27 @@ def _single_instance() -> bool:
 
 
 def _selftest() -> int:
-    """冒烟测试：建图标 → 跑 4 秒消息循环 → 拆掉。
+    """冒烟测试：构造菜单 → 建图标 → 跑 4 秒消息循环 → 拆掉。
+
+    菜单必须真的构造一次。2026-11-22 那次「右键图标毫无反应」的根因就在这里
+    （`AppendMenu(MF_SEPARATOR, 0, None)` 抛 TypeError），而 pythonw 没有
+    stderr，异常被吞得干干净净。失败时返回非 0，打包与升级脚本能拿它当门禁。
 
     刻意 ``with_service=False``：自检绝不能碰正在跑的服务，它只验证托盘本身
-    能建起来、菜单能弹、退出路径不发散。
+    能建起来、菜单能构造、退出路径不发散。
     """
+    import win32gui
     app = TrayApp(background=True, with_service=False)
+    try:
+        menu = app.build_menu()
+        count = win32gui.GetMenuItemCount(menu)
+        win32gui.DestroyMenu(menu)
+        if count <= 0:
+            app._log("selftest：菜单是空的")
+            return 4
+    except Exception as exc:                        # noqa: BLE001
+        app._log(f"selftest：菜单构造失败 {exc!r}")
+        return 3
     threading.Thread(target=lambda: (time.sleep(4), app.quit_app()), daemon=True).start()
     app.run()
     return 0
@@ -672,7 +860,7 @@ def main(argv: list[str]) -> int:
         return 0
     mode = "browser" if "browser" in args else ("app" if "app" in args else "")
     app = TrayApp(background=("background" in args), with_service=("no-service" not in args),
-                  mode=mode)
+                  mode=mode, autostart=("autostart" in args))
     return app.run()
 
 

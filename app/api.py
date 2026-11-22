@@ -2263,11 +2263,17 @@ def setup_autostart_toggle(data: dict[str, Any]) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 @app.get("/api/system/shell")
 def system_shell() -> dict[str, Any]:
-    """设置页「桌面程序」那一块：关窗行为 + 命令通道。"""
-    from .services import shell
+    """设置页「桌面程序」那一块：关窗行为 + 开机自启 + 命令通道。"""
+    from .services import autostart, shell
     settings = get_settings()
     port = int(settings.get("port") or 8766)
-    return {**shell.status(), "url": f"http://127.0.0.1:{port}", "port": port}
+    try:
+        boot = autostart.status()
+    except Exception as exc:                          # noqa: BLE001
+        # 读注册表失败不该把整块面板打空：其它开关还能用。
+        boot = {"enabled": False, "mode": "unknown", "supported": False, "error": str(exc)}
+    return {**shell.status(), "autostart": boot,
+            "url": f"http://127.0.0.1:{port}", "port": port}
 
 
 @app.post("/api/system/shell")
@@ -2277,10 +2283,13 @@ def system_shell_action(data: dict[str, Any]) -> dict[str, Any]:
     没有托盘（直接 start_radar.pyw 起的）时，quit 也要能生效——所以同时写
     supervisor 的停止标记，那条路不依赖任何常驻外壳。
     """
-    from .services import shell
+    from .services import autostart, shell
     changed = {}
     if "close_action" in data:
-        changed = shell.save(close_action=str(data.get("close_action") or "tray"))
+        wanted = str(data.get("close_action") or "").strip().lower()
+        if wanted not in shell.CLOSE_ACTIONS:
+            raise HTTPException(400, f"未知关窗行为：{wanted}")
+        changed = shell.save(close_action=wanted)
     if "open_on_start" in data:
         changed = shell.save(open_on_start=bool(data.get("open_on_start")))
     if "window_mode" in data:
@@ -2288,9 +2297,17 @@ def system_shell_action(data: dict[str, Any]) -> dict[str, Any]:
         if mode not in shell.WINDOW_MODES:
             raise HTTPException(400, f"未知打开方式：{mode}")
         changed = shell.save(window_mode=mode)
+    boot = None
+    if "autostart" in data:
+        # 写 HKCU 的 Run 项，不需要管理员权限；enable() 会顺手清掉启动文件夹
+        # 里第一版留下的 VBS 快捷方式，避免登录时被拉起两份。
+        try:
+            boot = autostart.enable() if data.get("autostart") else autostart.disable()
+        except Exception as exc:                      # noqa: BLE001
+            raise HTTPException(500, f"改开机自启失败：{exc}") from exc
     action = str(data.get("action") or "").strip().lower()
     if not action:
-        return {"ok": True, **shell.status(), **changed}
+        return {"ok": True, **shell.status(), "autostart": boot, **changed}
     if action not in shell.COMMANDS:
         raise HTTPException(400, f"未知命令：{action}")
     # 没有托盘在跑时别往命令文件里塞 quit：它会在两分钟内有效，用户如果这期间
@@ -2305,7 +2322,7 @@ def system_shell_action(data: dict[str, Any]) -> dict[str, Any]:
             (DATA_DIR / "STOP_RADAR").write_text("stop", encoding="utf-8")
         except OSError:
             pass
-    return {"ok": bool(sent.get("ok")), **sent, **changed}
+    return {"ok": bool(sent.get("ok")), **sent, "autostart": boot, **changed}
 
 
 @app.get("/api/settings")

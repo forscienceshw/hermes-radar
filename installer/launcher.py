@@ -206,6 +206,22 @@ def _shell():
         return None
 
 
+def _open_on_start() -> bool:
+    """开机自启时要不要把界面也弹出来。
+
+    这是设置里的一个开关（data/shell.json 的 open_on_start）。默认 False：
+    登录时先把服务悄悄拉起来、图标进托盘，不抢焦点。读不到也按 False 走，
+    开机弹一个没人要的窗口比不弹更烦人。
+    """
+    shell = _shell()
+    if not shell:
+        return False
+    try:
+        return bool(shell.load().get("open_on_start"))
+    except Exception:                                # noqa: BLE001
+        return False
+
+
 def _ask_tray_open() -> bool:
     """托盘已经在跑就只让它开个窗口——不必再起一个 pythonw 去抢单实例。"""
     shell = _shell()
@@ -220,15 +236,18 @@ def _ask_tray_open() -> bool:
         return False
 
 
-def start(open_browser: bool = True) -> int:
+def start(want_window: bool = True) -> int:
     # 从 2026-11-22 起，桌面启动交给托盘外壳：它开窗口、管关窗驻留、负责彻底
     # 退出。窗口开成「软件窗口」还是「浏览器标签页」，由设置里的打开方式决定
     # （data/shell.json 的 window_mode），这里不再替用户选。
+    #
+    # want_window 只决定「这次要不要把界面拉出来」：双击 exe 永远要；开机自启
+    # 由 open_on_start 决定（默认安静地进托盘）。
     tray = ROOT / "radar_tray.pyw"
     if tray.is_file():
-        if open_browser and _ask_tray_open():
+        if want_window and _ask_tray_open():
             return 0
-        args = [str(_pythonw()), str(tray)] + ([] if open_browser else ["--background"])
+        args = [str(_pythonw()), str(tray)] + ([] if want_window else ["--background"])
         env = dict(os.environ)
         env.setdefault("PYTHONIOENCODING", "utf-8")
         subprocess.Popen(args, cwd=str(ROOT), env=env,
@@ -237,11 +256,11 @@ def start(open_browser: bool = True) -> int:
         if not _wait_port():
             message("服务没能在 40 秒内启动。\n请打开安装目录下的 data\\logs\\supervisor.log 查看原因。", error=True)
             return 3
-        if not open_browser:
+        if not want_window:
             _say(f"已启动（托盘）：{_url()}", popup=False)
         return 0
     if _alive(_supervisor_pid()):
-        if open_browser:
+        if want_window:
             webbrowser.open(_url())
         return 0
     STOP.unlink(missing_ok=True)
@@ -258,7 +277,7 @@ def start(open_browser: bool = True) -> int:
     if not _wait_port():
         message("服务没能在 40 秒内启动。\n请打开安装目录下的 data\\logs\\supervisor.log 查看原因。", error=True)
         return 3
-    if open_browser:
+    if want_window:
         webbrowser.open(_url())
     else:
         _say(f"已启动：{_url()}", popup=False)
@@ -403,19 +422,22 @@ def main(argv: list[str]) -> int:
         _attach_console()
     action = (argv[1] if len(argv) > 1 else "launch").lower().lstrip("-")
     if action in ("launch", ""):
-        return start(open_browser=True)
+        return start(want_window=True)
     if action == "start":
-        return start(open_browser=False)
+        # 开机自启走这条。要不要弹窗口由设置里的 open_on_start 决定——
+        # 注册表里那条命令刻意不带 --background，就是为了让这个开关随时能改，
+        # 不用去重写 Run 项。
+        return start(want_window=_open_on_start())
     if action == "stop":
         return stop()
     if action == "restart":
         stop()
         time.sleep(1)
-        return start(open_browser=True)
+        return start(want_window=True)
     if action == "open":
         if _ask_tray_open():
             return 0
-        return start(open_browser=True)
+        return start(want_window=True)
     if action == "status":
         running = _alive(_supervisor_pid())
         _say(f"{APP_NAME}\n地址：{_url()}\n状态：{'运行中' if running else '未运行'}\n目录：{ROOT}")

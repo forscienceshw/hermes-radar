@@ -28,12 +28,16 @@ CMD_FILE = DATA_DIR / "shell_cmd.json"
 ALIVE_FILE = DATA_DIR / "shell_alive.json"
 HEARTBEAT_TTL = 20.0
 
-# close_action：
-#   tray  关掉窗口后继续在托盘里跑（默认，用户要的就是这个）
-#   quit  关掉窗口就停止服务、退出托盘
+# close_action（点窗口右上角那个叉之后干什么）：
+#   ask   弹一次询问：只关窗口，还是连后台服务一起退（默认）
+#   tray  不问了，直接只关窗口、服务留在托盘
+#   quit  不问了，直接停服务、托盘一起退
+CLOSE_ACTIONS = ("ask", "tray", "quit")
 DEFAULTS: dict[str, Any] = {
-    "close_action": "tray",
-    "open_on_start": True,
+    "close_action": "ask",
+    # 开机自启时要不要把界面窗口也弹出来。False = 只起服务、图标进托盘，
+    # 用户双击桌面图标才开窗（登录时不抢焦点）。
+    "open_on_start": False,
     "auto_restart": True,
     # 双击 Radar.exe 时开哪种窗口：
     #   app      Edge 的 --app 窗口，没有地址栏、独立任务栏图标，像原生软件
@@ -65,7 +69,7 @@ def _write(path: Path, data: dict[str, Any]) -> bool:
 
 def load() -> dict[str, Any]:
     data = {**DEFAULTS, **_read(SHELL_FILE)}
-    if data.get("close_action") not in ("tray", "quit"):
+    if data.get("close_action") not in CLOSE_ACTIONS:
         data["close_action"] = DEFAULTS["close_action"]
     if data.get("window_mode") not in WINDOW_MODES:
         data["window_mode"] = DEFAULTS["window_mode"]
@@ -76,7 +80,7 @@ def load() -> dict[str, Any]:
 
 def save(**patch: Any) -> dict[str, Any]:
     data = {**load(), **{k: v for k, v in patch.items() if k in DEFAULTS}}
-    if data.get("close_action") not in ("tray", "quit"):
+    if data.get("close_action") not in CLOSE_ACTIONS:
         data["close_action"] = DEFAULTS["close_action"]
     if data.get("window_mode") not in WINDOW_MODES:
         data["window_mode"] = DEFAULTS["window_mode"]

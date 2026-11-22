@@ -33,8 +33,15 @@ def launcher_command() -> list[str]:
     """The command Windows should run at login.
 
     A frozen build ships Radar.exe next to the code, so that wins. A source
-    checkout prefers the tray shell in ``--background`` mode: service starts,
-    icon lands in the notification area, no window steals focus at login.
+    checkout prefers the tray shell, tagged ``--autostart`` so it knows the
+    launch was not a user double-click and can honour ``open_on_start``
+    (default: stay in the tray without stealing focus at login).
+
+    ``--background`` is deliberately *not* baked into the registry value:
+    whether login should pop a window is a setting the user can flip at any
+    time, and rewriting the Run key on every change would drift. Both entry
+    points read ``data/shell.json`` when they actually run.
+
     ``supervisor.pyw`` stays as the fallback for a copy without the tray script.
     """
     exe = BASE_DIR / "Radar.exe"
@@ -48,7 +55,7 @@ def launcher_command() -> list[str]:
             pythonw = candidate
     tray = BASE_DIR / "radar_tray.pyw"
     if tray.is_file():
-        return [str(pythonw), str(tray), "--background"]
+        return [str(pythonw), str(tray), "--autostart"]
     return [str(pythonw), str(BASE_DIR / "supervisor.pyw")]
 
 

@@ -337,10 +337,12 @@
     <h2 class="group-title">高级与诊断</h2>
     <div class="panel" id="shellPanel">
       <h2>桌面程序</h2>
-      <p class="muted">双击 <b>Radar.exe</b> 启动的就是一个托盘程序：它负责开窗口、拉起后台服务。关掉窗口后服务继续在托盘里跑，双击托盘图标就能重新打开；要连服务一起停，用「彻底退出」。</p>
+      <p class="muted">双击 <b>Radar.exe</b> 启动的就是一个托盘程序：它负责开窗口、拉起后台服务。关掉窗口后服务可以继续在托盘里跑，双击托盘图标就能重新打开。</p>
       <div class="form-grid two">
         <label>双击图标时<select id="shellWindowMode"><option value="app">打开软件窗口（无地址栏，像独立程序）</option><option value="browser">打开浏览器标签页</option></select><small>存在 data/shell.json，双击 exe、托盘菜单、这里的「打开界面」都按它来</small></label>
-        <label>关闭窗口时<select id="shellCloseAction"><option value="tray">只关窗口，服务留在托盘（推荐）</option><option value="quit">连后台服务一起退出</option></select><small>只对软件窗口有效；浏览器标签页关掉本来就不影响服务</small></label>
+        <label>关闭窗口时<select id="shellCloseAction"><option value="ask">每次问我：只关窗口还是连服务一起退</option><option value="tray">只关窗口，服务留在托盘</option><option value="quit">连后台服务一起退出</option></select><small>问过一次也可以在这里定下来，以后关窗口就不再弹框</small></label>
+        <label>开机自启<select id="shellAutostart"><option value="off">不开机自启</option><option value="on">开机自动启动</option></select><small>写当前用户的注册表 Run 项，不需要管理员权限；旧的启动文件夹 VBS 快捷方式会被清掉</small></label>
+        <label>开机启动时<select id="shellOpenOnStart"><option value="0">只把图标放进托盘，不弹窗口</option><option value="1">同时打开界面窗口</option></select><small>登录时不想被一个窗口抢焦点就选第一个</small></label>
       </div>
       <div class="actions">
         <button id="shellOpen" type="button">打开界面</button>

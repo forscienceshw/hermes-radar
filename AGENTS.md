@@ -96,23 +96,38 @@ text = read_raw_text(item["raw_path"])   # 自动识别 .gz 并解压
 `radar_tray.pyw` 拉起来：起 supervisor、开窗口、在右下角放托盘图标。VBS 只是没有 exe
 时的退路，别再宣传成启动方式。四条硬规矩：
 
-1. **关窗口只关窗口**。默认 `close_action=tray`，服务继续跑；只有托盘菜单「彻底退出」
-   或设置页「彻底退出」才写 `STOP_RADAR` 并等两个子进程收尾。别把「关窗口」实现成停服务。
-2. **开哪种窗口由设置决定**（`data/shell.json` 的 `window_mode`：`app` = Edge `--app`
-   无地址栏窗口，`browser` = 默认浏览器标签页）。`open_window()` 每次现读偏好，改完立刻
-   生效；显式传参（托盘菜单点某一项、命令行 `--browser`）优先于偏好。浏览器模式下没有
-   「关窗口」可言——关标签页只是关页面，服务照旧在托盘里跑。
+1. **点叉之后干什么由设置决定**（`data/shell.json` 的 `close_action`）：`ask` 弹一次询问
+   （默认，问「只关窗口」还是「连后台服务一起退」），`tray` 直接留托盘，`quit` 直接连服务
+   一起退。只有「彻底退出」那条路才写 `STOP_RADAR` 并等两个子进程收尾——别把「关窗口」
+   实现成停服务。询问框必须在新线程里弹：`MessageBox` 自己会泵消息，在窗口过程里同步调
+   会把托盘消息循环卡住，图标当场变「未响应」。
+2. **开哪种窗口由设置决定**（`window_mode`：`app` = Edge `--app` 无地址栏窗口，`browser` =
+   默认浏览器标签页）。`open_window()` 每次现读偏好，改完立刻生效；显式传参（托盘菜单点
+   某一项、命令行 `--browser`）优先于偏好。浏览器模式下没有「关窗口」可言——关标签页只是
+   关页面，服务照旧在托盘里跑。
 3. **Edge 窗口必须带独立 `--user-data-dir`**（`.cache/appwin`，不放 `data/`：那份配置
    实测 63 MB，混进用户资料会被备份与迁移当成正文带走）。共用默认配置时，新进程会把
    请求转给已经在跑的 Edge、自己立刻退出，我们的「窗口已关闭」检测就会误触发。
 4. **单实例按安装目录**：第二个托盘实例不抢图标，而是往 `data/shell_cmd.json` 写 `open`，
    让已经跑着的那个开窗口。停止路径（`stop_radar.pyw`、`radar.py stop`、`installer/launcher.py`）
    必须同时发 `quit`，否则托盘会把刚停掉的服务又拉起来。
+5. **右键菜单的每一项都要能被构造出来**。`AppendMenu` 的文本参数不接受 `None`——
+   `MF_SEPARATOR` 也要传 `""`，否则抛 `TypeError`。托盘跑在 `pythonw` 里没有 stderr，
+   这个异常会让「右键图标」表现得像完全没反应（2026-11-22 的真实事故）。
+   `radar_tray.pyw --selftest` 会真的构造一遍菜单再销毁，返回非 0 就是这里坏了；
+   `tests/test_desktop_shell.py` 锁住 19 项与三态勾选。
+6. **开机自启走注册表，不写启动文件夹**：`HKCU\...\Run` = `Radar.exe start`
+   （源码检出是 `pythonw radar_tray.pyw --autostart`）。`autostart.enable()` 会顺手删掉
+   第一版留下的 `Start Radar.vbs.lnk`，否则登录时被拉起两份。**要不要弹窗口不写进命令**，
+   由 `open_on_start` 在运行时决定（默认 False：登录只进托盘，不抢焦点）——写死进注册表
+   的话，用户改开关就得重写 Run 项，两边必然漂移。
 
 网页和托盘之间只通过 `data/shell.json`（偏好）与 `data/shell_cmd.json`（一次性命令）通信，
 托盘不开端口。`data/shell_alive.json` 是 5 秒心跳，网页靠它决定要不要退化成浏览器窗口。
-`Radar.exe` 自己没有控制台，`_attach_console()` 必须按系统输出代码页（936）开 `CONOUT$`，
-写成 UTF-8 的话命令行下中文全是乱码。
+托盘里所有走消息循环的入口（窗口过程、菜单命令）都要接住异常并写 `data/logs/tray.log`：
+`pythonw` 没有 stderr，不接住就等于「点了没动静」。
+`Radar.exe` 自己没有 stdout，`_attach_console()` 被管道接走时按 UTF-8 写、真控制台走
+`WriteConsoleW`，写成 936 的话命令行下中文全是乱码。
 
 ## 详情页先给缓存，再后台补读（2026-11-22 起）
 

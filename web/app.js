@@ -1038,10 +1038,14 @@ async function loadSettings(){const data=await api('/api/settings'),s=data.setti
 async function loadShellPanel(){
   try{
     const d=await api('/api/system/shell');
-    $('#shellCloseAction').value=d.close_action||'tray';
+    $('#shellCloseAction').value=d.close_action||'ask';
     if($('#shellWindowMode'))$('#shellWindowMode').value=d.window_mode||'app';
+    const boot=d.autostart||{};
+    if($('#shellAutostart'))$('#shellAutostart').value=boot.enabled?'on':'off';
+    if($('#shellOpenOnStart'))$('#shellOpenOnStart').value=d.open_on_start?'1':'0';
+    const bootNote=boot.supported===false?'（本机不支持）':boot.mode==='legacy_shortcut'?'（旧启动文件夹方式）':'';
     $('#shellInfo').textContent=(d.tray_running?'托盘程序在运行':'托盘程序没在运行（当前是浏览器窗口）')
-      +` · ${d.url}`;
+      +` · 开机自启${boot.enabled?'已开':'已关'}${bootNote} · ${d.url}`;
   }catch(e){$('#shellInfo').textContent=e.message}
 }
 $('#shellWindowMode')&&($('#shellWindowMode').onchange=async e=>{
@@ -1052,12 +1056,27 @@ $('#shellWindowMode')&&($('#shellWindowMode').onchange=async e=>{
   }catch(err){toast(err.message)}
 });
 $('#shellCloseAction').onchange=async e=>{
+  const msg={ask:'以后关窗口会先问一句',tray:'以后关窗口只关窗口，服务留在托盘',quit:'以后关窗口会连服务一起退出'};
   try{
     await api('/api/system/shell',{method:'POST',body:{close_action:e.target.value}});
-    toast(e.target.value==='quit'?'以后关窗口就连服务一起退出':'以后关窗口只关窗口，服务留在托盘');
+    toast(msg[e.target.value]||'已保存');
     loadShellPanel();
   }catch(err){toast(err.message)}
 };
+$('#shellAutostart')&&($('#shellAutostart').onchange=async e=>{
+  try{
+    await api('/api/system/shell',{method:'POST',body:{autostart:e.target.value==='on'}});
+    toast(e.target.value==='on'?'已设为开机自启':'已取消开机自启');
+    loadShellPanel();
+  }catch(err){toast(err.message)}
+});
+$('#shellOpenOnStart')&&($('#shellOpenOnStart').onchange=async e=>{
+  try{
+    await api('/api/system/shell',{method:'POST',body:{open_on_start:e.target.value==='1'}});
+    toast(e.target.value==='1'?'开机启动时会打开界面':'开机启动时只把图标放进托盘');
+    loadShellPanel();
+  }catch(err){toast(err.message)}
+});
 $('#shellOpen').onclick=async()=>{
   try{
     const r=await api('/api/system/shell',{method:'POST',body:{action:'open'}});

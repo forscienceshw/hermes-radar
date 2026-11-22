@@ -159,8 +159,10 @@ class ShellPrefsTest(unittest.TestCase):
 
     def test_defaults(self):
         data = shell.load()
-        self.assertEqual(data["close_action"], "tray")
-        self.assertTrue(data["open_on_start"])
+        # 关窗口默认先问一句：要不要连后台服务一起退，别替用户定
+        self.assertEqual(data["close_action"], "ask")
+        # 开机自启默认安静：只起服务、图标进托盘，不在登录时抢焦点
+        self.assertFalse(data["open_on_start"])
         # 双击 exe 默认开「软件窗口」——用户装的是软件，不是书签
         self.assertEqual(data["window_mode"], "app")
 
@@ -174,7 +176,7 @@ class ShellPrefsTest(unittest.TestCase):
         shell.save(close_action="quit")
         self.assertEqual(shell.load()["close_action"], "quit")
         shell.save(close_action="whatever")
-        self.assertEqual(shell.load()["close_action"], "tray")
+        self.assertEqual(shell.load()["close_action"], "ask")
 
     def test_command_is_taken_once(self):
         shell.send("open")
