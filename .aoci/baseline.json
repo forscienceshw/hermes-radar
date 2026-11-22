@@ -1,7 +1,7 @@
 {
   "version": 1,
   "created_at": "2026-11-20T17:42:55Z",
-  "updated_at": "2026-11-22T14:39:08Z",
+  "updated_at": "2026-11-22T15:10:26Z",
   "files": {
     ".gitattributes": {
       "role": "index",
@@ -17,9 +17,9 @@
     },
     "AGENTS.md": {
       "role": "index",
-      "sha256": "027cfc2c288a893666a5a326ee66010c23ac0b6a1b36c48acf9919b40bacbfcf",
-      "size": 56982,
-      "normalized_sha256": "027cfc2c288a893666a5a326ee66010c23ac0b6a1b36c48acf9919b40bacbfcf"
+      "sha256": "eac34f3af2637b0b882c2d3ccaf163839bf213f30b128658307e50618b2d7f6b",
+      "size": 58456,
+      "normalized_sha256": "eac34f3af2637b0b882c2d3ccaf163839bf213f30b128658307e50618b2d7f6b"
     },
     "Install.vbs": {
       "role": "index",
@@ -29,9 +29,9 @@
     },
     "README.md": {
       "role": "index",
-      "sha256": "e25130fe87456789ef6c8138bfe7b4106515066e6e775e131570a86e4ea170ed",
-      "size": 17108,
-      "normalized_sha256": "e25130fe87456789ef6c8138bfe7b4106515066e6e775e131570a86e4ea170ed"
+      "sha256": "c7318b083543b9d750de132694c749945c225d5b64c21f735226851c78e92db9",
+      "size": 18653,
+      "normalized_sha256": "c7318b083543b9d750de132694c749945c225d5b64c21f735226851c78e92db9"
     },
     "Start Radar.vbs": {
       "role": "index",
@@ -53,9 +53,9 @@
     },
     "aoci.code.txt": {
       "role": "index",
-      "sha256": "2a13516b7703a2c02224f1de3d32521eef9e3ec4ea792ddfa97354ee77fa4f66",
-      "size": 51004,
-      "normalized_sha256": "2a13516b7703a2c02224f1de3d32521eef9e3ec4ea792ddfa97354ee77fa4f66"
+      "sha256": "1429009d9c6d986894d21871ae1c0b21fe1c7ebe8706702303180f17479b153b",
+      "size": 51813,
+      "normalized_sha256": "1429009d9c6d986894d21871ae1c0b21fe1c7ebe8706702303180f17479b153b"
     },
     "aoci.meta.txt": {
       "role": "index",
@@ -77,9 +77,9 @@
     },
     "app/api.py": {
       "role": "index",
-      "sha256": "e5a2765eee22416eba29d32fc03b9fbdb848a8d1bfa49fc3cce49a297d13643f",
-      "size": 116051,
-      "normalized_sha256": "78991f15cec3fa6756a312bf9b86e6bc12576ac1e1152b7db90ffc431ccdee0a"
+      "sha256": "9039d6c15e9ae93779fc49d4e8e65d3ffe0c8e12f535529cf81e30a424d9da2e",
+      "size": 117093,
+      "normalized_sha256": "72da9c1cef4fc77687c7dfa94da1e64a5a689b943699b8c47e81773856b1d8c9"
     },
     "app/collectors/__init__.py": {
       "role": "index",
@@ -167,9 +167,9 @@
     },
     "app/services/autostart.py": {
       "role": "index",
-      "sha256": "f881c788f358910461d56448090dd7efb848b5d4773539e3db76d936b8aa3a93",
-      "size": 4531,
-      "normalized_sha256": "f881c788f358910461d56448090dd7efb848b5d4773539e3db76d936b8aa3a93"
+      "sha256": "01813930a2e83708444277c880ef29a820c31dbdf04c6c45e4654352961f965d",
+      "size": 4879,
+      "normalized_sha256": "01813930a2e83708444277c880ef29a820c31dbdf04c6c45e4654352961f965d"
     },
     "app/services/backup.py": {
       "role": "index",
@@ -251,9 +251,9 @@
     },
     "app/services/shell.py": {
       "role": "index",
-      "sha256": "efbc558a3809d1ae6d8d1b4b5c0c56cc82c00b7b253ff4d201473fb79596873a",
-      "size": 4767,
-      "normalized_sha256": "efbc558a3809d1ae6d8d1b4b5c0c56cc82c00b7b253ff4d201473fb79596873a"
+      "sha256": "57237f19ff09a087c3101113eb0ac3c4828ea2e14884db7fe3729658ecdb83af",
+      "size": 5086,
+      "normalized_sha256": "57237f19ff09a087c3101113eb0ac3c4828ea2e14884db7fe3729658ecdb83af"
     },
     "app/services/video.py": {
       "role": "index",
@@ -455,9 +455,9 @@
     },
     "installer/launcher.py": {
       "role": "index",
-      "sha256": "7aa14fc2620768de8ddad8cb66d9902ed49d502ac24dbbb13fb84face2159c6f",
-      "size": 15247,
-      "normalized_sha256": "7aa14fc2620768de8ddad8cb66d9902ed49d502ac24dbbb13fb84face2159c6f"
+      "sha256": "2d3e675c4bd90627a7c85c760def6ab4ced0d8ebec76c1ca66a04472435d3104",
+      "size": 16226,
+      "normalized_sha256": "2d3e675c4bd90627a7c85c760def6ab4ced0d8ebec76c1ca66a04472435d3104"
     },
     "installer/restore_wechat.py": {
       "role": "index",
@@ -491,9 +491,9 @@
     },
     "radar_tray.pyw": {
       "role": "index",
-      "sha256": "059428583ef5ffcd8dcdd05a766c7685f4890725b16305062f77bda0ed1da6fe",
-      "size": 27934,
-      "normalized_sha256": "059428583ef5ffcd8dcdd05a766c7685f4890725b16305062f77bda0ed1da6fe"
+      "sha256": "1686760f8631ec190b1ace027f0cf8f17f40556173d82227621886e4bdda86eb",
+      "size": 36144,
+      "normalized_sha256": "1686760f8631ec190b1ace027f0cf8f17f40556173d82227621886e4bdda86eb"
     },
     "requirements.txt": {
       "role": "index",
@@ -695,9 +695,9 @@
     },
     "tests/test_desktop_shell.py": {
       "role": "observe",
-      "sha256": "2988419b5f62d6fca1ee1dc2ad357dde41eff42d07b44dbcfbc1415e551db135",
-      "size": 2932,
-      "normalized_sha256": "2988419b5f62d6fca1ee1dc2ad357dde41eff42d07b44dbcfbc1415e551db135"
+      "sha256": "e54d6792e70cd3b133eee330f07d463d17ea4cdf56de98ab7b26e4761ab7fbb2",
+      "size": 11209,
+      "normalized_sha256": "e54d6792e70cd3b133eee330f07d463d17ea4cdf56de98ab7b26e4761ab7fbb2"
     },
     "tests/test_library_filters.py": {
       "role": "observe",
@@ -761,9 +761,9 @@
     },
     "tests/test_wechat_detail.py": {
       "role": "observe",
-      "sha256": "5e5bc898f8ab5ac6496b13ec356a00eb5ad4c35ba85b139d2172d84467646d0d",
-      "size": 9453,
-      "normalized_sha256": "5e5bc898f8ab5ac6496b13ec356a00eb5ad4c35ba85b139d2172d84467646d0d"
+      "sha256": "f25ea079ac5ed595622a63606baff296da089d944a19b7e68ecabcc9ca85643b",
+      "size": 9639,
+      "normalized_sha256": "f25ea079ac5ed595622a63606baff296da089d944a19b7e68ecabcc9ca85643b"
     },
     "tests/test_wechat_panel.py": {
       "role": "observe",
@@ -869,9 +869,9 @@
     },
     "web/app.js": {
       "role": "index",
-      "sha256": "a31e75bb0bbe6456a70b3ee0aad37f919be88af0aaed4e28d59db71d928f6107",
-      "size": 133514,
-      "normalized_sha256": "a31e75bb0bbe6456a70b3ee0aad37f919be88af0aaed4e28d59db71d928f6107"
+      "sha256": "f5b75bc0fec3b4cdf4e781e58c90f2ec0afc61c39d9f5e316a41ce5a91985333",
+      "size": 134614,
+      "normalized_sha256": "f5b75bc0fec3b4cdf4e781e58c90f2ec0afc61c39d9f5e316a41ce5a91985333"
     },
     "web/assistant.js": {
       "role": "index",
@@ -881,9 +881,9 @@
     },
     "web/index.html": {
       "role": "index",
-      "sha256": "1ff91843de505d60a6e8c9d93f141367cd19e74defa80cde8c4718bdfd223cbf",
-      "size": 50925,
-      "normalized_sha256": "1ff91843de505d60a6e8c9d93f141367cd19e74defa80cde8c4718bdfd223cbf"
+      "sha256": "42085045d0da8ebdb7e3870adc16ce3ff5dfc13d67d48282e59985d6d9b071d4",
+      "size": 51505,
+      "normalized_sha256": "42085045d0da8ebdb7e3870adc16ce3ff5dfc13d67d48282e59985d6d9b071d4"
     },
     "web/setup.js": {
       "role": "index",
