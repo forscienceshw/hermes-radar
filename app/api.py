@@ -1244,12 +1244,22 @@ def delete_filter_rule(rule_id: int, restore: bool = True) -> dict[str, Any]:
 
 
 @app.get("/api/items/{item_id}/raw")
-def item_raw(item_id: str) -> FileResponse:
+def item_raw(item_id: str) -> Response:
+    """下载原始快照。文件可能被 gzip 压缩存储，这里解压后返回，下载到的仍是原始文件。"""
+    from .services.archive import raw_file, read_raw_bytes
+    from urllib.parse import quote
+
     row = db.one("SELECT raw_path FROM items WHERE id=? AND excluded_at IS NULL", (item_id,))
-    if not row or not row.get("raw_path") or not Path(row["raw_path"]).is_file():
+    path = raw_file(row["raw_path"]) if row and row.get("raw_path") else None
+    if not path or not path.is_file():
         raise HTTPException(404, "原始快照不存在")
-    return FileResponse(row["raw_path"], media_type="application/octet-stream",
-                        filename=Path(row["raw_path"]).name, content_disposition_type="attachment")
+    if path.suffix.lower() != ".gz":
+        return FileResponse(path, media_type="application/octet-stream",
+                            filename=path.name, content_disposition_type="attachment")
+    name = path.name[:-3] if path.name.lower().endswith(".gz") else path.name
+    quoted = quote(name, safe="")
+    return Response(content=read_raw_bytes(path), media_type="application/octet-stream",
+                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quoted}"})
 
 
 @app.get("/api/blobs/{folder}/{name}")

@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import gzip
 import html
 import io
 import json
@@ -23,6 +24,37 @@ def _meta_content(soup: BeautifulSoup, *names: str) -> str:
         if tag and tag.get("content"):
             return tag["content"].strip()
     return ""
+
+
+# ---- 原始快照读取 ----
+# raw.html 可能被 gzip 压缩成 raw.html.gz 以节省空间。
+# 所有读取 raw 的地方都走这几个函数，不要直接 open(raw_path)。
+
+def raw_file(path: Path | str | None) -> Path:
+    """返回实际存在的快照文件：优先原文件，其次 .gz 压缩版。"""
+    p = Path(path or "")
+    if p.is_file():
+        return p
+    gz = Path(str(p) + ".gz")
+    if gz.is_file():
+        return gz
+    return p
+
+
+def read_raw_bytes(path: Path | str | None) -> bytes:
+    p = raw_file(path)
+    if p.suffix.lower() == ".gz":
+        with gzip.open(p, "rb") as fh:
+            return fh.read()
+    return p.read_bytes()
+
+
+def read_raw_text(path: Path | str | None) -> str:
+    """按 utf-8 容错解码，压缩与否都能读。"""
+    try:
+        return read_raw_bytes(path).decode("utf-8", errors="ignore")
+    except OSError:
+        return ""
 
 
 def _clean_text(value: str) -> str:

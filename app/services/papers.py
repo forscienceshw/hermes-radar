@@ -15,6 +15,7 @@ from ..net import download_file, get_json, request
 from ..settings import get_settings
 from ..storage import atomic_write, paper_folder, store_blob_file
 from . import purge
+from .archive import raw_file, read_raw_bytes
 from ..utils import extract_dois, json_loads, now_iso, stable_json
 
 # 标题相似度低于这个值就当没找到——宁可留着「未发现论文」，也不能挂错一篇。
@@ -361,10 +362,13 @@ async def process_item_papers(db: Database, item_id: str, archive_only: bool = F
         return
     body_text = item["text"] or ""
     raw_text = ""
-    raw_path = Path(item["raw_path"] or "")
-    if raw_path.suffix.lower() in {".html", ".htm", ".xml", ".json", ".txt"} and raw_path.is_file() and raw_path.stat().st_size < 30_000_000:
+    snapshot = raw_file(item["raw_path"])
+    if snapshot.is_file() and snapshot.suffix.lower() in {".html", ".htm", ".xml", ".json", ".txt", ".gz"}:
         try:
-            raw_text = raw_path.read_text(encoding="utf-8", errors="ignore")
+            data = read_raw_bytes(snapshot)
+            # 30 MB 上限按解压后的大小算，避免压缩存储绕过限制
+            if len(data) < 30_000_000:
+                raw_text = data.decode("utf-8", errors="ignore")
         except (OSError, UnicodeError):
             pass
     primary: list[str] = []
