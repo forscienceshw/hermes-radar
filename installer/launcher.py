@@ -152,8 +152,12 @@ def _attach_console() -> bool:
         return False
 
 
-def _say(text: str) -> None:
-    """有控制台就打印，没有（双击运行）就弹窗。"""
+def _say(text: str, popup: bool = True) -> None:
+    """有控制台就打印；没有就弹窗（popup=False 时安静退出）。
+
+    开机自启跑的是 ``Radar.exe start``，那时候既没有控制台也没有人在看，
+    弹一个「已启动」的对话框只会让人以为出了事——那条路必须安静。
+    """
     if sys.stdout is not None:
         try:
             print(text)
@@ -166,7 +170,8 @@ def _say(text: str) -> None:
             return
         except Exception:
             pass
-    message(text)
+    if popup:
+        message(text)
 
 
 def message(text: str, error: bool = False) -> None:
@@ -233,7 +238,7 @@ def start(open_browser: bool = True) -> int:
             message("服务没能在 40 秒内启动。\n请打开安装目录下的 data\\logs\\supervisor.log 查看原因。", error=True)
             return 3
         if not open_browser:
-            _say(f"已启动（托盘）：{_url()}")
+            _say(f"已启动（托盘）：{_url()}", popup=False)
         return 0
     if _alive(_supervisor_pid()):
         if open_browser:
@@ -256,7 +261,7 @@ def start(open_browser: bool = True) -> int:
     if open_browser:
         webbrowser.open(_url())
     else:
-        _say(f"已启动：{_url()}")
+        _say(f"已启动：{_url()}", popup=False)
     return 0
 
 
