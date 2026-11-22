@@ -1,7 +1,7 @@
 {
   "version": 1,
   "created_at": "2026-11-20T17:42:55Z",
-  "updated_at": "2026-11-22T17:43:50Z",
+  "updated_at": "2026-11-22T17:58:07Z",
   "files": {
     ".gitattributes": {
       "role": "index",
@@ -17,9 +17,15 @@
     },
     "AGENTS.md": {
       "role": "index",
-      "sha256": "1a9db7a3b6a3ff8be661067ae56f816f93431ee34f4daa3afd89630d2eff3873",
-      "size": 60449,
-      "normalized_sha256": "1a9db7a3b6a3ff8be661067ae56f816f93431ee34f4daa3afd89630d2eff3873"
+      "sha256": "16e189178dd781beb3bc0accd07f60a356d377e6287a0323ad8e55947250bd6b",
+      "size": 61396,
+      "normalized_sha256": "16e189178dd781beb3bc0accd07f60a356d377e6287a0323ad8e55947250bd6b"
+    },
+    "FEATURES.yaml": {
+      "role": "index",
+      "sha256": "ea11bb199b3a00777e379c73f4d3251ce2a6fd33586315c11c2119822cc8e039",
+      "size": 7785,
+      "normalized_sha256": "ea11bb199b3a00777e379c73f4d3251ce2a6fd33586315c11c2119822cc8e039"
     },
     "Install.vbs": {
       "role": "index",
@@ -53,9 +59,9 @@
     },
     "aoci.code.txt": {
       "role": "index",
-      "sha256": "75c01c680384a8af33a9cb8fc1085e63f5e9b8ac1ee3008726d225a29692eae1",
-      "size": 53930,
-      "normalized_sha256": "75c01c680384a8af33a9cb8fc1085e63f5e9b8ac1ee3008726d225a29692eae1"
+      "sha256": "8ea75b3f89562bfe44eb74443975741317bc8dca5824a57bbdbd58fb6c10f738",
+      "size": 54499,
+      "normalized_sha256": "8ea75b3f89562bfe44eb74443975741317bc8dca5824a57bbdbd58fb6c10f738"
     },
     "aoci.meta.txt": {
       "role": "index",
