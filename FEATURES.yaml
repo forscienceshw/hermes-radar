@@ -222,3 +222,14 @@
   manual: -
   notes: 2026-11-16 放弃：4.x 只在收到推送或打开会话时落盘正文，实时订阅做不到稳定，
         改为「打开面板时按需读内存 + 每 30 分钟补同步」
+
+- id: reading-workbench
+  title: 阅读工作台（离线原文与精读/笔记/Ideas 并排）
+  status: done
+  since: 2026-11-26
+  surfaces:
+    api: ["GET /api/items/{item_id}/archive"]
+    ui: ["#workbench", "#wbBody", "#wbClose"]
+    test: ["test_workbench.py"]
+  manual: 点资料库条目 → 离线页单栏居中；点「精读」→ 原文让到左、精读进右；关掉一栏 → 自动回居中；点暗处与按 Esc 都不关，只有 ✕ 关
+  notes: 切 tab 用 visibility 藏 iframe（display:none 会重置内部滚动位置）；Esc 合成的 cancel 是 cancelable:false，必须拦 keydown；离线页不能加 X-Frame-Options

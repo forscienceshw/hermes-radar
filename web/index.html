@@ -418,6 +418,24 @@
 </main>
 </div>
 <dialog id="detailDialog"><div class="dialog-head"><button id="detailAsk" class="detail-ask" type="button">问 AI</button><button id="closeDialog" aria-label="关闭">关闭</button></div><div id="detailContent"></div></dialog>
+<!-- 阅读工作台：点资料库条目时先看离线原文；精读/笔记/Ideas 作为第二栏并排。
+     刻意不响应背景点击与 Esc，只有右上角 ✕ 才关（读长文时手滑点暗处不会全丢）。 -->
+<dialog id="workbench" class="workbench" aria-label="阅读工作台">
+  <header class="wb-head">
+    <div class="wb-title-block">
+      <h1 class="detail-title" id="wbTitle"></h1>
+      <div class="wb-meta" id="wbMeta"></div>
+    </div>
+    <div class="wb-side-switch" id="wbSideSwitch" role="group" aria-label="并排面板">
+      <button type="button" data-wb-side="reading" aria-pressed="false" title="把精读放到第二栏并排显示">精读</button>
+      <button type="button" data-wb-side="notes" aria-pressed="false" title="把这篇的笔记放到第二栏，边读边记">笔记</button>
+      <button type="button" data-wb-side="ideas" aria-pressed="false" title="把 Ideas 放到第二栏，边读边想">Ideas</button>
+    </div>
+    <div class="wb-item-actions" id="wbItemActions"></div>
+    <button type="button" class="wb-close" id="wbClose" aria-label="关闭阅读工作台" title="关闭工作台（Esc 不会关闭）">✕</button>
+  </header>
+  <div class="wb-body" id="wbBody" data-count="0"></div>
+</dialog>
 <dialog id="ruleDialog" class="rule-dialog">
   <div class="dialog-head"><h2>过滤规则</h2><button id="ruleClose" type="button">关闭</button></div>
   <p class="muted">规则只判断标题或「标题 + 简介」，入库时就生效——不想看的栏目连索引都不留。判断有误时，被挡住的条目在「全部状态 → 含已删除」里能找回并恢复。</p>

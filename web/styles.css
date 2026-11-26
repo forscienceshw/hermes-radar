@@ -550,3 +550,94 @@ body.modal-open .chat-fab{display:none}
 .credit-sub{margin-top:18px;padding-top:16px;border-top:1px solid var(--line)}
 .credit-sub h3{font-size:15px;margin:0}
 .credit-cell.api b{color:#2c5fa8}
+
+/* ---------- 阅读工作台：原文与精读/笔记并排 ----------
+   点资料库条目先看离线原文（单栏居中）；点「精读」把原文让到左边，第二栏从右侧进来。
+   关掉一栏就自动回到居中。整页是 showModal 的 dialog，但背景点击和 Esc 都被拦掉，
+   只有右上角 ✕ 才关——读长文时手滑点暗处不该把整页弄丢。 */
+.workbench{width:100vw;height:100vh;max-width:none;max-height:none;margin:0;padding:0;border:0;border-radius:0;background:var(--bg);overflow:hidden;z-index:60}
+.workbench[open]{display:flex;flex-direction:column;animation:wbIn .22s cubic-bezier(.2,.8,.3,1)}
+.workbench::backdrop{background:rgba(16,26,33,.58);backdrop-filter:blur(3px)}
+@keyframes wbIn{from{opacity:0;transform:scale(.994)}to{opacity:1;transform:none}}
+
+.wb-head{flex:none;display:flex;align-items:center;gap:16px;padding:12px 20px;background:#fff;border-bottom:1px solid var(--line);box-shadow:0 2px 12px rgba(20,40,50,.05);position:relative;z-index:2}
+.wb-title-block{flex:1 1 260px;min-width:0}
+.wb-head .detail-title{font-size:18px;line-height:1.4;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wb-meta{font-size:12px;color:var(--muted);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wb-side-switch{flex:none;display:flex;gap:2px;padding:3px;background:#f1f5f6;border:1px solid #e6ecef;border-radius:10px}
+.wb-side-switch button{border:1px solid transparent;background:transparent;border-radius:7px;padding:5px 12px;font-size:12.5px;color:#55626e;line-height:1.2}
+.wb-side-switch button:hover{background:#e8eff0}
+.wb-side-switch button[aria-pressed="true"]{background:#fff;border-color:#cfe0de;color:var(--accent);font-weight:650;box-shadow:0 1px 3px rgba(18,110,103,.12)}
+.wb-item-actions{flex:none;display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.wb-item-actions button,.wb-item-actions .button{padding:6px 11px;font-size:12.5px;white-space:nowrap;flex:none}
+.wb-close{flex:none;width:34px;height:34px;border:1px solid var(--line);border-radius:9px;background:#fff;color:#5b6773;font-size:14px;line-height:1;padding:0}
+.wb-close:hover{background:#fdecea;border-color:#efc0ba;color:var(--danger)}
+
+.wb-body{flex:1;min-height:0;display:flex;gap:14px;justify-content:center;padding:14px 18px 18px;overflow:hidden;background:linear-gradient(180deg,#f4f6f8,#eef2f4)}
+.wb-pane{display:flex;flex-direction:column;min-width:0;min-height:0;background:#fff;border:1px solid var(--line);border-radius:13px;box-shadow:0 12px 34px rgba(20,40,50,.08);overflow:hidden;transition:flex-grow .26s cubic-bezier(.2,.8,.3,1),flex-basis .26s cubic-bezier(.2,.8,.3,1)}
+/* 单栏时给一个接近原来精读弹层的阅读宽度并居中；双栏各占一半，视觉上就是原文让位。 */
+.wb-body[data-count="1"] .wb-pane{flex:0 1 940px;max-width:min(940px,100%)}
+.wb-body[data-count="2"] .wb-pane{flex:1 1 0}
+/* 只让「新加的那一栏」播入场动画：如果用 data-count 控制，1→2 时左栏会跟着闪一下。 */
+.wb-pane-enter{animation:wbPaneIn .26s cubic-bezier(.2,.8,.3,1)}
+@keyframes wbPaneIn{from{opacity:0;transform:translateX(30px)}to{opacity:1;transform:none}}
+
+.wb-pane-head{flex:none;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 8px 6px 10px;background:#fbfcfc;border-bottom:1px solid var(--line)}
+.wb-tabs{display:flex;gap:2px;min-width:0;overflow:auto;scrollbar-width:none}
+.wb-tabs::-webkit-scrollbar{display:none}
+.wb-tabs button{border:1px solid transparent;background:transparent;border-radius:7px;padding:5px 11px;font-size:12.5px;color:#63707c;white-space:nowrap}
+.wb-tabs button:hover{background:#eef3f4}
+.wb-tabs button[aria-selected="true"]{background:var(--soft);color:var(--accent);font-weight:650}
+.wb-pane-close{width:26px;height:26px;border:0;background:transparent;border-radius:6px;color:#98a3ac;font-size:12px;padding:0;flex:none}
+.wb-pane-close:hover{background:#fdecea;color:var(--danger)}
+.wb-pane-body{flex:1;min-height:0;position:relative;background:#fff}
+.wb-view{position:absolute;inset:0;overflow:auto;overscroll-behavior:contain;visibility:hidden;pointer-events:none}
+/* 不能用 display:none：iframe 一旦脱离布局，内部滚动位置会被浏览器重置，切回来就跳回顶部。 */
+.wb-view.is-active{visibility:visible;pointer-events:auto;z-index:1}
+.wb-view[data-view="read"]{overflow:hidden;background:#eef0f1}
+.wb-view[data-view="read"] iframe{display:block;width:100%;height:100%;border:0;background:#fff}
+.wb-view[data-view="reading"]{padding:22px 24px 56px;background:#fbfcfc}
+/* 弹层里已经有一层边框，精读正文不要再套一层卡片，否则像两个框。 */
+.wb-view[data-view="reading"] .reading{border:0;border-radius:0;background:transparent;padding:0;margin:0 0 18px}
+.wb-view[data-view="notes"],.wb-view[data-view="ideas"]{padding:18px 20px 48px;background:#fbfcfc}
+
+.wb-empty{max-width:460px;margin:14vh auto 0;text-align:center;color:#5a6672;line-height:1.8;padding:0 20px}
+.wb-empty b{display:block;font-size:16px;color:#2c3843;margin-bottom:6px}
+.wb-empty .button,.wb-empty button{margin-top:12px}
+.wb-badges{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 14px}
+.wb-badges .badge{background:#eef2f4}
+
+.wb-compose{background:#fff;border:1px solid var(--line);border-radius:11px;padding:12px 14px;margin-bottom:16px;box-shadow:0 2px 10px rgba(20,40,50,.04)}
+.wb-compose textarea,.wb-compose input{margin:0 0 8px}
+.wb-compose textarea{min-height:72px}
+.wb-compose-actions{display:flex;align-items:center;gap:10px}
+.wb-compose-actions .muted{font-size:12px}
+
+.wb-note-list{display:grid;gap:10px}
+.wb-note{background:#fff;border:1px solid var(--line);border-left:3px solid #bcd8d4;border-radius:9px;padding:11px 13px}
+.wb-note blockquote{margin:0 0 8px;padding:8px 11px;background:#f4f8f8;border-radius:7px;color:#4c5a66;font-size:12.5px;line-height:1.7;max-height:120px;overflow:auto}
+.wb-note p{margin:0;font-size:13.5px;line-height:1.8;color:#2f3b46;word-break:break-word}
+.wb-note-foot{display:flex;align-items:center;gap:10px;margin-top:9px;font-size:11.5px;color:var(--muted)}
+.wb-note-foot .link{margin-left:auto}
+.link{border:0;background:transparent;color:var(--accent);padding:0;font:inherit;cursor:pointer;text-decoration:underline}
+
+.wb-idea-search{margin-bottom:12px}
+.wb-idea-search input{margin:0}
+.wb-idea-list{display:grid;gap:9px}
+.wb-idea{background:#fff;border:1px solid var(--line);border-radius:9px;padding:11px 13px}
+.wb-idea h3{font-size:14px;margin:0 0 5px;line-height:1.5}
+.wb-idea p{margin:0;font-size:13px;line-height:1.75;color:#4a5661;white-space:pre-wrap}
+.wb-idea-foot{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:8px;font-size:11.5px;color:var(--muted)}
+.wb-loading{padding:18px 0}
+
+@media(max-width:1080px){
+  .wb-head{flex-wrap:wrap;gap:8px 12px}
+  .wb-title-block{flex:1 1 100%}
+  .wb-item-actions{flex:1 1 auto;justify-content:flex-start}
+  .wb-body[data-count="1"] .wb-pane{flex:1 1 auto;max-width:none}
+  .wb-body[data-count="2"]{flex-direction:column}
+  .wb-body[data-count="2"] .wb-pane{flex:1 1 0}
+}
+@media(prefers-reduced-motion:reduce){
+  .workbench[open],.wb-pane-enter{animation:none}
+}

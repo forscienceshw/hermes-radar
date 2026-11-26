@@ -37,12 +37,14 @@
 
   /* ---------------- 当前文章跟踪 ---------------- */
   function syncCurrentItem() {
+    // 工作台默认只开原文栏，这时 .reading 还没渲染；只认 DOM 会把上一篇的 id 留在上下文里。
+    // 所以以 __currentItem 兜底，保证「问 AI」拿到的永远是刚点开的那篇。
     const node = document.querySelector('.reading[data-item]');
-    if (node) {
-      currentItemId = (node && node.dataset.item) || (window.__currentItem && window.__currentItem.id) || null;
-      const title = document.querySelector('.detail-title');
-      currentItemTitle = title ? title.textContent.trim() : '';
-    }
+    const next = (node && node.dataset.item) || (window.__currentItem && window.__currentItem.id) || null;
+    if (next) currentItemId = next;
+    const wbOpen = document.querySelector('#workbench[open]');
+    const title = (wbOpen && document.querySelector('#wbTitle')) || document.querySelector('.detail-title');
+    if (title) currentItemTitle = title.textContent.trim();
     updateChatContext();
   }
   const detailObserver = new MutationObserver(() => setTimeout(syncCurrentItem, 30));
@@ -370,7 +372,9 @@
     // 还要挂进精读页的子树：modal 会让子树外的元素全部 inert，光在 top layer 上层没用，
     // 点击会穿透到遮罩，把精读页关掉。
     remountOverlay(drawer);
-    if (drawer.showPopover && !drawer.matches(':popover-open')) drawer.showPopover();
+    // 从 body 搬进 dialog 子树的那一瞬，showPopover 可能因为元素还被判为不在文档里而抛错。
+    // 这里不接住的话，后面的 .open 类就永远加不上——表现是第一次点「问 AI」毫无反应。
+    try { if (drawer.showPopover && !drawer.matches(':popover-open')) drawer.showPopover(); } catch (e) {}
     requestAnimationFrame(() => drawer.classList.add('open'));
     q('#chatBackdrop').classList.add('open');
     hideSelectionBar();
@@ -729,6 +733,8 @@
   window.openChat = openChat;
   window.closeChat = closeChat;
   window.chatIsOpen = () => chat.open;
+  // 工作台打开/切条目时主动喊一声：工作台不在 #detailContent 里，MutationObserver 看不到它。
+  window.syncCurrentItem = syncCurrentItem;
   window.__chatState = chat;
 
   // 模态一开一关都要重新安置浮层：开着时得挂进它的子树（否则整块 inert，点不动），

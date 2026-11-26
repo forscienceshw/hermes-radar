@@ -882,13 +882,13 @@ let detailWatchTimer=null,detailWatchId=null,detailSeq=0;
 function stopItemWatch(){if(detailWatchTimer)clearInterval(detailWatchTimer);detailWatchTimer=null;detailWatchId=null}
 function watchItem(id){if(detailWatchId===id&&detailWatchTimer)return;stopItemWatch();detailWatchId=id;let ticks=0;
   detailWatchTimer=setInterval(async()=>{ticks++;
-    // The user closed the panel or moved to another item: this timer must die, or it
-    // keeps re-rendering and re-opening the dialog over whatever they are doing.
-    if(!$('#detailDialog').open||detailWatchId!==id){stopItemWatch();return}
+    // The user closed the workbench or moved to another item: this timer must die, or it
+    // keeps re-rendering and re-opening the panel over whatever they are doing.
+    if(!(wbIsOpen()&&wb.itemId===id)||detailWatchId!==id){stopItemWatch();return}
     try{const x=await api('/api/items/'+id);const hasAnalysis=x.analysis&&Object.keys(x.analysis).length>0;
     if(detailWatchId!==id)return;
     if(!x.active_job){stopItemWatch();toast(hasAnalysis?'精读已完成，结果已更新':'处理已结束，可查看最新状态')}
-    await showItem(id,true)}catch(e){stopItemWatch()}},3000)}
+    await refreshWorkbench(id)}catch(e){stopItemWatch()}},3000)}
 const READ_STEP_FIELDS=[['why','为什么做这一步'],['did','具体做了什么'],['saw','看到了什么'],['means','说明什么']];
 function blobUrl(path){const parts=String(path||'').split(/[\\/]/);return parts.length>=2?`/api/blobs/${parts[parts.length-2]}/${parts[parts.length-1]}`:''}
 function fmtMs(ms){const t=Number(ms||0);if(!t)return '';const s=Math.round(t/1000);return s<60?`${s} 秒`:`${Math.floor(s/60)} 分 ${s%60} 秒`}
@@ -944,13 +944,100 @@ function afterBlock(a){
   }).join('');
   return rows?`<details class="after-reading"><summary>再往深一层：局限、追问与可做的选题</summary>${rows}</details>`:'';
 }
-async function showItem(id,silent){
-  const seq=++detailSeq;
-  const x=await api('/api/items/'+id),a=x.analysis||{},stage=itemStage(x);
-  // A slower response for the previous item must not overwrite the one just opened.
-  if(seq!==detailSeq)return x;
-  if(detailWatchId&&detailWatchId!==id)stopItemWatch();
-  window.__currentItem=x;
+/* ---------- 阅读工作台 ----------
+   把用户的原话翻译成五条规则：
+   1. 点资料库条目 → 先看离线阅读页，单栏居中，不再跳浏览器。
+   2. 点「精读」→ 原文让到左边，精读从右侧进来，两栏铺满；再点一次收起。
+   3. 「笔记」「Ideas」抢的是同一块第二栏位置，所以能边读边记，不用退出重进。
+   4. 只有右上角 ✕ 关整页；点暗处、按 Esc 都不关（读长文手滑不该丢进度）。
+   5. 关掉一栏，剩下那栏自动回到居中。切 tab 只改 display，不重建 DOM，iframe 保住滚动位置。
+*/
+const WB_VIEWS={read:'原文',reading:'精读',notes:'笔记',ideas:'Ideas'};
+const wb={open:false,itemId:null,item:null,panes:[],paneSeq:0,noteSeq:0};
+let wbIdeaTimer=null;
+function wbEl(){return $('#workbench')}
+function wbIsOpen(){const el=wbEl();return !!(el&&el.open)}
+function wbPaneEl(key){return document.querySelector(`.wb-pane[data-pane="${key}"]`)}
+function wbViewEl(pane,view){const el=wbPaneEl(pane.key);return el?el.querySelector(`.wb-view[data-view="${view}"]`):null}
+
+function wbPaneHTML(key){
+  return `<section class="wb-pane" data-pane="${key}">
+    <div class="wb-pane-head">
+      <div class="wb-tabs" role="tablist" aria-label="这一栏显示什么">${Object.entries(WB_VIEWS).map(([k,label])=>`<button type="button" role="tab" data-wb-view="${k}" aria-selected="false">${label}</button>`).join('')}</div>
+      <button type="button" class="wb-pane-close" data-wb-pane-close title="关闭这一栏" aria-label="关闭这一栏">✕</button>
+    </div>
+    <div class="wb-pane-body">${Object.keys(WB_VIEWS).map(k=>`<div class="wb-view" data-view="${k}"></div>`).join('')}</div>
+  </section>`;
+}
+function wbAddPane(view){
+  const key='p'+(++wb.paneSeq);
+  const pane={key,view};
+  const host=document.createElement('div');
+  host.innerHTML=wbPaneHTML(key);
+  const el=host.firstElementChild;
+  // 入场动画只挂在新加的这一栏上：用 data-count 驱动会让左栏在 1→2 时跟着闪一下。
+  el.classList.add('wb-pane-enter');
+  el.addEventListener('animationend',()=>el.classList.remove('wb-pane-enter'),{once:true});
+  wb.panes.push(pane);
+  $('#wbBody').appendChild(el);
+  wbSyncLayout();
+  wbSetView(pane,view,{force:true});
+  return pane;
+}
+function wbRemovePane(key){
+  const at=wb.panes.findIndex(p=>p.key===key);
+  if(at<0)return;
+  wb.panes.splice(at,1);
+  const el=wbPaneEl(key);
+  if(el)el.remove();
+  if(!wb.panes.length){closeWorkbench();return}
+  wbSyncLayout();
+}
+function wbSyncLayout(){
+  const n=wb.panes.length;
+  $('#wbBody').dataset.count=String(n);
+  // 顶栏三个开关代表「第二栏现在是什么」；只有一栏时全部熄灭。
+  const side=n>1?wb.panes[1].view:null;
+  $$('#wbSideSwitch button').forEach(b=>b.setAttribute('aria-pressed',String(!!side&&b.dataset.wbSide===side)));
+  wb.panes.forEach(p=>{
+    const el=wbPaneEl(p.key);if(!el)return;
+    el.querySelectorAll('[data-wb-view]').forEach(b=>b.setAttribute('aria-selected',String(b.dataset.wbView===p.view)));
+  });
+}
+async function wbSetView(pane,view,opts={}){
+  const el=wbPaneEl(pane.key);if(!el)return;
+  pane.view=view;
+  el.querySelectorAll('.wb-view').forEach(v=>v.classList.toggle('is-active',v.dataset.view===view));
+  el.querySelectorAll('[data-wb-view]').forEach(b=>b.setAttribute('aria-selected',String(b.dataset.wbView===view)));
+  wbSyncLayout();
+  const box=el.querySelector(`.wb-view[data-view="${view}"]`);
+  if(!box||!wb.item)return;
+  if(view==='read'){
+    // 同一个条目的 iframe 一旦建好就不再重建：来回切 tab 必须保住阅读位置。
+    if(!box.querySelector('iframe')||box.dataset.item!==wb.item.id){
+      box.dataset.item=wb.item.id;
+      box.innerHTML=wbReaderHTML(wb.item);
+    }
+    return;
+  }
+  if(view==='reading'){
+    box.innerHTML=wbReadingHTML(wb.item);
+    return;
+  }
+  if(view==='notes')return wbRenderNotes(pane);
+  if(view==='ideas')return wbRenderIdeas(pane);
+}
+function wbReaderHTML(x){
+  if(!x.html_path)return `<div class="wb-empty"><b>这篇还没有离线阅读页</b><p class="muted">正文与配图还没归档。完成后这里会自动出现原文；也可以先看精读。</p>${x.status==='discovered'?`<button type="button" class="primary" data-process="${x.id}">归档并精读</button>`:'<span class="muted">正在处理，完成后自动刷新。</span>'}</div>`;
+  return `<iframe src="/api/items/${encodeURIComponent(x.id)}/archive" title="离线阅读页" loading="eager"></iframe>`;
+}
+function wbBadges(x){
+  const stage=itemStage(x),a=x.analysis||{};
+  const elapsed=fmtMs(a.llm_meta&&a.llm_meta.elapsed_ms);
+  const triage=(x.metadata||{}).image_triage||{};
+  return `<p class="wb-badges"><span class="badge ${x.status==='ready'?'ok':x.status==='error'?'error':x.status==='discovered'?'wait':''}">${esc(stage.badge)}</span><span class="badge">重要度 ${Math.round(x.importance)}</span><span class="badge">相关度 ${Math.round(x.relevance)}</span><span class="badge">证据 ${esc((x.metadata||{}).archive_completeness||'未知')}</span>${elapsed?`<span class="badge">精读用时 ${elapsed}</span>`:''}${triage.dropped?`<span class="badge">已过滤 ${triage.dropped} 张无用配图</span>`:''}</p>`;
+}
+function wbNotices(x){
   const progress=x.progress||null;
   const jobLine=x.active_job
     ? `<div class="notice progress-note"><span class="spin"></span>${x.active_job==='analyze'?'正在调用云模型精读，完成后本页自动刷新…':x.active_job==='verify'?'微信要求人机验证，正文暂时抓不到；30 分钟后自动重试，链接和标题都已保留…':'正在抓取正文、图片与原始快照…'}</div>`
@@ -958,22 +1045,222 @@ async function showItem(id,silent){
   const liveLine=progress&&x.active_job?`<div class="notice progress-note"><span class="spin"></span>云模型正在工作：已推理 <b>${progress.reasoning||0}</b> 字、已写出 <b>${progress.content||0}</b> 字，用时 ${progress.elapsed||0} 秒。数字还在涨就说明没有卡住。</div>`:'';
   const deadLine=(!x.active_job&&x.last_job&&x.last_job.state==='DEAD')
     ? `<div class="notice error-text">上次「${x.last_job.kind==='analyze_item'?'精读':'归档'}」失败：${esc((x.last_job.error||'未知原因').slice(0,300))}（${time(x.last_job.updated_at)}）</div>`:'';
-  const elapsed=fmtMs(a.llm_meta&&a.llm_meta.elapsed_ms);
+  const manual=x.excluded_at&&(x.exclusion_reason||'').startsWith('手动删除');
+  const excludedLine=x.excluded_at?`<div class="notice"><b>${manual?'你已经把这条从资料库删除了':'这条已经被本地过滤规则移出主资料库'}</b>：${esc(x.exclusion_reason||'未记录原因')}。<br><small>正文和图片仍然保留；如果判断有误，可以恢复收录。</small> <button type="button" class="primary" data-restore="${x.id}">恢复收录</button></div>`:'';
+  const gone=(x.metadata||{}).source_status||null;
+  const goneLine=gone&&gone.state==='deleted'?`<div class="notice"><b>原文已被发布者删除</b>：${esc(gone.reason||'原页面无法访问')}。<br><small>本地已保存离线页，所以这条继续留在资料库；内容以离线页为准。</small></div>`:'';
+  return `${excludedLine}${goneLine}${jobLine}${liveLine}${deadLine}${x.error?`<div class="notice error-text">${esc(x.error)}</div>`:''}`;
+}
+function wbPapers(x){
+  return `<div class="detail-section"><h2>关联论文</h2>${(x.papers||[]).map(p=>`<p><a href="https://doi.org/${esc(p.doi)}" target="_blank">${esc(p.doi)}</a> · ${esc(p.status)} · ${esc(p.title)}<br>${p.local_path?`<span class="actions"><button data-pdf-preview="${p.id}">网页预览</button><button data-paper-wps="${p.id}">WPS 打开</button><button data-paper-reveal="${p.id}">所在目录</button></span><br><small>${esc(p.local_path)}</small>`:''}<br><small>${esc(p.error||'')}</small></p>`).join('')||'<p class="muted">未识别到 DOI</p>'}</div>`;
+}
+function wbReadingHTML(x){
+  const a=x.analysis||{};
   const insufficient=a.analysis_mode==='insufficient_source';
   const recordOnly=a.analysis_mode==='record_only';
   const recordNote=recordOnly?`<div class="notice"><b>图文短记</b>：这条没有可精读的论文，内容主要是正文与配图本身，已按原样保存，没有调用云模型精读。<br><small>${esc((a.limits||[])[0]||'')}</small></div>`:'';
   const main=readingBody(a,x.id);
-  const manual=x.excluded_at&&(x.exclusion_reason||'').startsWith('手动删除');
-  const excludedLine=x.excluded_at?`<div class="notice"><b>${manual?'你已经把这条从资料库删除了':'这条已经被本地过滤规则移出主资料库'}</b>：${esc(x.exclusion_reason||'未记录原因')}。<br><small>正文和图片仍然保留；如果判断有误，可以恢复收录。</small> <button type="button" class="primary" data-restore="${x.id}">恢复收录</button></div>`:'';
-  const goneStatus=(x.metadata||{}).source_status||null;
-  const goneLine=goneStatus&&goneStatus.state==='deleted'?`<div class="notice"><b>原文已被发布者删除</b>：${esc(goneStatus.reason||'原页面无法访问')}。<br><small>本地已保存离线页，所以这条继续留在资料库；内容以离线页为准。</small></div>`:'';
   const body=insufficient
     ? `<div class="notice insufficient"><b>无法详细归档</b><br>${esc(a.summary||'没有取得足以讲清这篇研究的材料。')}<br><small>为避免用只言片语编造解释，这里不做猜测性精读。</small></div>`
     : (recordNote+(main?`${main}${figureBlock(x)}${afterBlock(a)}`:`<section class="reading">${legacyBody(a)}${figureBlock(x)}${afterBlock(a)}</section>`));
-  $('#detailContent').innerHTML=`<h1 class="detail-title">${esc(x.title||x.url)}</h1><p>${esc(x.author)} · ${time(x.published_at||x.discovered_at)}</p><div class="actions">${x.html_path?`<a class="button primary" href="/api/items/${x.id}/archive" target="_blank">离线阅读页</a>`:''}<a class="button" href="${esc(x.url)}" target="_blank" rel="noopener">打开原文</a>${x.metadata.original_share_url&&x.metadata.original_share_url!==x.url?`<a class="button" href="${esc(x.metadata.original_share_url)}" target="_blank" rel="noopener">原始分享短链</a>`:''}${x.excluded_at?'':(x.status==='discovered'?`<button class="primary" data-process="${x.id}">归档并精读</button>`:`<button data-reanalyze="${x.id}">重新精读</button>`)}<button type="button" data-verify-source="${x.id}">检查原文</button>${(x.metadata.images||[]).length?`<button type="button" data-retriage="${x.id}">重新判断配图</button>`:''}<button type="button" data-collect="${x.id}" data-collect-type="item" data-collect-ids="${(x.collections||[]).join(',')}">收藏到…</button>${x.excluded_at?'':`<button type="button" class="danger" data-delete="${x.id}">删除</button>`}<button type="button" data-rule-from="${esc(x.author||'')}">以后屏蔽这类</button>${(x.collections||[]).map(id=>{const n=collectionName('library',id);return n?`<span class="collection-chip">${esc(n)}</span>`:''}).join('')}</div><p><span class="badge ${x.status==='ready'?'ok':x.status==='error'?'error':x.status==='discovered'?'wait':''}">${esc(stage.badge)}</span> <span class="badge">重要度 ${Math.round(x.importance)}</span> <span class="badge">相关度 ${Math.round(x.relevance)}</span> <span class="badge">证据 ${esc(x.metadata.archive_completeness||'未知')}</span>${elapsed?` <span class="badge">精读用时 ${elapsed}</span>`:''}${((x.metadata||{}).image_triage||{}).dropped?` <span class="badge">已过滤 ${x.metadata.image_triage.dropped} 张无用配图</span>`:''}</p>${excludedLine}${goneLine}${jobLine}${liveLine}${deadLine}${x.error?`<div class="notice error-text">${esc(x.error)}</div>`:''}${body}<details class="raw-text"><summary>归档全文 / 转录</summary><div class="detail-text">${esc(x.text||'尚无正文')}</div></details><div class="detail-section"><h2>关联论文</h2>${x.papers.map(p=>`<p><a href="https://doi.org/${esc(p.doi)}" target="_blank">${esc(p.doi)}</a> · ${esc(p.status)} · ${esc(p.title)}<br>${p.local_path?`<span class="actions"><button data-pdf-preview="${p.id}">网页预览</button><button data-paper-wps="${p.id}">WPS 打开</button><button data-paper-reveal="${p.id}">所在目录</button></span><br><small>${esc(p.local_path)}</small>`:''}<br><small>${esc(p.error||'')}</small></p>`).join('')||'<p class="muted">未识别到 DOI</p>'}</div>`;
-  if(!silent||!$('#detailDialog').open)openDetail();
+  return `${wbBadges(x)}${wbNotices(x)}${body}
+    <details class="raw-text"><summary>归档全文 / 转录</summary><div class="detail-text">${esc(x.text||'尚无正文')}</div></details>
+    ${wbPapers(x)}`;
+}
+function wbRenderHeader(x){
+  $('#wbTitle').textContent=x.title||x.url||'未命名条目';
+  const when=time(x.published_at||x.discovered_at);
+  $('#wbMeta').textContent=[x.author,when,x.excluded_at?'已移出主资料库':''].filter(Boolean).join(' · ');
+  // 用户点名的按钮一个都不能少：打开原文 / 检查原文 / 收藏到 / 删除 / 问 AI。
+  $('#wbItemActions').innerHTML=`
+    <a class="button" href="${esc(x.url)}" target="_blank" rel="noopener">打开原文</a>
+    ${x.metadata&&x.metadata.original_share_url&&x.metadata.original_share_url!==x.url?`<a class="button" href="${esc(x.metadata.original_share_url)}" target="_blank" rel="noopener">原始短链</a>`:''}
+    <button type="button" data-verify-source="${x.id}">检查原文</button>
+    <button type="button" data-collect="${x.id}" data-collect-type="item" data-collect-ids="${(x.collections||[]).join(',')}">收藏到…</button>
+    ${x.excluded_at?`<button type="button" class="primary" data-restore="${x.id}">恢复收录</button>`:`<button type="button" class="danger" data-delete="${x.id}">删除</button>`}
+    <button type="button" class="primary" data-wb-ask>问 AI</button>`;
+  // 工作台不在 #detailContent 的 MutationObserver 范围内，得主动通知对话面板换上下文。
+  if(window.syncCurrentItem)window.syncCurrentItem();
+}
+function askCurrentItem(){
+  const item=window.__currentItem||wb.item;
+  if(window.openChat)window.openChat({itemId:item?item.id:undefined,selection:''}).catch(err=>toast(err.message));
+  else toast('对话面板还没加载好，稍等一秒再点');
+}
+async function openWorkbench(id,opts={}){
+  const x=await api('/api/items/'+id);
+  window.__currentItem=x;
+  const sameItem=wb.itemId===x.id;
+  wb.item=x;wb.itemId=x.id;wb.open=true;
+  wbRenderHeader(x);
+  const el=wbEl();
+  if(!el.open){
+    el.showModal();
+    lockPageScroll();
+    wb.panes=[];$('#wbBody').innerHTML='';
+    wbAddPane('read');
+  }else if(!wb.panes.length){
+    wbAddPane('read');
+  }else if(!sameItem){
+    // 换了条目：原文 iframe 换地址，精读与笔记按当前栏重建；Ideas 是全局的，不必动。
+    wb.panes.forEach(p=>{
+      if(p.view==='read'){const box=wbViewEl(p,'read');if(box){box.dataset.item='';box.innerHTML=wbReaderHTML(x)}}
+      else if(p.view==='reading')wbSetView(p,'reading',{force:true});
+      else if(p.view==='notes')wbRenderNotes(p);
+    });
+  }else{
+    wb.panes.forEach(p=>{if(p.view==='reading')wbSetView(p,'reading',{force:true})});
+  }
+  wbSyncLayout();
   if(x.active_job)watchItem(id);else if(detailWatchId===id)stopItemWatch();
   return x;
+}
+async function refreshWorkbench(id){
+  if(!wbIsOpen()||wb.itemId!==id)return null;
+  const x=await api('/api/items/'+id);
+  window.__currentItem=x;wb.item=x;
+  wbRenderHeader(x);
+  wb.panes.forEach(p=>{
+    if(p.view==='read'){
+      const box=wbViewEl(p,'read');
+      // 归档刚完成时把占位换成真正的离线页；已经加载好的 iframe 不重建，保住滚动位置。
+      if(box&&!box.querySelector('iframe')&&x.html_path){box.dataset.item=x.id;box.innerHTML=wbReaderHTML(x)}
+    }else if(p.view==='reading'){wbSetView(p,'reading',{force:true})}
+    else if(p.view==='notes'&&!($('#wbNoteDraft')&&document.activeElement===$('#wbNoteDraft'))){wbRenderNotes(p)}
+  });
+  return x;
+}
+function closeWorkbench(){
+  const el=wbEl();if(!el||!el.open)return;
+  stopItemWatch();
+  wb.open=false;wb.itemId=null;wb.item=null;wb.panes=[];
+  $('#wbBody').innerHTML='';$('#wbBody').dataset.count='0';
+  el.close();
+}
+function wbToggleSide(view){
+  if(!wb.panes.length)return;
+  if(wb.panes.length>1){
+    const right=wb.panes[1];
+    if(right.view===view)wbRemovePane(right.key);else wbSetView(right,view);
+    return;
+  }
+  const left=wb.panes[0];
+  // 唯一栏已经是它：把原文放回左栏、目标视图放到右栏，形成并排；直接收掉会把用户想看的内容弄丢。
+  if(left.view===view){wbSetView(left,'read');wbAddPane(view);return}
+  wbAddPane(view);
+}
+async function wbRenderNotes(pane){
+  const box=wbViewEl(pane,'notes');if(!box)return;
+  const seq=++wb.noteSeq;
+  box.innerHTML=`<div class="wb-compose">
+      <textarea id="wbNoteDraft" rows="3" placeholder="边读边记：这一段说明了什么？和我的课题有什么关系？"></textarea>
+      <div class="wb-compose-actions"><button type="button" class="primary" data-wb-note-save>存下这段想法</button><span class="muted" id="wbNoteHint"></span></div>
+    </div>
+    <div id="wbNoteList" class="wb-note-list"><div class="muted wb-loading">正在读取这篇的笔记…</div></div>`;
+  try{
+    const rows=await api('/api/notes?limit=200&item_id='+encodeURIComponent(wb.itemId));
+    if(seq!==wb.noteSeq)return;
+    renderWbNotes(rows);
+  }catch(e){const list=$('#wbNoteList');if(list)list.innerHTML=`<div class="error-text">${esc(e.message)}</div>`}
+}
+function renderWbNotes(rows){
+  const list=$('#wbNoteList');if(!list)return;
+  list.innerHTML=rows.length?rows.map(n=>`<article class="wb-note">
+    ${n.quote?`<blockquote>${esc(n.quote)}</blockquote>`:''}
+    <p>${esc(n.body).replace(/\n/g,'<br>')}</p>
+    <div class="wb-note-foot"><span>${time(n.created_at)}</span><span>${esc(n.section||'')}</span><button type="button" class="link" data-wb-note-del="${esc(n.id)}">删除</button></div>
+  </article>`).join(''):'<div class="wb-empty muted">这篇还没有笔记。读到关键处，在上面写两句，或者回精读页点段落右上角的「存笔记」。</div>';
+}
+async function saveWbNote(){
+  const box=$('#wbNoteDraft');if(!box)return;
+  const body=(box.value||'').trim();
+  if(!body)return toast('先写点什么再存');
+  const hint=$('#wbNoteHint');if(hint)hint.textContent='正在保存…';
+  try{
+    await api('/api/notes',{method:'POST',body:{item_id:wb.itemId,section:'工作台随手记',body,tags:[]}});
+    box.value='';
+    renderWbNotes(await api('/api/notes?limit=200&item_id='+encodeURIComponent(wb.itemId)));
+    if(hint)hint.textContent='已保存';
+    toast('笔记已保存到这篇');
+  }catch(e){if(hint)hint.textContent='';toast(e.message)}
+}
+async function deleteWbNote(id){
+  if(!confirm('删除这条笔记？'))return;
+  await api('/api/notes/'+id,{method:'DELETE'});
+  renderWbNotes(await api('/api/notes?limit=200&item_id='+encodeURIComponent(wb.itemId)));
+  toast('笔记已删除');
+}
+async function wbRenderIdeas(pane){
+  const box=wbViewEl(pane,'ideas');if(!box)return;
+  box.innerHTML=`<div class="wb-compose">
+      <input id="wbIdeaTitle" placeholder="一句话写下这个想法（假设 / 方向 / 长期问题）">
+      <textarea id="wbIdeaBody" rows="3" placeholder="背景、已知证据、怎么验证……（可不填）"></textarea>
+      <div class="wb-compose-actions"><button type="button" class="primary" data-wb-idea-save>存为 idea</button><span class="muted" id="wbIdeaHint"></span></div>
+    </div>
+    <div class="wb-idea-search"><input id="wbIdeaQ" placeholder="搜索已有 idea"></div>
+    <div id="wbIdeaList" class="wb-idea-list"><div class="muted wb-loading">正在读取 ideas…</div></div>`;
+  await wbLoadIdeas();
+}
+async function wbLoadIdeas(){
+  const list=$('#wbIdeaList');if(!list)return;
+  const word=($('#wbIdeaQ')&&$('#wbIdeaQ').value||'').trim().toLowerCase();
+  try{
+    const rows=await api('/api/ideas');
+    const hit=word?rows.filter(x=>`${x.title} ${x.content} ${(x.tags||[]).join(' ')}`.toLowerCase().includes(word)):rows;
+    list.innerHTML=hit.length?hit.map(x=>`<article class="wb-idea"><h3>${esc(x.title)}</h3>${x.content?`<p>${esc(x.content).replace(/\n/g,'<br>')}</p>`:''}<div class="wb-idea-foot"><span>${time(x.updated_at||x.created_at)}</span>${(x.tags||[]).map(t=>`<span class="badge">${esc(t)}</span>`).join('')}</div></article>`).join(''):`<div class="wb-empty muted">${word?'没有匹配的 idea':'还没有 idea。上面写一句就能存下第一条。'}</div>`;
+  }catch(e){list.innerHTML=`<div class="error-text">${esc(e.message)}</div>`}
+}
+async function saveWbIdea(){
+  const title=($('#wbIdeaTitle')&&$('#wbIdeaTitle').value||'').trim();
+  if(!title)return toast('先给这个想法起个标题');
+  const hint=$('#wbIdeaHint');if(hint)hint.textContent='正在保存…';
+  try{
+    await api('/api/ideas',{method:'POST',body:{title,content:($('#wbIdeaBody')&&$('#wbIdeaBody').value||'').trim(),tags:[],enabled:true}});
+    $('#wbIdeaTitle').value='';$('#wbIdeaBody').value='';
+    await wbLoadIdeas();
+    if(hint)hint.textContent='已存为 idea';
+    toast('idea 已保存，会参与后续文章关联');
+  }catch(e){if(hint)hint.textContent='';toast(e.message)}
+}
+$('#wbClose').onclick=()=>closeWorkbench();
+// 用户明确要求「只有点关闭按钮才关」。
+// 只拦 cancel 不够：浏览器合成的 cancel 事件是 cancelable:false，preventDefault 无效，
+// 必须在 keydown 的默认动作之前截住。有更上层的浮层（对话抽屉/划词/笔记/收藏）时放行，
+// 让 Esc 先关它们——否则会出现「按 Esc 抽屉没关，工作台也没关」。
+$('#workbench').addEventListener('keydown',e=>{
+  if(e.key!=='Escape')return;
+  if(document.querySelector('#chatDrawer.open,#notePop:popover-open,#selectionBar:popover-open,#collectionPop[open]'))return;
+  e.preventDefault();e.stopPropagation();
+},true);
+$('#workbench').addEventListener('cancel',e=>e.preventDefault());
+$('#wbSideSwitch').addEventListener('click',e=>{
+  const b=e.target.closest('[data-wb-side]');if(!b)return;
+  wbToggleSide(b.dataset.wbSide);
+});
+$('#wbItemActions').addEventListener('click',e=>{
+  // 顶栏不在 #wbBody 里，事件冒泡不到下面那个监听；其余按钮走全局委托。
+  if(e.target.closest('[data-wb-ask]'))askCurrentItem();
+});
+$('#wbBody').addEventListener('click',async e=>{
+  const close=e.target.closest('[data-wb-pane-close]');
+  if(close){const pane=close.closest('.wb-pane');if(pane)wbRemovePane(pane.dataset.pane);return}
+  const tab=e.target.closest('[data-wb-view]');
+  if(tab){const host=tab.closest('.wb-pane');const pane=wb.panes.find(p=>p.key===(host&&host.dataset.pane));if(pane)wbSetView(pane,tab.dataset.wbView);return}
+  if(e.target.closest('[data-wb-ask]'))return askCurrentItem();
+  if(e.target.closest('[data-wb-note-save]'))return saveWbNote().catch(err=>toast(err.message));
+  if(e.target.closest('[data-wb-idea-save]'))return saveWbIdea().catch(err=>toast(err.message));
+  const del=e.target.closest('[data-wb-note-del]');
+  if(del)return deleteWbNote(del.dataset.wbNoteDel).catch(err=>toast(err.message));
+});
+$('#wbBody').addEventListener('input',e=>{
+  if(e.target.id!=='wbIdeaQ')return;
+  clearTimeout(wbIdeaTimer);
+  wbIdeaTimer=setTimeout(()=>wbLoadIdeas().catch(err=>toast(err.message)),220);
+});
+// 旧入口（笔记库里的「打开原文」、任务完成后的刷新）继续可用：同一个条目就刷新，否则进工作台。
+async function showItem(id,silent){
+  if(wbIsOpen()&&wb.itemId===id)return refreshWorkbench(id);
+  return openWorkbench(id,{silent:!!silent});
 }
 async function previewPaper(id){const p=currentPapers.find(x=>x.id===id)||{title:'PDF 预览'};$('#detailContent').innerHTML=`<h1>${esc(p.title||'PDF 预览')}</h1><p class="muted">文件保存在：<code>${esc(p.local_path||'E 盘论文目录')}</code></p><iframe src="/api/papers/${id}/file#view=FitH" style="width:100%;height:78vh;border:1px solid #dde3e9;border-radius:8px"></iframe>`;openDetail()}
 let paperPage=1, paperPageSize=20, paperTotal=0;
@@ -1152,7 +1439,7 @@ async function loadCredits(){
 const loaders={dashboard:()=>Promise.all([loadHealth(),loadEvents(),loadProgress(),loadCredits()]),sources:loadSources,wechat:loadWechatAccounts,library:()=>Promise.all([loadCollections('library'),loadItems(),loadProgress()]),papers:loadPapers,ideas:()=>Promise.all([loadCollections('ideas'),loadIdeas()]),notifications:loadNotifications,settings:()=>Promise.all([loadSettings(),window.wizEnsureBadge?window.wizEnsureBadge():null])};
 function switchView(view){currentView=view;$$('.view').forEach(x=>x.classList.toggle('active',x.id===view));$$('.nav').forEach(x=>x.classList.toggle('active',x.dataset.view===view));loaders[view]().catch(e=>toast(e.message))}
 $$('.nav').forEach(x=>x.onclick=()=>switchView(x.dataset.view));
-$('#detailAsk').onclick=()=>{const item=window.__currentItem;if(window.openChat)window.openChat({itemId:item?item.id:undefined,selection:''});else toast('对话面板还没加载好，稍等一秒再点')};
+$('#detailAsk').onclick=askCurrentItem;
 $('#ingestBtn').onclick=async()=>{try{const result=await api('/api/ingest',{method:'POST',body:{text:$('#quickText').value}});$('#ingestResult').textContent=`已接收 ${result.items.length} 条，其中新增 ${result.items.filter(x=>x.created).length} 条`;$('#quickText').value='';loadHealth()}catch(e){toast(e.message)}};
 $('#importWechat').onclick=async()=>{try{const body={names_text:$('#wechatNames').value,initial_backfill_days:Number($('#wechatBackfillDays').value),poll_seconds:Number($('#wechatPollSeconds').value)};const r=await api('/api/sources/wechat/import',{method:'POST',body});$('#wechatImportResult').textContent=`新增 ${r.added} 个；`+(r.needs_key?'清单已保存，填写 DataXAPI Key 后自动启用':'已开始自动监测与历史追补');loadSources()}catch(e){toast(e.message)}};
 function reloadItems(){itemPage=1;loadItems().catch(e=>toast(e.message))}
@@ -1191,17 +1478,20 @@ document.addEventListener('close',e=>{
 },true);
 window.topModal=()=>modalStack.length?modalStack[modalStack.length-1]:null;
 
+function lockPageScroll(){
+  if(!document.body.classList.contains('modal-open')){
+    // 锁滚动会让页面滚动条消失，right:0 的抽屉会跟着横移 15px；先把槽位宽度记下来顶住，
+    // 关闭时再撤掉，抽屉就始终停在同一处（见 styles.css 的 --sbw）。
+    document.documentElement.style.setProperty('--sbw',(window.innerWidth-document.documentElement.clientWidth)+'px')}
+  document.body.classList.add('modal-open');
+}
 function openDetail(){
   // 精读页也必须走 showModal：公众号推文面板是 showModal 打开的，待在 top layer 里。
   // 只有 showModal 才能叠到它上面，关闭后又正好回到下面那层——列表不用重新加载。
   // show() 是非模态，z-index 再高也压不过 top layer，所以以前只能先把面板关掉。
   const d=$('#detailDialog');
   if(!d.open)d.showModal();
-  if(!document.body.classList.contains('modal-open')){
-    // 锁滚动会让页面滚动条消失，right:0 的抽屉会跟着横移 15px；先把槽位宽度记下来顶住，
-    // 关精读时再撤掉，抽屉就始终停在同一处（见 styles.css 的 --sbw）。
-    document.documentElement.style.setProperty('--sbw',(window.innerWidth-document.documentElement.clientWidth)+'px')}
-  document.body.classList.add('modal-open');}
+  lockPageScroll();}
 function closeDetail(){const d=$('#detailDialog');if(d.open)d.close()}
 $('#closeDialog').onclick=closeDetail;
 $('#detailDialog').addEventListener('close',()=>{stopItemWatch();closeCollectPop()});
@@ -1246,16 +1536,17 @@ if(t.dataset.delete){await deleteItem(t.dataset.delete);return}
 if(t.dataset.ruleFrom){await openRuleDialog({account:t.dataset.ruleFrom,scope:'account',field:'title',patterns:''});return}
 if(t.dataset.ruleToggle!==undefined){await api(`/api/filter-rules/${t.dataset.ruleToggle}`,{method:'PATCH',body:{enabled:t.dataset.enabled!=='1'}});await loadRuleList();reloadItems();return}
 if(t.dataset.ruleRemove!==undefined){if(!confirm('删除这条规则？被它挡住的条目会一起放回资料库。'))return;const r=await api(`/api/filter-rules/${t.dataset.ruleRemove}`,{method:'DELETE'});toast(`规则已删除${r.restored?`，恢复 ${r.restored} 条`:''}`);await loadRuleList();reloadItems();return}
-if(t.dataset.item)await showItem(t.dataset.item);
+// 只认列表卡片。精读区本身也带 data-item（给「问 AI」定位用），点正文不能当成「重新打开这条」。
+if(t.dataset.item&&t.classList.contains('item'))await openWorkbench(t.dataset.item);
 if(t.dataset.page!==undefined&&t.dataset.page!==''){const n=Number(t.dataset.page);if(n>=1){itemPage=n;await loadItems()}return}
 if(t.dataset.ppage!==undefined&&t.dataset.ppage!==''){const n=Number(t.dataset.ppage);if(n>=1&&n!==paperPage){paperPage=n;await loadPapers()}return}
 if(t.dataset.collect){await openCollectPop(t.dataset.collectType||'item',t.dataset.collect,(t.dataset.collectIds||'').split(',').filter(Boolean),t,()=>currentView==='library'?loadItems():loadIdeas());return}
 if(t.dataset.pickCollection!==undefined&&t.dataset.pickCollection!==null&&t.closest('#collectionPick')){applyCollectionFilter(collectionPickScope,t.dataset.pickCollection);return}
-if(t.dataset.restore){await api(`/api/items/${t.dataset.restore}/restore`,{method:'POST'});toast('已恢复收录');loadItems().catch(()=>{});await showItem(t.dataset.restore,true);return}
+if(t.dataset.restore){await api(`/api/items/${t.dataset.restore}/restore`,{method:'POST'});toast('已恢复收录');loadItems().catch(()=>{});if(wbIsOpen())await refreshWorkbench(t.dataset.restore);return}
 if(t.dataset.useCollection){await toggleCollect(t.dataset.useCollection,true);$('#collectionNewName').value='';renderCollectPop();return}
 if(t.dataset.collectionSave){const input=document.querySelector(`[data-collection-name="${t.dataset.collectionSave}"]`);await api(`/api/collections/${t.dataset.collectionSave}`,{method:'PATCH',body:{name:input.value}});toast('已改名');await loadCollections(window.__manageScope||'library');renderCollectionManage();return}
 if(t.dataset.collectionDelete){if(!confirm('删除这个收藏夹？条目本身不会被删除。'))return;const scope=window.__manageScope||'library';await api(`/api/collections/${t.dataset.collectionDelete}`,{method:'DELETE'});toast('已删除收藏夹');if(collectionFilterValue(scope)===t.dataset.collectionDelete){if(scope==='library')libraryCollectionFilter='';else ideaCollectionFilter=''}await loadCollections(scope);renderCollectionManage();syncCollectionButton(scope);if(scope==='library')loadItems().catch(()=>{});else loadIdeas().catch(()=>{});return}
-if(t.dataset.run){await api(`/api/sources/${t.dataset.run}/run`,{method:'POST'});toast('已加入立即检查队列')}if(t.dataset.archiveHistory){if(!confirm('将控速归档历史全文、图片和可获取论文，不自动调用云精读。确定开始吗？'))return;const r=await api(`/api/sources/${t.dataset.archiveHistory}/archive-history`,{method:'POST'});toast(r.queued?`已开始历史归档，剩余 ${r.remaining} 条；云精读调用 0`:'没有待归档的历史索引')}if(t.dataset.toggle){await api(`/api/sources/${t.dataset.toggle}`,{method:'PATCH',body:{enabled:t.dataset.enabled!=='1'}});loadSources()}if(t.dataset.process){await api(`/api/items/${t.dataset.process}/process`,{method:'POST'});toast('已加入归档与精读队列，完成后本页自动刷新');if($('#detailDialog').open)showItem(t.dataset.process,true).catch(()=>{});loadItems().catch(()=>{})}if(t.dataset.reanalyze){await api(`/api/items/${t.dataset.reanalyze}/reanalyze`,{method:'POST'});toast('已排队，正在精读，完成后自动刷新');if($('#detailDialog').open)showItem(t.dataset.reanalyze,true).catch(()=>{})}if(t.dataset.retriage){toast('正在让模型重新判断配图…');const r=await api(`/api/items/${t.dataset.retriage}/retriage-images`,{method:'POST'});toast(r.dropped?`已删除 ${r.dropped} 张无关配图`:'没有发现需要删除的配图');await showItem(t.dataset.retriage,true);loadItems().catch(()=>{})}if(t.dataset.verifySource){const r=await api(`/api/items/${t.dataset.verifySource}/verify-source`,{method:'POST'});toast(r.exists?'原文仍可访问':(r.kept?'原文已删除，但离线页已保存，继续保留':'原文已删除且没有离线页，已移出资料库'));await showItem(t.dataset.verifySource,true);loadItems().catch(()=>{})}if(t.dataset.archiveIndex!==undefined){if(!confirm('将限速归档所有仅索引条目（正文、图片、原始快照），不调用云精读。条目较多时会持续一段时间，可随时查看进度。确定开始吗？'))return;const r=await api('/api/archive-index-only',{method:'POST'});toast(r.queued?`已开始归档，剩余 ${r.remaining} 条；云精读调用 0`:'没有待归档的索引条目');loadProgress().catch(()=>{})}if(t.dataset.archiveStop!==undefined){if(!confirm('停止批量归档？正在下载的这一条会先做完，之后不再继续排队。已归档的条目不受影响。'))return;const r=await api('/api/archive-index-only/stop',{method:'POST'});toast(`已暂停：撤销 ${r.cancelled} 个排队批次${r.running_batches?`，正在跑的那批收尾后停下`:''}；还剩 ${r.remaining} 条未归档`);loadProgress().catch(()=>{})}if(t.dataset.cloudModel){$('#llmProvider').value='workbuddy_cloud';$('#llmProvider').dispatchEvent(new Event('change'));$('#llmModel').value=t.dataset.cloudModel;$('#detailDialog').close();toast('已选择模型，保存设置后生效')}if(t.dataset.paperRetry){await api(`/api/papers/${t.dataset.paperRetry}/retry`,{method:'POST'});toast('已重试论文解析与下载')}if(t.dataset.jobRetry){await api(`/api/jobs/${t.dataset.jobRetry}/retry`,{method:'POST'});toast('任务已重新排队');await loadTaskQueue()}if(t.dataset.jobDiagnostic){const d=await api(`/api/jobs/${t.dataset.jobDiagnostic}/diagnostics`);window.currentDiagnostic=d.markdown;$('#detailContent').innerHTML=`<h1>任务失败诊断</h1>${d.hint?'<div class="notice"><b>已知模式：'+esc(d.hint)+'</b><br>'+esc(d.hint_advice)+'</div>':''}<p>${d.retryable?'<span class="badge wait">疑似临时错误，可重试</span>':'<span class="badge error">不是临时错误，盲目重试会再次失败</span>'}</p><p class="muted">复制下面内容，粘贴到 WorkBuddy 对话即可定位和修复。</p><div class="actions"><button class="primary" data-copy-diagnostic="1">复制诊断给 WorkBuddy</button></div><div class="detail-text"><pre style="white-space:pre-wrap">${esc(d.markdown)}</pre></div>`;openDetail()}if(t.dataset.copyDiagnostic){try{await navigator.clipboard.writeText(window.currentDiagnostic||'')}catch(err){const ta=document.createElement('textarea');ta.value=window.currentDiagnostic||'';document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove()}toast('诊断已复制，可直接粘贴到 WorkBuddy')}if(t.dataset.pdfPreview){await previewPaper(t.dataset.pdfPreview)}if(t.dataset.paperWps){const r=await api(`/api/papers/${t.dataset.paperWps}/open-wps`,{method:'POST'});toast(`${r.application} 已打开：${r.path}`)}if(t.dataset.paperReveal){const r=await api(`/api/papers/${t.dataset.paperReveal}/reveal`,{method:'POST'});toast(`已打开目录：${r.directory}`)}if(t.dataset.ideaEdit){const x=window.ideaRows.find(i=>i.id===t.dataset.ideaEdit);$('#ideaId').value=x.id;$('#ideaTitle').value=x.title;$('#ideaContent').value=x.content;$('#ideaTags').value=(x.tags||[]).join(', ');scrollTo({top:0,behavior:'smooth'})}if(t.dataset.ideaToggle){const x=window.ideaRows.find(i=>i.id===t.dataset.ideaToggle);await api('/api/ideas/'+x.id,{method:'PATCH',body:{title:x.title,content:x.content,tags:x.tags,enabled:t.dataset.enabled!=='1'}});loadIdeas()}if(t.dataset.batch){const x=await api('/api/notifications/'+t.dataset.batch);$('#detailContent').innerHTML=`<h1>汇报内容</h1><div class="detail-text">${esc(x.text)}</div>`;openDetail()}if(t.dataset.batchRetry){const r=await api(`/api/notifications/${t.dataset.batchRetry}/retry`,{method:'POST'});toast(r.queued===false?(r.reason||'该批次无需重试'):'已重新进入发送队列');loadNotifications().catch(()=>{})}}catch(err){toast(err.message)}});
+if(t.dataset.run){await api(`/api/sources/${t.dataset.run}/run`,{method:'POST'});toast('已加入立即检查队列')}if(t.dataset.archiveHistory){if(!confirm('将控速归档历史全文、图片和可获取论文，不自动调用云精读。确定开始吗？'))return;const r=await api(`/api/sources/${t.dataset.archiveHistory}/archive-history`,{method:'POST'});toast(r.queued?`已开始历史归档，剩余 ${r.remaining} 条；云精读调用 0`:'没有待归档的历史索引')}if(t.dataset.toggle){await api(`/api/sources/${t.dataset.toggle}`,{method:'PATCH',body:{enabled:t.dataset.enabled!=='1'}});loadSources()}if(t.dataset.process){await api(`/api/items/${t.dataset.process}/process`,{method:'POST'});toast('已加入归档与精读队列，完成后本页自动刷新');if(wbIsOpen())refreshWorkbench(t.dataset.process).catch(()=>{});loadItems().catch(()=>{})}if(t.dataset.reanalyze){await api(`/api/items/${t.dataset.reanalyze}/reanalyze`,{method:'POST'});toast('已排队，正在精读，完成后自动刷新');if(wbIsOpen())refreshWorkbench(t.dataset.reanalyze).catch(()=>{});loadItems().catch(()=>{})}if(t.dataset.retriage){toast('正在让模型重新判断配图…');const r=await api(`/api/items/${t.dataset.retriage}/retriage-images`,{method:'POST'});toast(r.dropped?`已删除 ${r.dropped} 张无关配图`:'没有发现需要删除的配图');if(wbIsOpen())await refreshWorkbench(t.dataset.retriage);loadItems().catch(()=>{})}if(t.dataset.verifySource){const r=await api(`/api/items/${t.dataset.verifySource}/verify-source`,{method:'POST'});toast(r.exists?'原文仍可访问':(r.kept?'原文已删除，但离线页已保存，继续保留':'原文已删除且没有离线页，已移出资料库'));if(wbIsOpen())await refreshWorkbench(t.dataset.verifySource);loadItems().catch(()=>{})}if(t.dataset.archiveIndex!==undefined){if(!confirm('将限速归档所有仅索引条目（正文、图片、原始快照），不调用云精读。条目较多时会持续一段时间，可随时查看进度。确定开始吗？'))return;const r=await api('/api/archive-index-only',{method:'POST'});toast(r.queued?`已开始归档，剩余 ${r.remaining} 条；云精读调用 0`:'没有待归档的索引条目');loadProgress().catch(()=>{})}if(t.dataset.archiveStop!==undefined){if(!confirm('停止批量归档？正在下载的这一条会先做完，之后不再继续排队。已归档的条目不受影响。'))return;const r=await api('/api/archive-index-only/stop',{method:'POST'});toast(`已暂停：撤销 ${r.cancelled} 个排队批次${r.running_batches?`，正在跑的那批收尾后停下`:''}；还剩 ${r.remaining} 条未归档`);loadProgress().catch(()=>{})}if(t.dataset.cloudModel){$('#llmProvider').value='workbuddy_cloud';$('#llmProvider').dispatchEvent(new Event('change'));$('#llmModel').value=t.dataset.cloudModel;$('#detailDialog').close();toast('已选择模型，保存设置后生效')}if(t.dataset.paperRetry){await api(`/api/papers/${t.dataset.paperRetry}/retry`,{method:'POST'});toast('已重试论文解析与下载')}if(t.dataset.jobRetry){await api(`/api/jobs/${t.dataset.jobRetry}/retry`,{method:'POST'});toast('任务已重新排队');await loadTaskQueue()}if(t.dataset.jobDiagnostic){const d=await api(`/api/jobs/${t.dataset.jobDiagnostic}/diagnostics`);window.currentDiagnostic=d.markdown;$('#detailContent').innerHTML=`<h1>任务失败诊断</h1>${d.hint?'<div class="notice"><b>已知模式：'+esc(d.hint)+'</b><br>'+esc(d.hint_advice)+'</div>':''}<p>${d.retryable?'<span class="badge wait">疑似临时错误，可重试</span>':'<span class="badge error">不是临时错误，盲目重试会再次失败</span>'}</p><p class="muted">复制下面内容，粘贴到 WorkBuddy 对话即可定位和修复。</p><div class="actions"><button class="primary" data-copy-diagnostic="1">复制诊断给 WorkBuddy</button></div><div class="detail-text"><pre style="white-space:pre-wrap">${esc(d.markdown)}</pre></div>`;openDetail()}if(t.dataset.copyDiagnostic){try{await navigator.clipboard.writeText(window.currentDiagnostic||'')}catch(err){const ta=document.createElement('textarea');ta.value=window.currentDiagnostic||'';document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove()}toast('诊断已复制，可直接粘贴到 WorkBuddy')}if(t.dataset.pdfPreview){await previewPaper(t.dataset.pdfPreview)}if(t.dataset.paperWps){const r=await api(`/api/papers/${t.dataset.paperWps}/open-wps`,{method:'POST'});toast(`${r.application} 已打开：${r.path}`)}if(t.dataset.paperReveal){const r=await api(`/api/papers/${t.dataset.paperReveal}/reveal`,{method:'POST'});toast(`已打开目录：${r.directory}`)}if(t.dataset.ideaEdit){const x=window.ideaRows.find(i=>i.id===t.dataset.ideaEdit);$('#ideaId').value=x.id;$('#ideaTitle').value=x.title;$('#ideaContent').value=x.content;$('#ideaTags').value=(x.tags||[]).join(', ');scrollTo({top:0,behavior:'smooth'})}if(t.dataset.ideaToggle){const x=window.ideaRows.find(i=>i.id===t.dataset.ideaToggle);await api('/api/ideas/'+x.id,{method:'PATCH',body:{title:x.title,content:x.content,tags:x.tags,enabled:t.dataset.enabled!=='1'}});loadIdeas()}if(t.dataset.batch){const x=await api('/api/notifications/'+t.dataset.batch);$('#detailContent').innerHTML=`<h1>汇报内容</h1><div class="detail-text">${esc(x.text)}</div>`;openDetail()}if(t.dataset.batchRetry){const r=await api(`/api/notifications/${t.dataset.batchRetry}/retry`,{method:'POST'});toast(r.queued===false?(r.reason||'该批次无需重试'):'已重新进入发送队列');loadNotifications().catch(()=>{})}}catch(err){toast(err.message)}});
 /* ---------- 图片查看器 ---------- */
 const viewerState={scale:1,x:0,y:0,fit:1,dragging:false,moved:false,startX:0,startY:0};
 function viewerParts(){return {box:$('#imageViewer'),stage:$('#imageViewerStage'),img:$('#imageViewerImg'),info:$('#imageViewerInfo')}}
@@ -1307,7 +1598,7 @@ async function deleteItem(id){
   itemPicked.delete(id);
   toast(r.deleted?'已从资料库删除，可在「含已删除」里找回':(r.reason||'没有改动'));
   loadItems().catch(()=>{});
-  if($('#detailDialog').open)showItem(id,true).catch(()=>{});
+  if(wbIsOpen())refreshWorkbench(id).catch(()=>{});
 }
 async function deletePicked(){
   if(!itemPicked.size)return toast('先勾选要删的条目');
