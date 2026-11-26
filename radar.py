@@ -244,6 +244,8 @@ def cmd_where() -> int:
     print(f"配置文件  {settings}  {'存在' if settings.is_file() else '不存在（用默认值）'}")
     print(f"版本库    {ROOT / '.git'}  {'存在' if (ROOT / '.git').exists() else '未建立'}")
     print(f"项目版本  {vcs.project_version()}")
+    from tools import release_paths
+    print(f"发布包目录 {release_paths.describe()}  （安装包在这里，不在软件目录里）")
     try:
         sys.path.insert(0, str(ROOT))
         from app.db import Database

@@ -1,7 +1,7 @@
 {
   "version": 1,
   "created_at": "2026-11-20T17:42:55Z",
-  "updated_at": "2026-11-26T16:14:46Z",
+  "updated_at": "2026-11-26T17:18:58Z",
   "files": {
     ".gitattributes": {
       "role": "index",
@@ -23,9 +23,9 @@
     },
     "FEATURES.yaml": {
       "role": "index",
-      "sha256": "2232162cfc13a206db5e4bab9d27f0b5e82d5d25a63eb566ed6ed281ebad65ca",
-      "size": 9184,
-      "normalized_sha256": "2232162cfc13a206db5e4bab9d27f0b5e82d5d25a63eb566ed6ed281ebad65ca"
+      "sha256": "13068e94641d6cc15c6e13e82f47f19542f968e3e0a54b1773c7eefd1de8e33d",
+      "size": 10231,
+      "normalized_sha256": "13068e94641d6cc15c6e13e82f47f19542f968e3e0a54b1773c7eefd1de8e33d"
     },
     "Install.vbs": {
       "role": "index",
@@ -59,9 +59,9 @@
     },
     "aoci.code.txt": {
       "role": "index",
-      "sha256": "25b86b06c6e6579ab05766c0b02e81b9fd0f1462dabdb9cf94f47eb7110e05fd",
-      "size": 55474,
-      "normalized_sha256": "25b86b06c6e6579ab05766c0b02e81b9fd0f1462dabdb9cf94f47eb7110e05fd"
+      "sha256": "3e1a751ec78880fc70069f77b4d5bf4f6fb86e3491779f3f65ff3487c97552a6",
+      "size": 56588,
+      "normalized_sha256": "3e1a751ec78880fc70069f77b4d5bf4f6fb86e3491779f3f65ff3487c97552a6"
     },
     "aoci.meta.txt": {
       "role": "index",
@@ -359,9 +359,9 @@
     },
     "app/updater.py": {
       "role": "index",
-      "sha256": "62254d8b55c3db24c3254aa09a51b943a049c277e49d85e59415af39a26c146c",
-      "size": 16013,
-      "normalized_sha256": "62254d8b55c3db24c3254aa09a51b943a049c277e49d85e59415af39a26c146c"
+      "sha256": "cfbf4c7a5d5a0eee8bf79c1b1cc369a6602dfed9bd20afb3ce19c67c84990ff3",
+      "size": 17924,
+      "normalized_sha256": "76127c5c02428e76318c7cfd8ea2daa44a01955808a577ae075ad2f80c65bfae"
     },
     "app/utils.py": {
       "role": "index",
@@ -473,9 +473,9 @@
     },
     "installer/setup_gui.py": {
       "role": "index",
-      "sha256": "bcc12a4c03ad1dd53a7f9b4452c96aebce1882c4f464b45b702c3c6b97a53151",
-      "size": 44326,
-      "normalized_sha256": "586a5afdefbccf1a285b66044fc3b7a6ca04bbb3b31583f6b1cadbca29917516"
+      "sha256": "f341e0ff9a45ecdef95d9d136acfb75012bbf90c99c94cd25616c2d2a9e220c7",
+      "size": 44703,
+      "normalized_sha256": "ac5776bdbe0b042da8a2446a70ba5a93066f1b52d799f08891638196272d7311"
     },
     "package-lock.json": {
       "role": "observe",
@@ -491,9 +491,9 @@
     },
     "radar.py": {
       "role": "index",
-      "sha256": "779e3a87d76c633a59c9410b48ec90f3618a998f4f8fd63cfcd4443ab89f10a6",
-      "size": 12034,
-      "normalized_sha256": "779e3a87d76c633a59c9410b48ec90f3618a998f4f8fd63cfcd4443ab89f10a6"
+      "sha256": "5807405e0589ffd8d0cf18b04e934c4a088f8d8428c8590084b24ecde33af4d6",
+      "size": 12492,
+      "normalized_sha256": "8be1cce944fc22871f7bcaea2314c58d964b0c500592d27f548674e9377a1bb9"
     },
     "radar_tray.pyw": {
       "role": "index",
@@ -711,6 +711,12 @@
       "size": 10652,
       "normalized_sha256": "e4962fd44a47d251f3d06a54d8fe14e67eb3bef13bb3a055129ff4ab0dd9a7dd"
     },
+    "tests/test_release_layout.py": {
+      "role": "observe",
+      "sha256": "c330d22199a60161fd93ea316e8fbcf2c192761dac323a91f7beb2a90be9765b",
+      "size": 1487,
+      "normalized_sha256": "c330d22199a60161fd93ea316e8fbcf2c192761dac323a91f7beb2a90be9765b"
+    },
     "tests/test_setup_wizard.py": {
       "role": "observe",
       "sha256": "0a47abb14cb4dce0498e8c1dd74a4f2d75ac1386ef19c1ad879b1848e8256c94",
@@ -737,9 +743,9 @@
     },
     "tests/test_updater.py": {
       "role": "observe",
-      "sha256": "c69e0c0632e352b6021f9b9d0f414e9b04e0cb9a3a81c3e4aa572990e0458314",
-      "size": 9367,
-      "normalized_sha256": "c69e0c0632e352b6021f9b9d0f414e9b04e0cb9a3a81c3e4aa572990e0458314"
+      "sha256": "0422009e35fa0058f2306c8c385e7ed646d6422c78efd6d0c970586cfadd3991",
+      "size": 10951,
+      "normalized_sha256": "0422009e35fa0058f2306c8c385e7ed646d6422c78efd6d0c970586cfadd3991"
     },
     "tests/test_websearch.py": {
       "role": "observe",
@@ -815,9 +821,9 @@
     },
     "tools/build_exe.py": {
       "role": "index",
-      "sha256": "ef44ddfa5c4fc44adf5f2dab74ce76ef1b9f6d0221b1c103a191865cec01eaea",
-      "size": 5740,
-      "normalized_sha256": "ef44ddfa5c4fc44adf5f2dab74ce76ef1b9f6d0221b1c103a191865cec01eaea"
+      "sha256": "86cb20f1570ddb11e09f8c743bfbd81929bda44433dba798f8e877a4b3d99e47",
+      "size": 6651,
+      "normalized_sha256": "d8a67159cbe88f86f3ae9599f6156109186db0d8b0df1889f07f52746ba0673e"
     },
     "tools/build_restore.py": {
       "role": "index",
@@ -839,9 +845,9 @@
     },
     "tools/packaging.py": {
       "role": "index",
-      "sha256": "64588eeb1c5e15f0915b2f0a4505eec7b0f0787f0442e47a1bedef4d51ac6b7c",
-      "size": 6989,
-      "normalized_sha256": "64588eeb1c5e15f0915b2f0a4505eec7b0f0787f0442e47a1bedef4d51ac6b7c"
+      "sha256": "de361454f578c6ff2b868bce4bdc38df8ef798deea06c304999704b6873efa28",
+      "size": 7221,
+      "normalized_sha256": "b28ef067864cb36a13a3ab8f6e1ffb1c16120aeef971942f9fa29c98803aa6d7"
     },
     "tools/probe.py": {
       "role": "index",
@@ -851,9 +857,15 @@
     },
     "tools/release.py": {
       "role": "index",
-      "sha256": "8a732031f09d4d1753e4250b00418e3ff4f98ac80cfb55a142d7118255d884f9",
-      "size": 15046,
-      "normalized_sha256": "9aaa559868726af5c89ef8818aca03d69be251f07ad4e509c7cbba81197f8892"
+      "sha256": "0822ef9e99661d80bbabe42d9d9866dd95e0d4d3c65e6916c967c4cc1d45760b",
+      "size": 17493,
+      "normalized_sha256": "15312cd63845c6b0fe7a985f9007b7c355d9db5b1866db47c93d3206d247406a"
+    },
+    "tools/release_paths.py": {
+      "role": "index",
+      "sha256": "c8782d9a8e7ce92295f853d92628cd801ed8ce944ab7f956d12d4808cb5f3f10",
+      "size": 1393,
+      "normalized_sha256": "c8782d9a8e7ce92295f853d92628cd801ed8ce944ab7f956d12d4808cb5f3f10"
     },
     "tools/repro_url_param.py": {
       "role": "index",

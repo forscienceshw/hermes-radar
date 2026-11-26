@@ -12,6 +12,7 @@ import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import release_paths
 from .vcs import ROOT, Repo, project_version
 
 # 整个目录收进来
@@ -126,7 +127,7 @@ def build(output: Path | None = None, root: Path = ROOT) -> BuildResult:
     version = info["version"]
     stamp = time.strftime("%Y%m%d")
     if output is None:
-        output = root / "dist" / f"hermes-radar-{version}-{stamp}.zip"
+        output = release_paths.zip_dir() / f"hermes-radar-{version}-{stamp}.zip"
     output.parent.mkdir(parents=True, exist_ok=True)
     total = 0
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:

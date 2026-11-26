@@ -218,6 +218,8 @@ def check(timeout: float = 8.0) -> dict[str, Any]:
         "checked_at": checked_at,
     }
     _write_state({**result, "downloaded": _downloaded_path(latest) is not None})
+    # 已经装上的旧包、以及更早版本的包都清掉；还在等安装的那一个留着。
+    cleanup_stale_installers(latest, current)
     return result
 
 
@@ -231,6 +233,38 @@ def _host_of(url: str) -> str:
 # --------------------------------------------------------------------------- #
 # 下载
 # --------------------------------------------------------------------------- #
+def cleanup_stale_installers(latest: str, current: str = "") -> int:
+    """只留下"还没装上的那个"安装包，其余删掉。
+
+    升级一次会往 data/updates 留一个 20~120 MB 的 exe。不清理的话，装过三版
+    就白占几百 MB，用户会以为是软件本身变大了。规则：
+      - 已经装上（current >= latest）：所有 RadarSetup-*.exe 都可以删
+      - 还没装（latest 更新）：保留 RadarSetup-<latest>.exe，删更早的
+      - 不知道 latest（断网）：调用方不要调这个函数，宁可留着也别把要用的包删了
+    """
+    if not latest or not UPDATE_DIR.is_dir():
+        return 0
+    current = current or current_version()
+    keep = ({f"RadarSetup-{latest}.exe", f"RadarSetup-{latest}.part"}
+            if is_newer(latest, current) else set())
+    removed = 0
+    for path in list(UPDATE_DIR.iterdir()):
+        if not path.is_file():
+            continue
+        name = path.name
+        if not (name.startswith("RadarSetup-") or name.endswith(".part")):
+            continue
+        if name in keep:
+            continue
+        try:
+            purge.unlink(path)
+            removed += 1
+        except OSError:
+            # 安装器自己正跑在这个 exe 上，Windows 锁着；下次启动再删。
+            continue
+    return removed
+
+
 def _downloaded_path(version: str) -> Path | None:
     target = UPDATE_DIR / f"RadarSetup-{version}.exe"
     if target.is_file() and target.stat().st_size > 1024 * 1024:

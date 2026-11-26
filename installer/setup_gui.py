@@ -433,10 +433,14 @@ class Engine:
             self._step("依赖没有变化，跳过安装", 70)
         else:
             self._step("安装依赖（最慢的一步，约 80 MB）…", 36)
-            for index, extra in enumerate(([], ["-i", MIRROR]), 1):
-                self.log(("用官方源" if index == 1 else "换清华镜像") + "安装依赖…")
+            # 国内直连 PyPI 经常卡在下载不动（socket 不报错也不给数据，pip 的重试
+            # 会一直等）。先走清华镜像；镜像缺包再退回官方源。超时与重试都收短，
+            # 失败要快，用户不能对着「正在安装」半小时。
+            for index, extra in enumerate((["-i", MIRROR], []), 1):
+                self.log(("用清华镜像" if index == 1 else "换官方源") + "安装依赖…")
                 code = self._stream([str(venv_python), "-m", "pip", "install", "-r", str(requirements),
-                                     "--disable-pip-version-check", *extra], timeout=5400)
+                                     "--disable-pip-version-check", "--timeout", "30", "--retries", "2",
+                                     *extra], timeout=5400)
                 if code == 0:
                     break
                 last_error = f"pip 返回 {code}"

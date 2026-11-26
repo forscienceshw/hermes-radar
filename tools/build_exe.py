@@ -24,8 +24,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-OUT = ROOT / "dist" / "exe"
-BUILD = ROOT / ".tmp" / "pyinstaller"
+from tools import release_paths  # noqa: E402
+
+# 安装包不许和源码仓库、软件安装目录混在一起：默认落 <盘根>\RadarReleases\v<版本>\。
+# PyInstaller 的中间目录也搬出去，构建完成后整个删掉，不在项目里留几百 MB。
+VERSION = (ROOT / "VERSION").read_text(encoding="utf-8").strip().splitlines()[0].strip()
+OUT = release_paths.version_dir(VERSION)
+BUILD = release_paths.build_dir() / "pyinstaller"
 ICON = ROOT / "assets" / "radar.ico"
 
 
@@ -87,7 +92,7 @@ def build_payload() -> Path:
     files, missing = packaging.collect(ROOT)
     if not files:
         raise SystemExit("打包白名单没有收集到任何文件")
-    target = OUT / "payload.zip"
+    target = BUILD / "payload.zip"
     target.parent.mkdir(parents=True, exist_ok=True)
     total = 0
     with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
@@ -149,7 +154,11 @@ def main() -> int:
             raise SystemExit("先构建 Radar.exe，再打安装包")
         setup = build_setup(launcher, build_payload())
         print(f"RadarSetup.exe：{setup.stat().st_size / 1024 / 1024:.1f} MB")
+    # 安装包已经打到独立目录了，PyInstaller 的中间产物没有留着的理由。
+    # 失败时保留（上面的异常会先退出），方便看日志。
+    shutil.rmtree(release_paths.build_dir(), ignore_errors=True)
     print(f"\n产物目录：{OUT}")
+    print(f"说明：这个目录与源码仓库、软件安装目录彼此独立，可用 RADAR_RELEASE_DIR 改位置。")
     return 0
 
 

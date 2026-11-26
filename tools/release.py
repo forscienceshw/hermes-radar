@@ -26,6 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from tools import release_paths  # noqa: E402
 from tools.vcs import Repo, project_version  # noqa: E402
 
 OWNER = "forscienceshw"
@@ -191,11 +192,53 @@ def build() -> Path:
     if result.returncode != 0:
         say((result.stdout or "")[-3000:])
         die("PyInstaller 失败，往上翻日志。")
-    exe = ROOT / "dist" / "exe" / ASSET
+    exe = release_paths.version_dir(project_version()) / ASSET
     if not exe.is_file():
         die(f"没找到产物 {exe}")
     say(f"  {exe}  {exe.stat().st_size / 1024 / 1024:.1f} MB")
     return exe
+
+
+def write_local_record(version: str, notes: str, asset: Path) -> Path:
+    """在安装包旁边留一份 release.json：以后要查这一版是多少 MB、哈希多少，不用翻日志。"""
+    record = {
+        "version": version,
+        "built_at": time.strftime("%Y-%m-%dT%H:%M:%S+08:00"),
+        "notes": notes,
+        "commit": run(["git", "rev-parse", "HEAD"], capture=True, check=False).stdout.strip(),
+        "asset": {
+            "name": ASSET,
+            "size": asset.stat().st_size,
+            "sha256": hashlib.sha256(asset.read_bytes()).hexdigest(),
+        },
+    }
+    path = asset.parent / "release.json"
+    path.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    say(f"  本地归档 {path}")
+    return path
+
+
+def verify_remote(version: str, asset: Path) -> None:
+    """发完必须从外部看一次：Release 附件的体积要和本地一致。
+
+    只核对体积不核对哈希：GitHub API 只给 size，哈希要下载 20+ MB 才知道，
+    而 version.json 里已经写死了 sha256（客户端下载后会自己校验）。
+    """
+    say("⑦ 外部核对")
+    status, payload = gh_api(f"repos/{OWNER}/{REPO}/releases/tags/v{version}", allow_404=True)
+    if status != 0 or not isinstance(payload, dict):
+        say("  读不到 Release，稍后自己看一眼：" f"https://github.com/{OWNER}/{REPO}/releases/tag/v{version}")
+        return
+    remote = next((item for item in payload.get("assets") or []
+                   if str(item.get("name", "")).lower() == ASSET.lower()), None)
+    local_size = asset.stat().st_size
+    if not remote:
+        die("Release 里没有安装包附件，别让用户下到一个空版本。")
+    remote_size = int(remote.get("size") or 0)
+    if remote_size != local_size:
+        die(f"附件体积对不上：远端 {remote_size} / 本地 {local_size}。重新上传一次。")
+    say(f"  Release 附件 {remote_size / 1024 / 1024:.1f} MB，与本地一致")
+    say(f"  version.json 已随代码推送，CDN 刷新后客户端下次启动即可看到 v{version}")
 
 
 def publish(version: str, title: str, notes: str, asset: Path) -> int:
@@ -314,15 +357,19 @@ def main(argv: list[str]) -> int:
 
     set_version(version)
     commit_and_tag(version, notes, push=not args.no_push, proxy=args.push_proxy)
-    asset = (ROOT / "dist" / "exe" / ASSET) if args.skip_build else build()
+    asset = (release_paths.version_dir(version) / ASSET) if args.skip_build else build()
     if not asset.is_file():
         die("没有安装包产物，去掉 --skip-build 再跑。")
+    write_local_record(version, notes, asset)
     publish(version, notes, notes, asset)
     write_manifest(version, notes, asset, push=not args.no_push, proxy=args.push_proxy)
+    verify_remote(version, asset)
 
     say("\n" + "=" * 60)
     say(f"发完了：v{version}")
     say(f"  Release  https://github.com/{OWNER}/{REPO}/releases/tag/v{version}")
+    say(f"  安装包  {asset}")
+    say(f"  发布目录 {release_paths.describe()}（与源码仓库、软件安装目录彼此独立）")
     say(f"  其它机器下次启动会在后台看到更新提示。")
     say("=" * 60)
     return 0

@@ -244,3 +244,21 @@
     test: ["test_workbench.py"]
   manual: 设置 → 参数设置 → 界面与阅读：选「经典弹层」后点任意条目，先看精读、离线阅读页在浏览器新标签打开；选回「阅读工作台」，点条目直接在软件里看原文
   notes: 两套界面都保留，只换渲染入口（showItemClassic / openWorkbench）；watchItem 的存活判断要按模式分别看 detailDialog.open 与 wbIsOpen；切换时把另一套收掉，否则两个 modal 同时挂在 top layer
+
+- id: release-directory
+  title: 安装包独立目录（与源码仓库、软件安装目录分开）
+  status: done
+  since: 2026-11-27
+  surfaces:
+    test: ["test_release_layout.py"]
+  manual: 发版后看 `radar.py where` 报的发布包目录；`RadarSetup.exe` 在 `<盘根>\RadarReleases\v<版本>\`，不在软件目录里
+  notes: 开发目录与生产目录同在 E 盘，都用 Path.parent 算到同一个 E:/RadarReleases；要改位置设 RADAR_RELEASE_DIR；PyInstaller 中间产物在 .build，构建成功即删
+
+- id: upgrade-cleanup
+  title: 升级后不留旧安装包与废弃文件
+  status: done
+  since: 2026-11-27
+  surfaces:
+    test: ["test_updater.py"]
+  manual: 装完新版本后看 `data/updates/`，只应剩下当前待装的包；装完再启动一次，目录里的 RadarSetup-*.exe 应被清空
+  notes: 安装器按 .payload-manifest.json 精确删除上一版独有文件，data/config/.venv 在 KEEP_ON_UPGRADE 里不碰；更新器只在拿到 latest 时清理，断网时宁可留着也不删要用的包

@@ -209,6 +209,39 @@ class DownloadTests(unittest.TestCase):
         self.assertFalse(list(self.root.glob("*.part")), "校验失败要留下干净的目录")
 
 
+class CleanupTests(unittest.TestCase):
+    """升级一次留一个 20~120 MB 的安装包，不清理会一直堆。"""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.patch = mock.patch.object(updater, "UPDATE_DIR", self.root)
+        self.patch.start()
+
+    def tearDown(self):
+        self.patch.stop()
+        self.temp.cleanup()
+
+    def test_keeps_the_pending_installer_only(self):
+        (self.root / "RadarSetup-1.0.0.exe").write_bytes(b"MZ")
+        (self.root / "RadarSetup-1.1.0.exe").write_bytes(b"MZ")
+        (self.root / "RadarSetup-1.1.0.part").write_bytes(b"MZ")
+        (self.root / "state.json").write_text("{}", encoding="utf-8")
+        removed = updater.cleanup_stale_installers("1.1.0", current="1.0.0")
+        self.assertEqual(removed, 1)
+        self.assertFalse((self.root / "RadarSetup-1.0.0.exe").exists())
+        self.assertTrue((self.root / "RadarSetup-1.1.0.exe").exists(), "还没装的包不能删")
+        self.assertTrue((self.root / "RadarSetup-1.1.0.part").exists(), "下到一半的包不能删")
+        self.assertTrue((self.root / "state.json").exists(), "状态文件不是安装包")
+
+    def test_after_install_every_package_is_disposable(self):
+        (self.root / "RadarSetup-1.0.0.exe").write_bytes(b"MZ")
+        (self.root / "RadarSetup-1.1.0.exe").write_bytes(b"MZ")
+        removed = updater.cleanup_stale_installers("1.1.0", current="1.1.0")
+        self.assertEqual(removed, 2)
+        self.assertFalse(list(self.root.glob("RadarSetup-*.exe")))
+
+
 class MirrorTests(unittest.TestCase):
     def test_mirror_prefix_only_touches_github(self):
         with mock.patch.object(updater, "get_settings", lambda: {"update_mirror": "https://ghproxy.net/"}):
