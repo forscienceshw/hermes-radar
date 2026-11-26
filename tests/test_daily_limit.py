@@ -7,7 +7,7 @@
 """
 import tempfile
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -69,6 +69,26 @@ class DailyLimitTest(unittest.TestCase):
     def test_reset_time_is_in_the_future(self):
         moment = datetime.fromisoformat(analyzer.next_local_reset())
         self.assertGreater(moment, datetime.now().astimezone().replace(microsecond=0))
+
+    def test_reset_after_midnight_is_still_in_the_future(self):
+        """刚过零点就撞额度时，不能把任务排到已经过去的今天零点。
+
+        旧实现会在 00:00–00:15 把基准挪回「今天 0 点」，再随机加几分钟，
+        结果可能是 00:01:52 而当时已经 00:06——任务立刻重跑、再撞额度，空转。
+        """
+        real = datetime
+
+        class FrozenAfterMidnight(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return real(2026, 11, 27, 0, 5, 0).astimezone(tz)
+
+        with patch.object(analyzer, "datetime", FrozenAfterMidnight):
+            moment = datetime.fromisoformat(analyzer.next_local_reset())
+            now = FrozenAfterMidnight.now().astimezone()
+        self.assertGreater(moment, now)
+        self.assertEqual(moment.date(), (now + timedelta(days=1)).date(),
+                         "00:05 撞额度只可能等明天，不该是今天已经过去的零点")
 
     def test_parking_keeps_item_alive(self):
         """worker 遇到额度错误：任务顺延、attempts 归零、条目状态不动。"""

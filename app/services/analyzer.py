@@ -438,13 +438,18 @@ def next_local_reset(spread_seconds: int = 900) -> str:
 
     保险丝按本地日期归零，但如果几百个任务都定在 00:00:00，第二天一开工
     就是一场雪崩。错峰 15 分钟，够 8 个并发把队列顺开。
+
+    注意别按「今天 0 点」算：00:05 时额度已经用满，说明今天这批就是刚用完的，
+    再排到「今天 0 点 + 随机几分钟」多半是过去时刻，任务会立刻重跑、再撞额度，
+    变成空转。只有次日零点才是真正能恢复的时刻。
     """
     now = datetime.now().astimezone()
     midnight = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-    if now.hour == 0 and now.minute < 15:
-        # 刚过零点还在同一批：别把今天的任务推到明天
-        midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
     moment = midnight + timedelta(seconds=random.uniform(0, max(0, spread_seconds)))
+    # 时钟被回拨或 spread 为 0 时兜底：排到过去只会让队列空转。
+    floor = now + timedelta(seconds=60)
+    if moment < floor:
+        moment = floor
     return moment.isoformat(timespec="seconds")
 
 

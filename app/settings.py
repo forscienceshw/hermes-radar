@@ -105,6 +105,12 @@ DEFAULTS: dict[str, Any] = {
         # 上限受云模型端限流和本机带宽约束，8 已经够用，再高收益很小。
         "concurrency": 3,
     },
+    # 点资料库条目时的排布。两套界面都保留，这里只决定用哪一套：
+    # workbench = 先看内嵌离线页，精读/笔记/Ideas 可并排；classic = 经典精读弹层，
+    # 离线页在浏览器新标签打开。改完即时生效，不需要重启服务。
+    "ui": {
+        "reading_mode": "workbench",
+    },
 }
 
 _LOCK = threading.RLock()

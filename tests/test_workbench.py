@@ -86,5 +86,44 @@ class WorkbenchMarkupTest(unittest.TestCase):
             self.assertIn(token, self.js, f"顶栏操作缺失 {token}")
 
 
+class ReadingModeSwitchTest(unittest.TestCase):
+    """两套排布都要留着，靠设置切换。
+
+    工作台是默认；经典弹层是改造前的界面——精读弹层 + 离线页走浏览器。
+    这里锁的是「别哪天清理代码时把老界面删了」和「设置项别只画在页面上不落库」。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.html = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
+        cls.js = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+        from app.settings import DEFAULTS
+        cls.defaults = DEFAULTS
+
+    def test_default_is_workbench(self):
+        self.assertEqual(self.defaults.get("ui", {}).get("reading_mode"), "workbench",
+                         "默认排布必须是工作台；老用户升级后不会突然换成没见过的界面")
+
+    def test_setting_control_exists(self):
+        self.assertIn('id="uiReadingMode"', self.html)
+        self.assertIn('value="workbench"', self.html)
+        self.assertIn('value="classic"', self.html)
+
+    def test_classic_reader_still_renders_and_opens_browser(self):
+        self.assertIn("async function showItemClassic(", self.js)
+        # 老界面的离线页按钮必须是新标签打开，不能悄悄换回 iframe。
+        self.assertIn('/archive" target="_blank">离线阅读页<', self.js)
+
+    def test_click_routes_through_setting(self):
+        self.assertIn("if(readingMode==='classic')return showItemClassic(id,silent)", self.js)
+        # 列表点击不能再直接开工作台，否则老界面形同虚设。
+        self.assertIn("await showItem(t.dataset.item)", self.js)
+        self.assertNotIn("await openWorkbench(t.dataset.item)", self.js)
+
+    def test_setting_is_persisted(self):
+        self.assertIn("ui:{reading_mode:$('#uiReadingMode').value}", self.js)
+        self.assertIn("body:{ui:{reading_mode:next}}", self.js)
+
+
 if __name__ == "__main__":
     unittest.main()
