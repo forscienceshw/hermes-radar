@@ -111,7 +111,8 @@ def ensure_wechat():
                            Path("C:/Program Files (x86)/Tencent/WeChat/WeChat.exe")])
         executable = next((path for path in candidates if path.is_file()), None)
         if executable:
-            subprocess.Popen([str(executable)], cwd=str(executable.parent), close_fds=True)
+            subprocess.Popen([str(executable)], cwd=str(executable.parent), close_fds=True,
+                             creationflags=CREATE_NO_WINDOW)
             with (DATA / "logs" / "startup.log").open("a", encoding="utf-8") as log:
                 log.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} launched WeChat\n")
     except Exception as exc:

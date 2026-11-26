@@ -262,3 +262,13 @@
     test: ["test_updater.py"]
   manual: 装完新版本后看 `data/updates/`，只应剩下当前待装的包；装完再启动一次，目录里的 RadarSetup-*.exe 应被清空
   notes: 安装器按 .payload-manifest.json 精确删除上一版独有文件，data/config/.venv 在 KEEP_ON_UPGRADE 里不碰；更新器只在拿到 latest 时清理，断网时宁可留着也不删要用的包
+
+- id: no-console-flash
+  title: 后台子进程不弹控制台窗口
+  status: done
+  since: 2026-11-27
+  surfaces:
+    test: ["test_console_audit.py"]
+    ui: []
+  manual: 装一次软件（向导全程不应出现任何黑框），再在资料库里点几次「精读」；任务栏不应闪出命令行窗口
+  notes: 图形宿主没有控制台，起 tasklist/pip/python 必须带 CREATE_NO_WINDOW；app/winproc.py 是唯一封装，安装器有本地 _hidden()；tools/console_audit.py 静态扫描，接了 radar.py check 与单元测试；借客户端登录态改用 psutil，彻底不起子进程

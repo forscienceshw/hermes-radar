@@ -483,7 +483,7 @@ class TrayApp:
                 [str(edge), f"--app={_url(app_window=True)}", f"--user-data-dir={PROFILE}",
                  "--no-first-run", "--no-default-browser-check", "--disable-features=Translate",
                  "--window-size=1480,980"],
-                cwd=str(ROOT), close_fds=True)
+                cwd=str(ROOT), close_fds=True, creationflags=CREATE_NO_WINDOW)
         except OSError as exc:
             self.balloon("打开窗口失败", f"{exc}\n已改用默认浏览器。")
             self.open_browser_tab()

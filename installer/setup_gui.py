@@ -40,6 +40,14 @@ UNINSTALL_KEY = rf"Software\Microsoft\Windows\CurrentVersion\Uninstall\{APP_ID}"
 RECORD_NAME = "install.json"
 MANIFEST_NAME = ".payload-manifest.json"
 KEEP_ON_UPGRADE = {"data", "config", ".venv", "node_modules", "logs", "inbox", "analysis"}
+# 安装向导是 --windowed 的 exe，自己没控制台。它拉起的 python / pip / venv 全是
+# 控制台程序，不带这个标志 Windows 会为每个子进程新开一个黑框，装一次能看到七八
+# 个窗口接连闪，用户以为程序崩了。所有子进程一律显式关窗。
+CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+
+
+def _hidden() -> dict[str, int]:
+    return {"creationflags": CREATE_NO_WINDOW}
 
 
 class SetupError(RuntimeError):
@@ -318,8 +326,7 @@ def find_python() -> tuple[Path, str] | None:
         try:
             probe = subprocess.run(
                 [str(path), "-c", "import sys;print('%d.%d' % sys.version_info[:2]);print(sys.executable)"],
-                capture_output=True, timeout=10, stdin=subprocess.DEVNULL,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                capture_output=True, timeout=10, stdin=subprocess.DEVNULL, **_hidden())
         except (OSError, subprocess.SubprocessError):
             continue
         if probe.returncode != 0:
@@ -415,14 +422,14 @@ class Engine:
         venv_python = venv_dir / "Scripts" / "python.exe"
         if not venv_python.is_file():
             result = subprocess.run([str(python_exe), "-m", "venv", str(venv_dir)],
-                                    capture_output=True, timeout=900)
+                                    capture_output=True, timeout=900, **_hidden())
             if result.returncode != 0:
                 raise SetupError("创建虚拟环境失败：\n" + result.stderr.decode("utf-8", "replace")[-1500:])
         self.log(f"虚拟环境就绪：{venv_python}")
 
         self._step("升级 pip…", 28)
         subprocess.run([str(venv_python), "-m", "pip", "install", "--upgrade", "pip", "-q"],
-                       capture_output=True, timeout=900)
+                       capture_output=True, timeout=900, **_hidden())
 
         current_requirements = _requirements_hash(target)
         requirements = target / "requirements.txt"
@@ -451,7 +458,7 @@ class Engine:
 
             self._step("校验依赖…", 78)
             check = subprocess.run([str(venv_python), "-c", "import fastapi,uvicorn,bs4,lxml;print('ok')"],
-                                   capture_output=True, timeout=180)
+                                   capture_output=True, timeout=180, **_hidden())
             if check.returncode != 0:
                 raise SetupError("依赖装上了但导入失败：\n" + check.stderr.decode("utf-8", "replace")[-1200:])
 
@@ -463,7 +470,7 @@ class Engine:
             [str(venv_python), "-c",
              "import sys;sys.path.insert(0,'.');from app.db import Database;from app.paths import DB_PATH;"
              "Database(DB_PATH);print('db ready')"],
-            cwd=str(target), capture_output=True, timeout=900)
+            cwd=str(target), capture_output=True, timeout=900, **_hidden())
         if init.returncode != 0:
             raise SetupError("数据库初始化失败：\n" + init.stderr.decode("utf-8", "replace")[-1500:])
         self.log("数据库就绪（已有资料不会被覆盖）")
@@ -492,7 +499,7 @@ class Engine:
         if not exe.is_file():
             return
         try:
-            flags = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+            flags = getattr(subprocess, "DETACHED_PROCESS", 0x00000008) | CREATE_NO_WINDOW
             subprocess.Popen([str(exe), "start"], cwd=str(target), close_fds=True,
                              creationflags=flags)
             self.log("已启动新版本")
@@ -503,7 +510,7 @@ class Engine:
         try:
             check = subprocess.run([str(venv_python), "-c",
                                     "import fastapi,uvicorn,bs4,lxml,httpx;print('ok')"],
-                                   capture_output=True, timeout=120)
+                                   capture_output=True, timeout=120, **_hidden())
         except (OSError, subprocess.SubprocessError):
             return False
         return check.returncode == 0
@@ -511,7 +518,8 @@ class Engine:
     # ---------------------------------------------------------------- 子步骤
     def _stream(self, command: list[str], timeout: float) -> int:
         process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                   text=True, encoding="utf-8", errors="replace", bufsize=1)
+                                   text=True, encoding="utf-8", errors="replace", bufsize=1,
+                                   **_hidden())
         started = time.monotonic()
         assert process.stdout is not None
         for line in process.stdout:
@@ -567,7 +575,8 @@ for path in {[str(p) for p in wanted]!r}:
     link.Save()
 print("shortcuts ok")
 """
-        result = subprocess.run([str(venv_python), "-c", code], capture_output=True, timeout=180)
+        result = subprocess.run([str(venv_python), "-c", code], capture_output=True, timeout=180,
+                                **_hidden())
         if result.returncode != 0:
             self.log("快捷方式创建失败（不影响使用）：" + result.stderr.decode("utf-8", "replace")[-300:])
         else:
@@ -868,7 +877,7 @@ class SetupApp(tk.Tk):
         if not exe.is_file():
             messagebox.showwarning(APP_NAME, "找不到 Radar.exe，可能安装没完成。", parent=self)
             return
-        subprocess.Popen([str(exe), "start"], cwd=str(self.options.target))
+        subprocess.Popen([str(exe), "start"], cwd=str(self.options.target), **_hidden())
         self.after(1500, lambda: __import__("webbrowser").open(f"http://127.0.0.1:{self.options.port}"))
 
     def _open_target(self) -> None:

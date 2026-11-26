@@ -1,0 +1,19 @@
+{
+  "paths": [
+    "app",
+    "installer",
+    "supervisor.pyw",
+    "radar_tray.pyw",
+    "start_radar.pyw",
+    "run_dev.pyw"
+  ],
+  "skip": [
+    "tests",
+    "tools",
+    "web",
+    "docs",
+    "analysis",
+    "install.py",
+    "radar.py"
+  ]
+}

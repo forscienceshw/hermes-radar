@@ -26,6 +26,7 @@ import ctypes
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 from ctypes import wintypes
@@ -75,19 +76,46 @@ class _MemoryBasicInformation(ctypes.Structure):
     ]
 
 
-def client_pids() -> list[int]:
-    """按内存占用从大到小列出 WorkBuddy.exe 的 PID。"""
-    if sys.platform != "win32":
-        return []
-    import subprocess
+def _client_pids_psutil() -> list[tuple[int, int]] | None:
+    """用 psutil 取进程，一个子进程都不起；psutil 不可用时返回 None。
+
+    以前这里跑 ``tasklist``。图形宿主（pythonw / --windowed）没有控制台，Windows
+    会给控制台子进程**新建一个黑框**，用户就看到命令行一闪。能不出进程就不出。
+    """
+    try:
+        import psutil
+    except ImportError:
+        return None
+    found: list[tuple[int, int]] = []
+    try:
+        processes = psutil.process_iter(["name", "memory_info"])
+    except (psutil.Error, OSError):
+        return None
+    for proc in processes:
+        try:
+            info = proc.info
+            name = str(info.get("name") or "")
+            if name.lower() != PROCESS_NAME.lower():
+                continue
+            memory = info.get("memory_info")
+            found.append((proc.pid, int(getattr(memory, "rss", 0) or 0)))
+        except (psutil.Error, OSError):
+            # 枚举过程中有进程退出、或系统进程不给看，跳过就行。
+            continue
+    return found
+
+
+def _client_pids_tasklist() -> list[tuple[int, int]]:
+    """psutil 缺席时的兜底：tasklist 必须关窗，否则黑框一闪。"""
+    from ..winproc import run_hidden
 
     try:
-        out = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {PROCESS_NAME}", "/FO", "CSV", "/NH"],
-                             capture_output=True, text=True, errors="ignore", timeout=15).stdout
+        out = run_hidden(["tasklist", "/FI", f"IMAGENAME eq {PROCESS_NAME}", "/FO", "CSV", "/NH"],
+                         capture_output=True, text=True, errors="ignore", timeout=15).stdout
     except (OSError, subprocess.SubprocessError):
         return []
     found: list[tuple[int, int]] = []
-    for line in out.splitlines():
+    for line in (out or "").splitlines():
         parts = [p.strip().strip('"') for p in line.split('","')]
         if len(parts) < 5 or not parts[0].lower().endswith(PROCESS_NAME.lower()):
             continue
@@ -97,6 +125,16 @@ def client_pids() -> list[int]:
         except (ValueError, IndexError):
             continue
         found.append((pid, mem))
+    return found
+
+
+def client_pids() -> list[int]:
+    """按内存占用从大到小列出 WorkBuddy.exe 的 PID。"""
+    if sys.platform != "win32":
+        return []
+    found = _client_pids_psutil()
+    if found is None:
+        found = _client_pids_tasklist()
     found.sort(key=lambda item: -item[1])
     return [pid for pid, _ in found]
 

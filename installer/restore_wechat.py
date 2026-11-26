@@ -34,6 +34,8 @@ APP_TITLE = "微信 3.9.9.43 恢复工具"
 DEFAULT_TARGET = Path(r"D:\program\WeChat")
 BACKUP_NAME = "wechat-backup.zip"
 RECORD = ".restore-record.json"
+# 恢复工具也是 --windowed 的，拉微信时别让 Windows 给个黑框。
+CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
 
 
 def bundle_dir() -> Path:
@@ -320,7 +322,8 @@ def gui() -> int:
         exe = target / "WeChat.exe"
         if exe.is_file() and messagebox.askyesno(APP_TITLE, "恢复好了。现在启动微信吗？", parent=root):
             try:
-                subprocess.Popen([str(exe)], cwd=str(target), close_fds=True)
+                subprocess.Popen([str(exe)], cwd=str(target), close_fds=True,
+                                 creationflags=CREATE_NO_WINDOW)
             except OSError as exc:
                 messagebox.showerror(APP_TITLE, f"启动失败：{exc}", parent=root)
 
