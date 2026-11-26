@@ -1,13 +1,13 @@
 {
-  "version": "1.0.0",
-  "released_at": "2026-11-17T21:00:49+08:00",
-  "notes": "首个公开发布：公众号库面板（近期推文/补录/排除）、论文标题匹配、微信 4.x 只读读取、自动更新",
-  "notes_url": "https://github.com/forscienceshw/hermes-radar/releases/tag/v1.0.0",
+  "version": "1.1.0",
+  "released_at": "2026-11-27T01:23:07+08:00",
+  "notes": "阅读工作台：点条目在软件内看离线原文，精读/笔记/Ideas 可并排；设置可切回经典弹层。升级保留资料库与设置，自动清理上一版遗留文件",
+  "notes_url": "https://github.com/forscienceshw/hermes-radar/releases/tag/v1.1.0",
   "min_version": "",
   "asset": {
     "name": "RadarSetup.exe",
-    "url": "https://github.com/forscienceshw/hermes-radar/releases/download/v1.0.0/RadarSetup.exe",
-    "size": 21796272,
-    "sha256": "971d790e357f94bd5f1ff5fcf9a07ac5b73904ac78ccc968731150d40300d5d6"
+    "url": "https://github.com/forscienceshw/hermes-radar/releases/download/v1.1.0/RadarSetup.exe",
+    "size": 22079388,
+    "sha256": "e96bc7ce1daff4e4e6d651c7f36721d54376103d012dba6aee69334f4287f3ec"
   }
 }
