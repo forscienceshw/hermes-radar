@@ -88,7 +88,8 @@ def main() -> int:
     env.setdefault("PYTHONUNBUFFERED", "1")
     env.setdefault("TEMP", str(ROOT / ".tmp"))
     env.setdefault("TMP", str(ROOT / ".tmp"))
-    creation = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+    # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW
+    creation = 0x00000008 | 0x00000200 | 0x08000000
     subprocess.Popen([str(PYTHONW), str(SUPERVISOR)], cwd=str(ROOT), env=env,
                      creationflags=creation, close_fds=True)
 

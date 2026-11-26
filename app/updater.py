@@ -28,6 +28,7 @@ import httpx
 
 from .paths import BASE_DIR, DATA_DIR
 from .services import purge
+from .winproc import CREATE_NO_WINDOW
 from .settings import get_settings
 
 REPOSITORY = "forscienceshw/hermes-radar"
@@ -390,6 +391,9 @@ def apply(version: str, restart: bool = True) -> dict[str, Any]:
     flags = 0
     flags |= getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
     flags |= getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+    # 安装器是 --windowed 的 GUI 程序，本来就没有控制台；带上这条是给以后换壳
+    # （比如临时用 python 脚本跑安装）留保险，免得从软件里拉起来时黑框一闪。
+    flags |= CREATE_NO_WINDOW
     subprocess.Popen(arguments, cwd=str(installer.parent), close_fds=True, creationflags=flags)
 
     stop_file = DATA_DIR / "STOP_RADAR"

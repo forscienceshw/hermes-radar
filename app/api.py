@@ -3,7 +3,6 @@ import io
 import json
 import os
 import platform
-import subprocess
 import sys
 import threading
 import time
@@ -29,6 +28,7 @@ from .services import wechat_panel, wechat_public
 from .settings import get_secret, get_settings, save_settings, secret_status, set_secret
 from .utils import (ARCHIVE_PAUSE_KEY, extract_bvid, extract_urls, job_error_is_retryable, json_loads, local_date,
                     now_iso, parse_time, redact_secrets, stable_json, utcnow)
+from .winproc import spawn
 
 configure_logging("web")
 db = Database()
@@ -1447,7 +1447,7 @@ def open_paper_wps(paper_id: str) -> dict[str, Any]:
     _, path = _paper_path(paper_id)
     wps = _wps_executable()
     if wps:
-        subprocess.Popen([str(wps), str(path)], close_fds=True)
+        spawn([wps, path], close_fds=True)
         application = "WPS"
     else:
         os.startfile(str(path))
@@ -1458,7 +1458,7 @@ def open_paper_wps(paper_id: str) -> dict[str, Any]:
 @app.post("/api/papers/{paper_id}/reveal")
 def reveal_paper(paper_id: str) -> dict[str, Any]:
     _, path = _paper_path(paper_id)
-    subprocess.Popen(["explorer.exe", "/select,", str(path)], close_fds=True)
+    spawn(["explorer.exe", "/select,", path], close_fds=True)
     return {"opened": True, "path": str(path), "directory": str(path.parent)}
 
 

@@ -142,6 +142,15 @@ def cmd_check(repo: Repo, full: bool) -> int:
     if not ok:
         print(output)
         return 1
+    print("检查子进程窗口 …")
+    from tools import console_audit
+    bad = [item for item in console_audit.audit(ROOT) if not item.allowed]
+    if bad:
+        for item in bad:
+            print(f"  ✗ {item.path}:{item.line}  {item.kind}")
+        print("  图形宿主里会弹黑框；加 creationflags=CREATE_NO_WINDOW 或 # console-ok: 原因")
+        return 1
+    print("  通过（没有会弹控制台的调用）")
     if not full:
         print("跑单元测试：radar.py check --full")
         return 0
@@ -179,7 +188,7 @@ def cmd_start(repo: Repo) -> int:
     if not pythonw.is_file():
         pythonw = python_exe()
     subprocess.Popen([str(pythonw), str(supervisor)], cwd=str(ROOT),
-                     creationflags=0x00000008)  # DETACHED_PROCESS
+                     creationflags=0x00000008 | 0x08000000)  # DETACHED_PROCESS | CREATE_NO_WINDOW
     print("已后台启动。等 5 秒左右，然后打开 http://127.0.0.1:8766")
     return 0
 
