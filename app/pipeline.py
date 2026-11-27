@@ -90,10 +90,10 @@ class JobRunner:
                                 skip_analysis=bool(payload.get("skip_analysis")),
                                 force_analysis=bool(payload.get("force_analysis")))
         elif kind == "papers_item":
-            await process_item_papers(self.db, payload["item_id"], archive_only=bool(payload.get("archive_only")),
-                                      skip_analysis=bool(payload.get("skip_analysis")),
-                                      download=payload.get("download"),
-                                      force_analysis=bool(payload.get("force_analysis")))
+            # 手动找论文 / 重试下载的载荷不带 analysis_after，默认 False：只下载，不精读。
+            await process_item_papers(self.db, payload["item_id"],
+                                      analysis_after=bool(payload.get("analysis_after")),
+                                      download=payload.get("download"))
         elif kind == "archive_history_batch":
             await self._archive_history_batch(payload)
         elif kind == "analyze_item":
@@ -239,7 +239,8 @@ class JobRunner:
         if not row or row["excluded_at"] or int(row["papers"] or 0) or not (row["text"] or "").strip():
             return
         try:
-            await process_item_papers(self.db, item_id, archive_only=True)
+            # 手动「重新精读」顺带重跑论文匹配：只补论文，精读由调用方那一步自己做。
+            await process_item_papers(self.db, item_id)
         except Exception as exc:
             log.warning("重新匹配论文失败 item=%s：%s", item_id, exc)
 
@@ -272,9 +273,14 @@ class JobRunner:
             await triage_archived_images(self.db, item_id)
         except Exception as exc:  # noqa: BLE001 - never block archiving on a vision call
             log.warning("归档后图片分诊跳过（%s）：%s", item_id, exc)
-        self.db.enqueue_job("papers_item", {"version": 1, "item_id": item_id, "archive_only": archive_only,
-                                            "skip_analysis": skip_analysis,
-                                            "force_analysis": force_analysis},
+        # 归档流程是唯一能说「顺手精读」的地方：手动「补全文」「找论文」都带
+        # skip_analysis / archive_only，到这里就是 False，论文步骤不会再排精读。
+        from .settings import get_settings
+        auto_analyze = bool(get_settings().get("analysis", {}).get("auto", True))
+        analysis_after = (not archive_only and not skip_analysis
+                          and (auto_analyze or force_analysis))
+        self.db.enqueue_job("papers_item", {"version": 1, "item_id": item_id,
+                                            "analysis_after": analysis_after},
                             dedupe_key=f"papers:{item_id}:initial", priority=55, max_attempts=4)
 
     def _source_gone(self, item_id: str, reason: str) -> None:

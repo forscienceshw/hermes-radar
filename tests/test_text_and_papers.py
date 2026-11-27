@@ -5,10 +5,23 @@
 - 论文按标题匹配时误配，会把不相干的 PDF 挂到文章下面。
 所以每条判据都要有正例和反例。
 """
+import json
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
+from app.db import Database
 from app.services.papers import candidate_titles, doi_from_links, title_similarity
-from app.utils import humanize_error_text, job_error_is_retryable
+from app.utils import humanize_error_text, job_error_is_retryable, now_iso
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _temp_root() -> Path:
+    root = ROOT / ".tmp"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
 
 WAF_PAGE = """<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>WAF拦截页面</title></head>
@@ -140,3 +153,58 @@ class CitationPdfMetaTest(unittest.TestCase):
         from app.services.papers import _citation_pdf_from_html
         self.assertEqual(_citation_pdf_from_html('<meta name="og:title" content="x">'), "")
         self.assertEqual(_citation_pdf_from_html(""), "")
+
+
+class ManualPaperJobPayloadTest(unittest.TestCase):
+    """「让软件去找论文」「重试下载」都只是下载 PDF，不许顺手排精读。
+
+    这是用户能直接看见的串线：点找论文，精读开始跑、点数被扣、条目状态被改。
+    所以这里不测内部函数签名，直接查真正入队的载荷。
+    """
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(dir=_temp_root())
+        self.db = Database(Path(self.temp.name) / "papers.db")
+        self.item_id = self.db.discover_item({
+            "url": "https://journal.example/article?id=10.1000/demo.1",
+            "title": "示例论文", "kind": "article",
+        })[0]
+        self.db.execute("""INSERT INTO papers(id,doi,title,status,created_at,updated_at)
+            VALUES('p-demo','10.1000/demo.1','示例论文','failed',?,?)""",
+                        (now_iso(), now_iso()))
+        self.db.execute("INSERT INTO item_papers(item_id,paper_id,evidence) VALUES(?,?,?)",
+                        (self.item_id, "p-demo", "test"))
+        self.patch = patch("app.api.db", self.db)
+        self.patch.start()
+
+    def tearDown(self):
+        self.patch.stop()
+        self.temp.cleanup()
+
+    def _payload(self):
+        row = self.db.one("""SELECT payload_json FROM jobs WHERE kind='papers_item'
+            ORDER BY created_at DESC""")
+        self.assertIsNotNone(row, "应该排了一个 papers_item 任务")
+        return json.loads(row["payload_json"])
+
+    def test_find_papers_never_asks_for_analysis(self):
+        from app.api import fetch_item_papers
+        self.assertEqual(fetch_item_papers(self.item_id), {"queued": True})
+        payload = self._payload()
+        self.assertTrue(payload.get("download"))
+        self.assertFalse(payload.get("analysis_after"), "找论文不该带精读开关")
+        self.assertIsNone(self.db.one("SELECT id FROM jobs WHERE kind='analyze_item'"))
+
+    def test_retry_paper_never_asks_for_analysis(self):
+        from app.api import retry_paper
+        retry_paper("p-demo")
+        self.assertFalse(self._payload().get("analysis_after"))
+        self.assertIsNone(self.db.one("SELECT id FROM jobs WHERE kind='analyze_item'"))
+
+    def test_item_detail_calls_the_job_papers_not_archive(self):
+        """状态条要说「在找论文」，不能笼统写成正在归档原文。"""
+        from app.api import item_detail
+        self.db.enqueue_job("papers_item",
+                            {"version": 1, "item_id": self.item_id, "analysis_after": False},
+                            dedupe_key=f"papers:{self.item_id}:test", priority=30)
+        self.assertEqual(item_detail(self.item_id)["active_job"], "papers")

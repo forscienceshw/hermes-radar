@@ -138,10 +138,31 @@ class CoreTests(unittest.TestCase):
         self.db.update_archive(item_id, {"title": "Paper", "text": "DOI 10.1371/journal.pone.0000001 and figure 10.1371/journal.pone.0000001.g001 and ref 10.1000/reference.1",
                                                "html_path": None, "raw_path": str(raw), "metadata": {}})
         with patch("app.services.papers.resolve_and_download", new=AsyncMock()):
-            asyncio.run(process_item_papers(self.db, item_id, archive_only=True))
+            asyncio.run(process_item_papers(self.db, item_id))
         rows = self.db.query("SELECT doi FROM papers")
         self.assertEqual([x["doi"] for x in rows], ["10.1371/journal.pone.0000001"])
         self.assertIsNone(self.db.one("SELECT id FROM jobs WHERE kind='analyze_item'"))
+
+    def test_paper_step_only_analyzes_when_explicitly_asked(self):
+        """找论文 ≠ 精读：手动找论文 / 重试下载不传 analysis_after，就不该冒出精读任务。
+
+        以前这里按 analysis.auto 默认排一次云精读，手动找论文的载荷没写开关，
+        点「让软件去找论文」其实在跑精读，花点数还改条目状态。
+        """
+        from app.services.papers import process_item_papers
+        item_id = self.discover("https://journal.example/article?id=10.1000/demo.1", "论文")
+        raw = Path(self.temp.name) / "raw.html"
+        raw.write_text('<meta name="citation_doi" content="10.1000/demo.1">', encoding="utf-8")
+        self.db.update_archive(item_id, {"title": "Paper", "text": "DOI 10.1000/demo.1",
+                                         "html_path": None, "raw_path": str(raw), "metadata": {}})
+        with patch("app.services.papers.resolve_and_download", new=AsyncMock()):
+            asyncio.run(process_item_papers(self.db, item_id))
+        self.assertIsNone(self.db.one("SELECT id FROM jobs WHERE kind='analyze_item'"),
+                          "默认不该排精读")
+        with patch("app.services.papers.resolve_and_download", new=AsyncMock()):
+            asyncio.run(process_item_papers(self.db, item_id, analysis_after=True))
+        self.assertIsNotNone(self.db.one("SELECT id FROM jobs WHERE kind='analyze_item'"),
+                             "归档流程明确要求时才排精读")
 
     def test_english_paper_rule_relevance(self):
         from app.services.analyzer import _rules_analysis

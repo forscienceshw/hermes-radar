@@ -93,6 +93,23 @@ class WorkbenchMarkupTest(unittest.TestCase):
                       '/api/papers/', 'paperPaneHTML'):
             self.assertIn(token, self.js, f"论文栏缺少 {token}")
 
+    def test_paper_fetch_is_only_about_papers(self):
+        """「让软件去找论文」只找 PDF：不进精读、不花点数，面板里要看得见在进行。"""
+        self.assertIn("x.active_job==='papers'", self.js)
+        self.assertIn("只查找并下载 PDF，不会重新精读", self.js)
+        self.assertIn("${busy?' disabled':''}", self.js)
+        self.assertIn("'正在找开放论文并下载 PDF…（不动精读）'", self.js)
+        # 任务收尾也不能把「找论文」说成「精读已完成」
+        self.assertIn("找论文结束：只下载了 PDF，没有精读", self.js)
+        self.assertIn("'papers_item':'找论文'", self.js)
+        # 手动找论文的请求只发这一个端点，绝不顺带调精读
+        body = self.js.split("async function fetchItemPapers(", 1)[1].split("\n}", 1)[0]
+        self.assertIn("/papers/fetch", body)
+        self.assertNotIn("/reanalyze", body)
+        # 补正文的按钮叫「补全文」，别再和「找论文」撞名
+        self.assertIn(">补全文</button>", self.js)
+        self.assertNotIn("让软件去找原文", self.js)
+
     def test_action_track_pages_by_whole_buttons(self):
         """操作条只有两页，每页一组固定、不重复的按钮；宽度按页宽实时算，不写死像素。"""
         # 两页各是一个满宽容器，翻页平移整条 reel —— 第二页结构上不可能混进第一页的按钮

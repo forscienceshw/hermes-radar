@@ -677,7 +677,7 @@ $('#waRows').addEventListener('click',e=>{
 let listRefreshTimer=null;
 function itemStage(x){
   if(x.status==='discovered'){
-    if(x.processing_policy==='history_index_only') return {badge:'仅索引',text:'仅保存了索引，尚未抓取正文；在详情里点「让软件去找原文」即可补全文'};
+    if(x.processing_policy==='history_index_only') return {badge:'仅索引',text:'仅保存了索引，尚未抓取正文；在详情里点「补全文」即可抓正文与配图（不精读）'};
     return {badge:'待归档',text:'排队等待归档…'};
   }
   if(x.status==='archived') return {badge:'已归档',text:'正文与图片已保存，等待精读'};
@@ -1049,7 +1049,13 @@ function watchItem(id){if(detailWatchId===id&&detailWatchTimer)return;stopItemWa
     // 刚点完「重新精读」时任务还没进库，前两次看不到 active_job 是正常的，别急着收摊。
     const job=x.last_job||{};
     const queued=x.active_job||['READY','LEASED','RETRY_WAIT'].includes(String(job.state||''));
-    if(!queued&&ticks>2){stopItemWatch();toast(hasAnalysis?'精读已完成，结果已更新':'处理已结束，可查看最新状态')}
+    if(!queued&&ticks>2){stopItemWatch();
+      // 收尾文案必须认任务类型：点「找论文」却弹「精读已完成」，用户当然以为
+      // 自己不小心触发了精读。这三件事各说各的。
+      const kind=String(job.kind||'');
+      toast(kind==='papers_item'?'找论文结束：只下载了 PDF，没有精读'
+        :kind==='archive_item'?'原文与配图已归档'
+        :hasAnalysis?'精读已完成，结果已更新':'处理已结束，可查看最新状态')}
     wbRenderJob(x);
     await refreshOpenReader(id)}catch(e){stopItemWatch()}},3000)}
 const READ_STEP_FIELDS=[['why','为什么做这一步'],['did','具体做了什么'],['saw','看到了什么'],['means','说明什么']];
@@ -1196,7 +1202,7 @@ async function wbSetView(pane,view,opts={}){
   if(view==='ideas')return wbRenderIdeas(pane);
 }
 function wbReaderHTML(x){
-  if(!x.html_path)return `<div class="wb-empty"><b>这篇还没有离线阅读页</b><p class="muted">正文与配图还没归档。完成后这里会自动出现原文；也可以先看精读。</p>${x.status==='discovered'?`<button type="button" class="primary" data-process="${x.id}">让软件去找原文</button>`:'<span class="muted">正在处理，完成后自动刷新。</span>'}</div>`;
+  if(!x.html_path)return `<div class="wb-empty"><b>这篇还没有离线阅读页</b><p class="muted">正文与配图还没归档。完成后这里会自动出现原文；也可以先看精读。</p>${x.status==='discovered'?`<button type="button" class="primary" data-process="${x.id}" title="只抓正文与配图，不调用云精读">补全文</button>`:'<span class="muted">正在处理，完成后自动刷新。</span>'}</div>`;
   const src=`/api/items/${encodeURIComponent(x.id)}/archive`;
   return `<iframe data-src="${src}" src="${src}" title="离线阅读页" loading="eager"></iframe>`;
 }
@@ -1236,6 +1242,9 @@ function paperLabel(p){
 function paperPaneHTML(x,opts={}){
   const ready=paperReady(x);
   const all=(x&&x.papers)||[];
+  // 找论文是独立任务：面板里要看得见「正在找」，而且必须说清它不碰精读。
+  const busy=!!(x&&(x.active_job==='papers'
+    ||((x.last_job||{}).kind==='papers_item'&&['READY','LEASED','RETRY_WAIT'].includes(String((x.last_job||{}).state||'')))));
   if(!ready.length){
     const tries=all.length?`<ul class="wb-paper-tries">${all.map(p=>`<li><code>${esc(paperLabel(p))}</code> · ${esc(p.status||'未下载')}${p.error?` · ${esc(String(p.error).slice(0,140))}`:''}</li>`).join('')}</ul>`:'';
     return `<div class="wb-paper-pane"><div class="wb-empty wb-paper-empty">
@@ -1244,10 +1253,10 @@ function paperPaneHTML(x,opts={}){
       <p class="muted">这条推文没有能直接下载的开放论文——可能是付费墙、出版社限制，或者正文里没识别到 DOI。可以让软件再找一次，也可以把手动下载好的 PDF 传上来。</p>
       ${tries}
       <div class="wb-paper-actions">
-        <button type="button" class="primary" data-paper-fetch="${x.id}">让软件去找论文</button>
+        <button type="button" class="primary" data-paper-fetch="${x.id}"${busy?' disabled':''}>${busy?'正在找…':'让软件去找论文'}</button>
         <button type="button" data-paper-upload="${x.id}">上传 PDF</button>
       </div>
-      <p class="muted wb-paper-tip">上传后按这篇推文归档，并自动提取文字供精读引用。文件落在 data/papers/ 下这篇的文件夹里。</p>
+      <p class="muted wb-paper-tip">${busy?'正在找开放论文并下载 PDF。这一步不会重新精读，也不花精读点数。':'只查找并下载 PDF，不会重新精读。上传的 PDF 会按这篇推文归档，并提取文字供精读引用。'}</p>
     </div></div>`;
   }
   const index=Math.max(0,Math.min(opts.index||0,ready.length-1));
@@ -1353,8 +1362,9 @@ function wbJobText(x){
     }
     return '正在精读这篇…';
   }
-  if(job==='archive')return '正在归档原文与配图…';
-  if(job==='verify')return '原文要人机验证，等它放开…';
+    if(job==='archive')return '正在归档原文与配图…';
+    if(job==='papers')return '正在找开放论文并下载 PDF…（不动精读）';
+    if(job==='verify')return '原文要人机验证，等它放开…';
   return '';
 }
 function wbRenderJob(x){
@@ -1366,7 +1376,8 @@ function wbRenderJob(x){
     el.innerHTML=`<i class="spin"></i><span>${esc(text)}</span>`;
   }else if(failed){
     el.hidden=false;el.classList.add('failed');
-    el.textContent=`上次处理失败：${String(x.last_job.error).slice(0,60)}`;
+    const label={'papers_item':'找论文','analyze_item':'精读','archive_item':'归档'}[(x.last_job||{}).kind]||'处理';
+    el.textContent=`上次${label}失败：${String(x.last_job.error).slice(0,60)}`;
   }else{
     el.hidden=true;el.textContent='';
   }
@@ -1492,12 +1503,17 @@ function uploadPaper(itemId,paperId){
   };
   input.click();
 }
-async function fetchItemPapers(itemId){
+async function fetchItemPapers(itemId,btn){
+  // 先把按钮本身改掉：网络慢的时候不能只剩一个 toast，用户会以为没点上。
+  if(btn){btn.disabled=true;btn.textContent='正在找…'}
   try{
     const r=await api(`/api/items/${itemId}/papers/fetch`,{method:'POST'});
-    toast(r.already_running?'已经在找了，完成后论文栏会自动刷新':'已开始查找开放论文，完成后论文栏会出现 PDF');
+    toast(r.already_running?'已经在找论文了，只下载 PDF，不会动精读':'已开始找开放论文（只下载 PDF，不碰精读），完成后论文栏自动刷新');
     watchItem(itemId);
-  }catch(e){toast(e.message)}
+  }catch(e){
+    if(btn){btn.disabled=false;btn.textContent='让软件去找论文'}
+    toast(e.message);
+  }
 }
 function askCurrentItem(){
   const item=window.__currentItem||wb.item;
@@ -1758,7 +1774,7 @@ async function showItemClassic(id,silent,forceRender){
   const acts=[x.html_path?`<a class="button" href="/api/items/${x.id}/archive" target="_blank">离线阅读页</a>`:'',
     `<a class="button" href="${esc(x.url)}" target="_blank" rel="noopener">打开原文</a>`,
     x.metadata&&x.metadata.original_share_url&&x.metadata.original_share_url!==x.url?`<a class="button" href="${esc(x.metadata.original_share_url)}" target="_blank" rel="noopener">原始分享短链</a>`:'',
-    x.excluded_at?'':(x.status==='discovered'?`<button class="primary" data-process="${x.id}">让软件去找原文</button>`:`<button data-reanalyze="${x.id}">重新精读</button>`),
+    x.excluded_at?'':(x.status==='discovered'?`<button class="primary" data-process="${x.id}" title="只抓正文与配图，不调用云精读">补全文</button>`:`<button data-reanalyze="${x.id}">重新精读</button>`),
     `<button type="button" data-verify-source="${x.id}">检查原文</button>`,
     ((x.metadata||{}).images||[]).length?`<button type="button" data-retriage="${x.id}">重新检查配图</button>`:'',
     `<button type="button" data-collect="${x.id}" data-collect-type="item" data-collect-ids="${(x.collections||[]).join(',')}">收藏到…</button>`,
@@ -2090,7 +2106,7 @@ if(t.dataset.classicView){await switchClassicView(t.dataset.classicView);return}
 if(t.dataset.wbPaperOpen!==undefined){wbToggleSide('paper');return}
 if(t.dataset.smartCollect){const x=await api('/api/items/'+encodeURIComponent(t.dataset.smartCollect));await suggestCollections(x,{manual:true});return}
 if(t.dataset.paperUpload){await uploadPaper(t.dataset.paperUpload,t.dataset.paperUploadTarget||'');return}
-if(t.dataset.paperFetch){await fetchItemPapers(t.dataset.paperFetch);return}
+if(t.dataset.paperFetch){await fetchItemPapers(t.dataset.paperFetch,t);return}
 if(t.dataset.delete){await deleteItem(t.dataset.delete);return}
 if(t.dataset.ruleFrom){await openRuleDialog({account:t.dataset.ruleFrom,scope:'account',field:'title',patterns:''});return}
 if(t.dataset.ruleToggle!==undefined){await api(`/api/filter-rules/${t.dataset.ruleToggle}`,{method:'PATCH',body:{enabled:t.dataset.enabled!=='1'}});await loadRuleList();reloadItems();return}

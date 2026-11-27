@@ -354,9 +354,16 @@ async def _guess_dois(db: Database, item_id: str, body_text: str, raw_text: str,
     return list(kept), kept
 
 
-async def process_item_papers(db: Database, item_id: str, archive_only: bool = False,
-                              skip_analysis: bool = False, download: bool | None = None,
-                              force_analysis: bool = False) -> None:
+async def process_item_papers(db: Database, item_id: str, analysis_after: bool = False,
+                              download: bool | None = None) -> None:
+    """找论文、下载 PDF。**只做这件事**。
+
+    以前这里顺手按 analysis.auto 排一次精读。结果手动「让软件去找论文」和
+    「重试下载」的载荷里没写 skip_analysis，默认 False 就被当成「要精读」——
+    用户点找论文，跑的却是云精读（花点数、改条目状态），读成「点了 A 触发 B」。
+    现在改成显式开关：只有归档流程明确传 analysis_after=True 才排精读，
+    手动找论文 / 重试下载一律不传，结构上不可能再串。
+    """
     item = db.one("SELECT id,url,text,raw_path,excluded_at FROM items WHERE id=?", (item_id,))
     if not item:
         raise ValueError("条目不存在")
@@ -417,7 +424,7 @@ async def process_item_papers(db: Database, item_id: str, archive_only: bool = F
             except Exception as exc:
                 db.execute("UPDATE papers SET status='failed',error=?,updated_at=? WHERE id=?",
                            (str(exc)[:4000], now_iso(), paper_id))
-    auto_analyze = bool(get_settings().get("analysis", {}).get("auto", True))
-    if not archive_only and not skip_analysis and (auto_analyze or force_analysis):
+    # 归档后要不要顺手精读，只由调用方明确决定（analysis_after）。论文步骤自己不猜。
+    if analysis_after:
         db.enqueue_job("analyze_item", {"version": 1, "item_id": item_id},
                        dedupe_key=f"analyze:{item_id}:initial", priority=60, max_attempts=4)

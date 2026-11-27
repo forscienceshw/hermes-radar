@@ -1084,6 +1084,9 @@ def items(q: str = "", kind: str = "", status: str = "", limit: int = 50, offset
             reason = str(job.get("last_error") or "")
             if job["kind"] == "analyze_item":
                 busy[item_id] = "analyze"
+            elif job["kind"] == "papers_item":
+                # 找论文不是「归档原文」：状态条上要说出它到底在干什么。
+                busy[item_id] = "papers"
             elif "人机验证" in reason or "微信验证" in reason:
                 # 被微信挡住的不是「正在归档」，是「在等微信放行」——
                 # 两种状态混在一起，用户只会觉得软件卡死了。
@@ -1114,6 +1117,8 @@ def item_detail(item_id: str) -> dict[str, Any]:
         item["active_job"] = None
     elif job["kind"] == "analyze_item":
         item["active_job"] = "analyze"
+    elif job["kind"] == "papers_item":
+        item["active_job"] = "papers"
     elif "人机验证" in reason or "微信验证" in reason:
         item["active_job"] = "verify"
     else:
@@ -1282,8 +1287,10 @@ def fetch_item_papers(item_id: str) -> dict[str, Any]:
         AND kind='papers_item' AND json_extract(payload_json,'$.item_id')=?""", (item_id,))
     if running:
         return {"queued": True, "already_running": True}
+    # 只找论文、只下载 PDF。analysis_after 明确写 False——论文和精读是两件事，
+    # 这一条载荷里不许出现任何能让后台顺手排精读的字段。
     db.enqueue_job("papers_item", {"version": 1, "item_id": item_id, "download": True,
-                                   "skip_analysis": True},
+                                   "analysis_after": False},
                    dedupe_key=f"papers:{item_id}:manual:{uuid.uuid4()}", priority=30, max_attempts=3)
     return {"queued": True}
 
@@ -1660,7 +1667,9 @@ def retry_paper(paper_id: str) -> dict[str, Any]:
     if not link:
         raise HTTPException(404, "论文没有关联条目")
     db.execute("UPDATE papers SET status='discovered',error=NULL WHERE id=?", (paper_id,))
-    db.enqueue_job("papers_item", {"version": 1, "item_id": link["item_id"]},
+    # 重试下载同样只是下载：别因为重试一个 PDF 顺手跑一次云精读。
+    db.enqueue_job("papers_item", {"version": 1, "item_id": link["item_id"],
+                                   "analysis_after": False},
                    dedupe_key=f"papers:{link['item_id']}:retry:{uuid.uuid4()}", priority=20, max_attempts=4)
     return {"queued": True}
 

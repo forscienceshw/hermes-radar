@@ -231,7 +231,7 @@
     api: ["GET /api/items/{item_id}/archive"]
     ui: ["#workbench", "#wbBody", "#wbClose", "#wbSideSwitch", "#wbItemActions", "#wbActTrack", "#wbActReel", "#wbActPinned", "#wbJob"]
     test: ["test_workbench.py"]
-  manual: 点资料库条目 → 离线页单栏居中；点「精读」→ 原文让到左、精读进右；点「论文」→ 右栏换成 PDF；点「原文」→ 收起并排回到只看原文；关掉一栏 → 自动回居中；点暗处与按 Esc 都不关，只有 ✕ 关；顶栏「问 AI / 删除」常驻在轨道外永远可点；第一页固定「打开原文 / 检查原文 / 收藏到… / 智能收藏」，第二页放「原始短链 / 重新精读 / 重新检查配图 / 屏蔽此类」，点箭头整页换一组且两页不重复；拉窗口宽度时条子跟着变长变短，任一个按钮的框都不许被切；任务跑着的时候按钮行与正文都不许自己抖；没有离线页时点「让软件去找原文」只抓正文与配图，不排精读
+  manual: 点资料库条目 → 离线页单栏居中；点「精读」→ 原文让到左、精读进右；点「论文」→ 右栏换成 PDF；点「原文」→ 收起并排回到只看原文；关掉一栏 → 自动回居中；点暗处与按 Esc 都不关，只有 ✕ 关；顶栏「问 AI / 删除」常驻在轨道外永远可点；第一页固定「打开原文 / 检查原文 / 收藏到… / 智能收藏」，第二页放「原始短链 / 重新精读 / 重新检查配图 / 屏蔽此类」，点箭头整页换一组且两页不重复；拉窗口宽度时条子跟着变长变短，任一个按钮的框都不许被切；任务跑着的时候按钮行与正文都不许自己抖；没有离线页时点「补全文」只抓正文与配图，不排精读
   notes: 切 tab 用 visibility 藏 iframe（display:none 会重置内部滚动位置）；Esc 合成的 cancel 是 cancelable:false，必须拦 keydown；离线页不能加 X-Frame-Options；四种右栏（精读/论文/笔记/Ideas）抢同一块位置，「原文」按钮是收起并排的出口；顶栏操作条两页的切点是固定的 4（wb.actSplit=first.length），不许再按宽度漂移——切点一变，用户刚记住第几页有什么就乱了；每页是轨道满宽的独立容器，翻页靠平移 reel 而不是 scroll，平移不参与布局，不会被重排打断，也不会露出隔壁页的半个按钮；宽度只由 wbPlanPages 按实测按钮宽度与可用空间算，窗口变了只改长度不改分组；当前页存 wb.actPage，重渲染后还原；轮询每 3 秒回一次，按钮行与正文都按签名（wb.actSig / wbItemSig）判断，内容没变一律不重建——重建会把光标下的按钮换人、把正在读的那一栏滚回顶部、把 PDF 的 iframe 重新加载；toast 要挂进最上层 modal 子树，body 里的浮层会被工作台遮罩压住
 
 - id: action-feedback
@@ -252,9 +252,9 @@
   surfaces:
     api: ["POST /api/items/{item_id}/paper", "POST /api/items/{item_id}/papers/fetch", "GET /api/papers/{paper_id}/file"]
     ui: ["#wbSideSwitch", "data-paper-upload", "data-paper-fetch"]
-    test: ["test_paper_upload.py", "test_workbench.py"]
-  manual: 打开一条没有 PDF 的条目点「论文」→ 显示「尚未下载到原论文」；点「上传 PDF」选一个本地文件 → 提示页数/字数，PDF 立刻显示；再点「让软件去找论文」→ 任务队列出现 papers_item
-  notes: 上传走 POST 原始 body（校验 %PDF- 与 max_pdf_mb），落 paper_folder(doi)/paper.pdf 并写 papers 行 + item_papers(evidence='手动上传')；pypdf 提页数与文字到 paper.txt，供精读复用；没有 PDF 时才显示上传入口
+    test: ["test_paper_upload.py", "test_workbench.py", "test_text_and_papers.py"]
+  manual: 打开一条没有 PDF 的条目点「论文」→ 显示「尚未下载到原论文」；点「上传 PDF」选一个本地文件 → 提示页数/字数，PDF 立刻显示；再点「让软件去找论文」→ 按钮变「正在找…」并禁用、标题下出现「正在找开放论文并下载 PDF…」，任务队列只出现 papers_item（绝不出现 analyze_item），完成后弹「找论文结束：只下载了 PDF，没有精读」
+  notes: 上传走 POST 原始 body（校验 %PDF- 与 max_pdf_mb），落 paper_folder(doi)/paper.pdf 并写 papers 行 + item_papers(evidence='手动上传')；pypdf 提页数与文字到 paper.txt，供精读复用；没有 PDF 时才显示上传入口；找论文是独立任务：按钮点下立即变「正在找…」并禁用，active_job='papers' 时标题下给状态条，收尾 toast 认任务类型（找论文≠精读）；process_item_papers 只在 analysis_after=True 时排精读，手动找论文与重试下载永远不排
 
 - id: workbench-action-pager
   title: 工作台顶栏操作条，放不下就用两侧小箭头翻页
@@ -285,8 +285,8 @@
     api: ["GET /api/settings", "PUT /api/settings"]
     ui: ["#autoDownloadPapers", "#autoAnalyze"]
     test: ["test_workbench.py"]
-  manual: 设置里把「自动下载开放论文」设为关闭 → 新条目归档后不再下 PDF，论文栏显示「尚未下载到原论文」；把「自动生成精读」设为关闭 → 归档后不排精读任务；手点「重新精读」仍会跑（force_analysis=True 绕过开关），但「让软件去找原文」只补正文、任何时候都不排精读
-  notes: papers.auto_download 默认 false、analysis.auto 默认 true；process_item_papers(download=None) 时回退读设置，老任务 payload 不写 download 也能跑；手动精读走 /reanalyze 带 force=True 绕过开关；找原文走 /process 且 payload 带 skip_analysis=True——不带的话「补正文」会顺手花一次点数，用户读成「点了 A 触发了 B」
+  manual: 设置里把「自动下载开放论文」设为关闭 → 新条目归档后不再下 PDF，论文栏显示「尚未下载到原论文」；把「自动生成精读」设为关闭 → 归档后不排精读任务；手点「重新精读」仍会跑（force_analysis=True 绕过开关），但「补全文」只补正文、「让软件去找论文」只下 PDF，两者任何时候都不排精读
+  notes: papers.auto_download 默认 false、analysis.auto 默认 true；process_item_papers(download=None) 时回退读设置，老任务 payload 不写 download 也能跑；手动精读走 /reanalyze 带 force=True 绕过开关；补正文走 /process 且 payload 带 skip_analysis=True；找论文走 /papers/fetch，payload 明确 analysis_after=False——process_item_papers 自己不再按 analysis.auto 猜要不要精读，只有归档流程显式传 analysis_after=True 才排，手动找论文/重试下载结构上不可能串到精读
 
 - id: smart-collect
   title: 智能收藏（点按钮才推荐，不自动弹窗）
