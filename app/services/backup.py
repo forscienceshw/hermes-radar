@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from ..paths import BASE_DIR, DATA_DIR, DB_PATH
+from ..settings import get_settings
 from . import purge
 
 BACKUP_DIR = DATA_DIR / "backups"
@@ -25,6 +26,15 @@ BACKUP_PREFIX = "radar-"
 # 只认"每日快照"这一种命名。`radar-before-*` 是出事前手动留的底，
 # 属于"重要文件"，永远不进滚动删除的范围。
 DAILY = re.compile(r"^radar-\d{8}\.db$")
+
+
+def keep_count() -> int:
+    """保留几份由设置决定（storage.backup_keep）。写坏了就退回 7，绝不删空。"""
+    raw = get_settings().get("storage", {}).get("backup_keep", BACKUP_KEEP)
+    try:
+        return max(1, min(60, int(raw)))
+    except (TypeError, ValueError):
+        return BACKUP_KEEP
 
 
 def _stamp() -> str:
@@ -73,7 +83,7 @@ def run(force: bool = False) -> dict[str, Any]:
         return {"ok": False, "error": f"重命名失败：{exc}", "created": ""}
 
     removed = 0
-    for old in backups()[:-BACKUP_KEEP]:
+    for old in backups()[:-keep_count()]:
         try:
             purge.unlink(old)
             removed += 1
@@ -91,6 +101,7 @@ def status() -> dict[str, Any]:
     return {
         "dir": str(BACKUP_DIR),
         "count": len(items),
+        "keep": keep_count(),
         "manual": manual,
         "latest": str(latest) if latest else "",
         "latest_size": latest.stat().st_size if latest else 0,

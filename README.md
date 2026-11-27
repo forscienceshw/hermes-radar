@@ -165,8 +165,12 @@ python radar.py where   # 各个目录在哪、数据库是哪一版
 
 ## 数据安全：每日快照与直删
 
-- 数据库每天自动快照到 `data/backups/radar-YYYYMMDD.db`，保留 7 份；
+- 数据库每天自动快照到 `data/backups/radar-YYYYMMDD.db`，份数由设置里的
+  `storage.backup_keep` 决定（默认保留 3 份，因为库大了每份都好几百 MB）；
   `radar-before-*` 这类手动留底**永远不参与滚动删除**。设置页有「立即备份」。
+- 原文快照默认压成 `raw.html.gz`（gzip 无损，阅读页与配图不受影响），配图上限默认
+  每篇 8 张；两项都在「设置 → 磁盘占用与备份」里改。旧条目要回收空间就跑一次
+  `python scripts/compress_raw.py --apply`。
 - 程序自己产生的临时文件、缓存、旧安装包走 `app/services/purge.py` 直删，**不进回收站**；
   命令行侧对应 `python radar.py tidy`（清 `.tmp` + 直删回收站里本项目的记录）。
 - 用户资料（`data/documents`、`data/blobs`）不在直删范围里，删之前先备份。

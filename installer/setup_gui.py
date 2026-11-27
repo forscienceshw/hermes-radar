@@ -344,8 +344,28 @@ def find_python() -> tuple[Path, str] | None:
     return None
 
 
+def _desktop_dir() -> Path:
+    """真实桌面目录。
+
+    直接拼 `%USERPROFILE%\\Desktop` 在开了 OneDrive「备份桌面」的机器上会把
+    快捷方式放进一个用户根本看不到的旧目录，表现是"装完了但桌面没有图标"。
+    先问注册表里桌面被重定向到哪，拿不到再退回默认值。
+    """
+    if os.name == "nt":
+        import winreg
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders") as key:
+                value, _ = winreg.QueryValueEx(key, "Desktop")
+            if value:
+                return Path(os.path.expandvars(str(value)))
+        except OSError:
+            pass
+    return Path(os.environ.get("USERPROFILE", str(Path.home()))) / "Desktop"
+
+
 def shortcut_paths() -> tuple[Path, Path]:
-    desktop = Path(os.environ.get("USERPROFILE", str(Path.home()))) / "Desktop" / f"{APP_NAME}.lnk"
+    desktop = _desktop_dir() / f"{APP_NAME}.lnk"
     start = Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / f"{APP_NAME}.lnk"
     return desktop, start
 
@@ -700,6 +720,13 @@ class SetupApp(tk.Tk):
         tk.Label(box, text=("沿用上次的安装目录，不另建第二份。" if self.upgrade_mode
                             else "默认装在当前用户目录，不需要管理员权限。资料库（data）也在这里，别选 Program Files。"),
                  bg="#ffffff", fg="#697482", font=("Microsoft YaHei UI", 9)).pack(anchor="w", pady=(8, 0))
+        # 资料库跟着安装目录走，装 C 盘就等于把几十 GB 图文放在 C 盘。装之前先把
+        # 目标盘剩余空间摆出来，别等写到一半红盘。
+        self.space_hint = tk.Label(box, text="", bg="#ffffff", fg="#697482",
+                                   font=("Microsoft YaHei UI", 9))
+        self.space_hint.pack(anchor="w", pady=(4, 0))
+        self.target.trace_add("write", lambda *_: self._update_space_hint())
+        self._update_space_hint()
 
         options = tk.LabelFrame(page, text=" 选项 ", bg="#ffffff", fg="#3d4a57", padx=14, pady=12,
                                 font=("Microsoft YaHei UI", 9))
@@ -760,6 +787,21 @@ class SetupApp(tk.Tk):
         ttk.Button(buttons, text="打开安装目录", command=self._open_target).pack(side="right", padx=(0, 8))
         ttk.Button(buttons, text="启动雷达", style="Primary.TButton",
                    command=self._launch).pack(side="right", padx=(0, 8))
+
+    def _update_space_hint(self) -> None:
+        label = getattr(self, "space_hint", None)
+        if label is None:
+            return
+        try:
+            path = Path(self.target.get().strip() or str(default_target()))
+            while not path.exists() and path != path.parent:
+                path = path.parent
+            free = shutil.disk_usage(path).free
+            text = (f"这个盘还剩 {free / 1024 ** 3:.1f} GB；资料库会放在 "
+                    f"{Path(self.target.get()) / 'data'}，攒一年通常 20-60 GB。")
+            label.configure(text=text, fg="#b42318" if free < 20 * 1024 ** 3 else "#697482")
+        except (OSError, ValueError):
+            label.configure(text="")
 
     def show(self, name: str) -> None:
         for page in self.pages.values():

@@ -65,8 +65,31 @@ class BackupTests(unittest.TestCase):
         result = backup.run(force=True)
         self.assertTrue(result["ok"], result.get("error"))
         remaining = sorted(path.name for path in backup.backups())
-        self.assertEqual(len(remaining), backup.BACKUP_KEEP)
+        self.assertEqual(len(remaining), backup.keep_count())
         self.assertTrue(manual.is_file(), "手动留底被滚动删除误伤了")
+
+    def test_retention_follows_setting(self) -> None:
+        """保留份数由 settings.storage.backup_keep 决定，不再写死 7。"""
+        for day in range(1, 7):
+            path = self.backup_dir / f"radar-2026110{day}.db"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"x")
+            stamp = time.time() - (10 - day) * 86400
+            import os
+            os.utime(path, (stamp, stamp))
+        with mock.patch.object(backup, "get_settings",
+                               return_value={"storage": {"backup_keep": 2}}):
+            self.assertEqual(backup.keep_count(), 2)
+            result = backup.run(force=True)
+        self.assertTrue(result["ok"], result.get("error"))
+        # 6 份旧的 + 今天这份 = 7，只留最近 2 份
+        self.assertEqual(len(backup.backups()), 2)
+
+    def test_broken_keep_setting_falls_back(self) -> None:
+        for value in ("abc", None, -3, 0, 999):
+            with mock.patch.object(backup, "get_settings",
+                                   return_value={"storage": {"backup_keep": value}}):
+                self.assertGreaterEqual(backup.keep_count(), 1, value)
 
 
 if __name__ == "__main__":

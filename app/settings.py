@@ -27,9 +27,9 @@ DEFAULTS: dict[str, Any] = {
     # GitHub Release，国内慢的话可以在这里填一个前缀（如 https://ghproxy.net/）。
     "auto_update_check": True,
     "update_mirror": "",
-    # 图片是磁盘占用的大头：40 张 × 15 MB 的上限意味着一篇长图文能吃掉几百 MB，
-    # 而真正会回看的通常只有开头几张图。
-    "max_images_per_article": 12,
+    # 图片是磁盘占用的大头：12 张 × 6 MB 的上限意味着一篇长图文能吃掉几十 MB，
+    # 而真正会回看的通常只有开头几张图。0 = 不限。
+    "max_images_per_article": 8,
     "max_image_mb": 6,
     "image_triage_enabled": True,
     "image_triage_max": 20,
@@ -116,6 +116,15 @@ DEFAULTS: dict[str, Any] = {
     # 离线页在浏览器新标签打开。改完即时生效，不需要重启服务。
     "ui": {
         "reading_mode": "workbench",
+    },
+    # 磁盘策略。这个软件的数据全是本机文件，涨起来很快：原文快照里内嵌着配图
+    # base64，数据库快照又和 radar.db 等大。三条都做成开关，别让默认值悄悄吃盘。
+    "storage": {
+        # 原文快照直接 gzip 落盘（raw.html.gz）。gzip 无损，阅读页和图片一个字节
+        # 都不变，读取侧统一走 archive.read_raw_bytes，压缩与否对前端透明。
+        "compress_raw": True,
+        # 每日数据库快照保留几份。radar.db 800 MB 往上时，7 份就是 5 G 多。
+        "backup_keep": 3,
     },
 }
 

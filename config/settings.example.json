@@ -23,5 +23,10 @@
   },
   "ui": {
     "reading_mode": "workbench"
+  },
+  "max_images_per_article": 8,
+  "storage": {
+    "compress_raw": true,
+    "backup_keep": 3
   }
 }

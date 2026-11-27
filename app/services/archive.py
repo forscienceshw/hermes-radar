@@ -57,6 +57,29 @@ def read_raw_text(path: Path | str | None) -> str:
         return ""
 
 
+def write_raw(folder: Path, content: bytes) -> Path:
+    """原文快照落盘。
+
+    默认 gzip：raw.html 把配图 base64 内嵌在 HTML 里，单篇 3-4 MB，压完不到
+    15%，而读取侧全走 read_raw_bytes，压不压对阅读页和图片完全透明（无损）。
+    设置里 storage.compress_raw 关掉时退回落原文件。
+    """
+    if not get_settings().get("storage", {}).get("compress_raw", True):
+        return atomic_write(folder / "raw.html", content)
+    buf = io.BytesIO()
+    with gzip.GzipFile(fileobj=buf, mode="wb", compresslevel=3) as fh:
+        fh.write(content)
+    packed = atomic_write(folder / "raw.html.gz", buf.getvalue())
+    # 同一篇重新归档时清掉上一版未压缩的快照，否则 raw_file() 会优先读旧的。
+    stale = folder / "raw.html"
+    if stale.is_file():
+        try:
+            purge.unlink(stale)
+        except OSError:
+            pass
+    return packed
+
+
 def _clean_text(value: str) -> str:
     value = value.replace("\r", "\n").replace("\xa0", " ")
     value = re.sub(r"[ \t]+", " ", value)
@@ -560,7 +583,14 @@ async def archive_web(item: dict[str, Any]) -> dict[str, Any]:
                                        verify or "微信只返回了空壳页面，正文没取到", response.url)
         raise ValueError("没有提取到有效正文，页面上也没有可归档的配图；已保留任务以便重试，"
                          "不会伪造摘要或调用付费接口")
-    unique_images = list(url_tags.items())[:int(settings["max_images_per_article"])]
+    # 0 表示不限；默认 8 张。以前 12 张时，长图文一篇就能吃掉几十 MB 配图。
+    try:
+        image_limit = int(settings.get("max_images_per_article") or 0)
+    except (TypeError, ValueError):
+        image_limit = 8
+    unique_images = list(url_tags.items())
+    if image_limit > 0:
+        unique_images = unique_images[:image_limit]
     semaphore = asyncio.Semaphore(4)
 
     async def bounded(url_image: str, index: int) -> dict[str, Any]:
@@ -589,7 +619,7 @@ async def archive_web(item: dict[str, Any]) -> dict[str, Any]:
     skipped_images.extend({"url": image["url"], "reason": image["skipped"]}
                           for image in images if image.get("skipped"))
     _sanitize(root)
-    raw_path = atomic_write(folder / "raw.html", response.content)
+    raw_path = write_raw(folder, response.content)
     html_path = atomic_write(folder / "reader.html", _reader_html(title, author, response.url, str(root)))
     atomic_write(folder / "content.txt", text)
     markdown = f"# {title}\n\n作者/来源：{author}\n\n原始链接：{response.url}\n\n---\n\n{text}\n"

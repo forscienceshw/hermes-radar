@@ -23,7 +23,7 @@
     <button class="nav" data-view="sources">采集来源</button>
     <button class="nav" data-view="settings">设置</button>
   </div>
-  <div class="storage-note">数据位置<br><code>E:\HermesResearchRadar\data</code></div>
+  <div class="storage-note">数据位置<br><code id="storagePath" title="读取中…">读取中…</code></div>
 </nav>
 <main>
 <section id="dashboard" class="view active">
@@ -393,16 +393,23 @@
       </div>
     </div>
     <div class="panel" id="backupPanel">
-      <h2>资料库备份</h2>
-      <p class="muted">每天自动给数据库拍一张快照，保留最近 7 份，放在 <code>data/backups</code>。要动目录、要清理之前，先在这里补一份。</p>
+      <h2>磁盘占用与备份</h2>
+      <p class="muted">数据都在本机：<code id="storageDirText">读取中…</code>。<span id="storageUsageInfo">正在统计…</span></p>
+      <div class="form-grid three">
+        <label>每篇最多保存几张配图<input id="maxImages" type="number" min="0" max="60"><small>0 = 不限。只影响之后新归档的条目</small></label>
+        <label>原文快照压缩保存<select id="compressRaw"><option value="true">压缩（推荐，省八成多）</option><option value="false">不压缩</option></select><small>gzip 无损：阅读页和图片一个字节都不变</small></label>
+        <label>每日数据库快照保留几份<input id="backupKeep" type="number" min="1" max="30"><small>每份约等于当前数据库大小</small></label>
+      </div>
       <div class="actions">
         <button id="backupRun" type="button">立即备份</button>
+        <button id="storageRefresh" type="button">重新统计</button>
         <span id="backupInfo" class="muted">正在读…</span>
       </div>
+      <p class="muted">这三项改完要点页面底部的「保存全部设置」才生效；配图上限与压缩只作用于之后新归档的条目，已经躺在磁盘上的旧文件不会自己变小。要清旧账，用安装目录里的 <code>.venv\Scripts\python.exe</code> 跑一次 <code>scripts\compress_raw.py --apply</code>。</p>
     </div>
 
     <div class="panel"><h2>企业微信「微信客服」收件口</h2><p class="muted">用于接收你从微信转发到客服会话的文章链接。企业 ID 和客服账号 ID 在「采集来源」的 wecom_kf 配置中填写；这里只保存专用 Secret。</p><label>微信客服 Secret（留空保持不变）<input id="wecomKfSecret" type="password" autocomplete="off"><small id="wecomKfSecretStatus"></small></label><p class="muted">电脑关机期间的消息可在最近 3 天内于下次启动时补拉；开机后每 30 秒检查一次。</p></div>
-    <div class="panel"><h2>B站无字幕视频</h2><div class="form-grid three"><label>本地语音识别<select id="asrEnabled"><option value="false">关闭，仅归档简介</option><option value="true">启用 faster-whisper</option></select></label><label>模型<input id="asrModel" placeholder="small / medium / large-v3"></label><label>最长视频（分钟）<input id="asrDuration" type="number" min="1"></label></div><p class="muted">启用前需在当前 E 盘 Python 环境安装 faster-whisper；模型与音频也只写入 E 盘。</p></div>
+    <div class="panel"><h2>B站无字幕视频</h2><div class="form-grid three"><label>本地语音识别<select id="asrEnabled"><option value="false">关闭，仅归档简介</option><option value="true">启用 faster-whisper</option></select></label><label>模型<input id="asrModel" placeholder="small / medium / large-v3"></label><label>最长视频（分钟）<input id="asrDuration" type="number" min="1"></label></div><p class="muted">启用前需在运行这个软件的 Python 环境里安装 faster-whisper；模型与音频只写入数据目录，不碰系统盘。</p></div>
     <div class="sticky-save"><span id="settingsResult"></span><button type="submit" class="primary">保存全部设置</button></div>
   </form>
 
@@ -427,10 +434,10 @@
 </div>
 <dialog id="detailDialog"><div class="dialog-head"><button id="detailAsk" class="detail-ask" type="button">问 AI</button><button id="closeDialog" aria-label="关闭">关闭</button></div><div id="detailContent"></div></dialog>
 <!-- 智能收藏建议：只在条目还没进任何收藏夹时出现，勾选确认后才写入。 -->
-<dialog id="smartCollect" class="smart-collect">
-  <div class="sc-head"><div><h2 id="smartCollectTitle">要不要收藏到这几个收藏夹？</h2><p class="muted" id="smartCollectLead"></p></div><button type="button" id="smartCollectClose" aria-label="关闭" title="这次先不收藏">✕</button></div>
+<dialog id="smartCollect" class="smart-collect" tabindex="-1">
+  <div class="sc-head"><div><h2 id="smartCollectTitle">要不要收藏到这几个收藏夹？</h2><p class="muted" id="smartCollectLead"></p></div><button type="button" id="smartCollectClose" aria-label="关闭" title="关闭">×</button></div>
   <div id="smartCollectList" class="sc-list"></div>
-  <div class="sc-foot"><button type="button" id="smartCollectSkip">这次不用</button><button type="button" class="primary" id="smartCollectOk">收藏到选中的</button></div>
+  <div class="sc-foot"><button type="button" id="smartCollectSkip">先不收藏</button><button type="button" class="primary" id="smartCollectOk">收藏到选中的</button></div>
 </dialog>
 <!-- 阅读工作台：点资料库条目时先看离线原文；精读/笔记/Ideas 作为第二栏并排。
      刻意不响应背景点击与 Esc，只有右上角 ✕ 才关（读长文时手滑点暗处不会全丢）。 -->

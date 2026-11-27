@@ -45,7 +45,18 @@ let taskFilter='active',taskRefreshTimer=null;
 const TASK_LABELS={poll_source:'采集检查',archive_item:'归档全文',papers_item:'论文下载与解析',analyze_item:'WorkBuddy 精读',flush_batch:'整理待发送汇报',deliver_batch:'发送汇报'};
 const TASK_STATES={READY:'排队中',LEASED:'执行中',RETRY_WAIT:'等待重试',SUCCEEDED:'已完成',DEAD:'失败',CANCELLED:'已取消'};
 const TASK_PROGRESS={READY:12,LEASED:62,RETRY_WAIT:32,SUCCEEDED:100,DEAD:100,CANCELLED:0};
-async function loadHealth(){try{const h=await api('/api/health');$('#healthDot').className='dot '+(h.worker_alive?'online':'offline');$('#healthText').textContent=h.worker_alive?`后台运行中 · ${h.jobs_pending} 个任务待处理`:'后台 Worker 未连接';$('#taskPendingBadge').textContent=h.jobs_pending;$('#taskQueueBtn').classList.toggle('alert',h.jobs_dead>0);const cards=[['全部资料',h.items],['文章',h.articles],['视频',h.videos],['已下载论文',h.papers_downloaded],['待人工论文',h.papers_needed],['异常 / 死信',`${h.errors+h.source_errors} / ${h.jobs_dead}`]];$('#stats').innerHTML=cards.map(([k,v])=>`<div class="stat"><strong>${v}</strong><span>${k}</span></div>`).join('');if($('#taskDrawer').classList.contains('open'))loadTaskQueue().catch(()=>{})}catch(e){$('#healthDot').className='dot offline';$('#healthText').textContent='管理进程未连接'}}
+/* 左下角的「数据位置」必须现取现显示：写死在 HTML 里会让新电脑上的安装包
+   也显示开发机那台 E 盘，看着像装错了地方。点击可复制，方便按路径找文件。 */
+function applyStoragePath(dir){
+  const code=$('#storagePath');
+  if(!code||!dir||code.dataset.path===dir)return;
+  code.dataset.path=dir;code.textContent=dir;code.title=dir+'\n点击复制路径';
+  const copy=async()=>{
+    try{await navigator.clipboard.writeText(dir);toast('数据目录已复制')}catch(e){toast(dir)}
+  };
+  code.onclick=copy;
+}
+async function loadHealth(){try{const h=await api('/api/health');applyStoragePath(h.data_dir);window.__radarDataDir=h.data_dir||'';$('#healthDot').className='dot '+(h.worker_alive?'online':'offline');$('#healthText').textContent=h.worker_alive?`后台运行中 · ${h.jobs_pending} 个任务待处理`:'后台 Worker 未连接';$('#taskPendingBadge').textContent=h.jobs_pending;$('#taskQueueBtn').classList.toggle('alert',h.jobs_dead>0);const cards=[['全部资料',h.items],['文章',h.articles],['视频',h.videos],['已下载论文',h.papers_downloaded],['待人工论文',h.papers_needed],['异常 / 死信',`${h.errors+h.source_errors} / ${h.jobs_dead}`]];$('#stats').innerHTML=cards.map(([k,v])=>`<div class="stat"><strong>${v}</strong><span>${k}</span></div>`).join('');if($('#taskDrawer').classList.contains('open'))loadTaskQueue().catch(()=>{})}catch(e){$('#healthDot').className='dot offline';$('#healthText').textContent='管理进程未连接'}}
 function openTaskDrawer(){taskFilter='active';$('#taskDrawer').classList.add('open');$('#taskBackdrop').classList.add('open');$('#taskDrawer').setAttribute('aria-hidden','false');loadTaskQueue().catch(e=>{$('#taskList').innerHTML=`<div class="task-empty">${esc(e.message)}</div>`})}
 function closeTaskDrawer(){$('#taskDrawer').classList.remove('open');$('#taskBackdrop').classList.remove('open');$('#taskDrawer').setAttribute('aria-hidden','true')}
 let taskSelected=new Set();
@@ -91,7 +102,7 @@ const SOURCE_EXAMPLES={
   rss:{url:'https://example.com/feed.xml',kind:'article'},
   wechat_public_local:{start_at_now:true,use_catalog:true,max_rows_per_poll:1000},
   wechat_local:{target_wxid:'对方的微信号',target_name:'聊天窗口名称',history_mode:'index_only'},
-  jsonl:{path:'E:/HermesResearchRadar/data/share_inbox.jsonl',start_at_end:false},
+  jsonl:{path:'data/share_inbox.jsonl',start_at_end:false},
   wecom_kf:{corp_id:'ww...',open_kf_id:'wk...',start_at_now:true},
   bilibili_datax:{queries:['基因编辑 研究进展','蛋白质结构预测'],up_ids:[],sort:'latest',min_views:100,exclude_keywords:['课程','广告'],max_price_per_call:'0.01'},
   wechat_datax:{accounts:[{name:'公众号准确名称',id:'gh_原始编号'}],max_price_per_call:'0.05',initial_backfill_days:30,overlap_hours:24,max_pages_per_account_per_run:3,adaptive_polling:true},
@@ -205,9 +216,17 @@ function paintSourceTypes(){
        <b>${esc(meta.label)}</b><span>${esc(meta.note)}</span>
      </button>`).join('');
 }
+function sourceExample(type){
+  const base=SOURCE_EXAMPLES[type]||{};
+  // share_inbox.jsonl 的真实位置随安装目录变，示例里不能写死某一台机器的盘符。
+  if(type==='jsonl'&&window.__radarDataDir){
+    return {...base,path:String(window.__radarDataDir).replace(/\\/g,'/')+'/share_inbox.jsonl'};
+  }
+  return base;
+}
 function applySourceDraft(type){
   sourceDraftType=type;
-  $('#srcConfig').value=JSON.stringify(SOURCE_EXAMPLES[type]||{},null,2);
+  $('#srcConfig').value=JSON.stringify(sourceExample(type),null,2);
   $('#srcPoll').value=type==='jsonl'?2:(['wecom_kf','wechat_local','wechat_public_local'].includes(type)?60:300);
   $('#srcConfigHint').textContent=SOURCE_HINTS[type]||'';
 }
@@ -871,17 +890,24 @@ async function toggleCollect(collectionId,member){
   toast(r.member?'已加入收藏夹':'已移出收藏夹');
 }
 /* ---------- 智能收藏建议 ----------
-   本地语义模型判断「这篇更像哪个收藏夹」，一次最多两个。只在条目还没进任何
-   收藏夹时问，且必须点确认才写入——自动塞错夹子比多问一句代价大得多。 */
+   只在用户点「智能收藏」时跑一次，不再自动弹：自动弹窗在连着看十几条时很烦，
+   而且那时用户往往还没想好要不要收藏。评分在本地做（分类/标签/标题对收藏夹名
+   做子串匹配），最多两个候选，勾选并点确认才写入。 */
 let smartCollectItemId=null,smartCollectRows=[];
-const smartCollectDismissed=new Set();
-async function suggestCollections(x){
-  if(!x||!x.id||(x.collections||[]).length||smartCollectDismissed.has(x.id))return;
+async function suggestCollections(x,opts){
+  const manual=!!(opts&&opts.manual);
+  if(!x||!x.id)return;
   if($('#smartCollect').open)return;
   let data=null;
-  try{data=await api('/api/items/'+encodeURIComponent(x.id)+'/collection-suggestions')}catch(e){return}
+  try{data=await api('/api/items/'+encodeURIComponent(x.id)+'/collection-suggestions')}
+  catch(e){if(manual)toast(e.message||'取收藏建议失败');return}
   const rows=(data&&data.suggestions)||[];
-  if(!rows.length)return;
+  if(!rows.length){
+    if(manual)toast((x.collections||[]).length
+      ? '这篇已经在收藏夹里，也没有别的更对得上的夹子'
+      : '没找到名字对得上的收藏夹，用「收藏到…」自己挑一个吧');
+    return;
+  }
   // 请求回来时用户可能已经切到别的条目了，别把建议弹到新页面上。
   const stillHere=(wbIsOpen()&&wb.itemId===x.id)||(classicItemId===x.id&&$('#detailDialog').open);
   if(!stillHere)return;
@@ -890,10 +916,13 @@ async function suggestCollections(x){
   const title=$('#smartCollectTitle');
   if(title)title.textContent=rows.length>1?'要不要收藏到这几个收藏夹？':'要不要收藏到这个收藏夹？';
   $('#smartCollectList').innerHTML=rows.map((s,i)=>`<label class="sc-row"><input type="checkbox" data-sc-pick="${i}" checked><span class="sc-name">${esc(s.name)}</span><span class="sc-score">${(s.score||0)>=4.5?'很相关':'相关'}</span><small>${esc(s.reason||'主题接近')}</small></label>`).join('');
-  $('#smartCollect').showModal();
+  const dlg=$('#smartCollect');
+  dlg.showModal();
+  // showModal 默认把焦点给第一个可聚焦元素（右上角的 ✕），焦点环看着像个黑框。
+  // 让 dialog 自己接焦点，键盘用户按 Tab 照样能到 ✕ 和复选框。
+  dlg.focus();
 }
-function closeSmartCollect(dismiss){
-  if(dismiss&&smartCollectItemId)smartCollectDismissed.add(smartCollectItemId);
+function closeSmartCollect(){
   const d=$('#smartCollect');if(d.open)d.close();
   smartCollectItemId=null;smartCollectRows=[];
 }
@@ -901,7 +930,7 @@ async function applySmartCollect(){
   const itemId=smartCollectItemId;
   const picked=[...document.querySelectorAll('[data-sc-pick]:checked')]
     .map(box=>smartCollectRows[Number(box.dataset.scPick)]).filter(Boolean);
-  closeSmartCollect(false);
+  closeSmartCollect();
   if(!picked.length||!itemId)return;
   try{
     for(const row of picked){
@@ -915,10 +944,10 @@ async function applySmartCollect(){
     loadItems().catch(()=>{});
   }catch(err){toast(err.message)}
 }
-$('#smartCollectClose').onclick=()=>closeSmartCollect(true);
-$('#smartCollectSkip').onclick=()=>closeSmartCollect(true);
+$('#smartCollectClose').onclick=()=>closeSmartCollect();
+$('#smartCollectSkip').onclick=()=>closeSmartCollect();
 $('#smartCollectOk').onclick=()=>applySmartCollect().catch(err=>toast(err.message));
-$('#smartCollect').addEventListener('click',e=>{if(e.target===e.currentTarget)closeSmartCollect(true)});
+$('#smartCollect').addEventListener('click',e=>{if(e.target===e.currentTarget)closeSmartCollect()});
 async function createCollectionFor(name,scope,entry){
   if(!name.trim())return toast('先写一个收藏夹名称');
   const created=await api('/api/collections',{method:'POST',body:{name:name.trim(),scope}});
@@ -1208,6 +1237,7 @@ function wbRenderHeader(x){
     x.metadata&&x.metadata.original_share_url&&x.metadata.original_share_url!==x.url?`<a class="button" href="${esc(x.metadata.original_share_url)}" target="_blank" rel="noopener">原始短链</a>`:'',
     `<button type="button" data-verify-source="${x.id}">检查原文</button>`,
     `<button type="button" data-collect="${x.id}" data-collect-type="item" data-collect-ids="${(x.collections||[]).join(',')}">收藏到…</button>`,
+    `<button type="button" data-smart-collect="${x.id}">智能收藏</button>`,
     `<button type="button" class="primary" data-wb-ask>问 AI</button>`,
     x.excluded_at?'':`<button type="button" data-reanalyze="${x.id}">重新精读</button>`,
     ((x.metadata||{}).images||[]).length?`<button type="button" data-retriage="${x.id}">重新检查配图</button>`:'',
@@ -1317,7 +1347,6 @@ async function openWorkbench(id,opts={}){
   wbSyncLayout();
   requestAnimationFrame(()=>syncWbActions());
   if(x.active_job)watchItem(id);else if(detailWatchId===id)stopItemWatch();
-  if(!opts.silent)setTimeout(()=>suggestCollections(x).catch(()=>{}),900);
   return x;
 }
 async function refreshWorkbench(id){
@@ -1524,6 +1553,7 @@ async function showItemClassic(id,silent,forceRender){
     `<button type="button" data-verify-source="${x.id}">检查原文</button>`,
     ((x.metadata||{}).images||[]).length?`<button type="button" data-retriage="${x.id}">重新检查配图</button>`:'',
     `<button type="button" data-collect="${x.id}" data-collect-type="item" data-collect-ids="${(x.collections||[]).join(',')}">收藏到…</button>`,
+    `<button type="button" data-smart-collect="${x.id}">智能收藏</button>`,
     x.excluded_at?`<button type="button" class="primary" data-restore="${x.id}">恢复收录</button>`:`<button type="button" class="danger" data-delete="${x.id}">删除</button>`,
     `<button type="button" data-rule-from="${esc(x.author||'')}">以后屏蔽这类</button>`].filter(Boolean).join('');
   const tabs=[['read','原文'],['reading','精读'],['paper','论文']].map(([key,label])=>
@@ -1537,7 +1567,6 @@ async function showItemClassic(id,silent,forceRender){
   guardArchiveFrame($('#detailContent .classic-read iframe'));
   if(!silent||!$('#detailDialog').open)openDetail();
   if(x.active_job)watchItem(id);else if(detailWatchId===id)stopItemWatch();
-  if(!silent)setTimeout(()=>suggestCollections(x).catch(()=>{}),900);
   return x;
 }
 async function switchClassicView(view){
@@ -1556,7 +1585,7 @@ function refreshOpenReader(id){
   if(readingMode==='classic')return $('#detailDialog').open?showItemClassic(id,true):Promise.resolve(null);
   return wbIsOpen()?refreshWorkbench(id):Promise.resolve(null);
 }
-async function previewPaper(id){const p=currentPapers.find(x=>x.id===id)||{title:'PDF 预览'};$('#detailContent').innerHTML=`<h1>${esc(p.title||'PDF 预览')}</h1><p class="muted">文件保存在：<code>${esc(p.local_path||'E 盘论文目录')}</code></p><iframe src="/api/papers/${id}/file#view=FitH" style="width:100%;height:78vh;border:1px solid #dde3e9;border-radius:8px"></iframe>`;openDetail()}
+async function previewPaper(id){const p=currentPapers.find(x=>x.id===id)||{title:'PDF 预览'};$('#detailContent').innerHTML=`<h1>${esc(p.title||'PDF 预览')}</h1><p class="muted">文件保存在：<code>${esc(p.local_path||'论文目录')}</code></p><iframe src="/api/papers/${id}/file#view=FitH" style="width:100%;height:78vh;border:1px solid #dde3e9;border-radius:8px"></iframe>`;openDetail()}
 let paperPage=1, paperPageSize=20, paperTotal=0;
 async function loadPapers(){
   const status=$('#paperStatus').value;
@@ -1624,7 +1653,7 @@ async function refreshProxyStatus(force){const box=$('#proxyStatus');if(!box)ret
 const proxyProbeBtn=$('#proxyProbe');if(proxyProbeBtn)proxyProbeBtn.onclick=()=>refreshProxyStatus(true);
 async function refreshEmbedStatus(){const box=$('#embedStatus');if(!box)return;try{const d=await api('/api/embedding/status');if(d.available){box.innerHTML=`已启用（模型 ${(d.size/1048576).toFixed(1)} MB，纯 CPU 推理）`;$('#embedFetch').textContent='重新下载';}else{box.innerHTML=`未启用：${esc(d.reason||'模型未下载')}。检索仍然可用，只是同义改写会漏。`;}}catch(err){box.textContent='检测失败：'+err.message}}
 const embedBtn=$('#embedFetch');if(embedBtn)embedBtn.onclick=async()=>{const out=$('#embedResult');try{embedBtn.disabled=true;out.textContent='正在下载（约 24 MB）…';const d=await api('/api/embedding/fetch',{method:'POST'});out.textContent=d.ok?`完成：${d.detail}`:`失败：${d.detail}`;await refreshEmbedStatus()}catch(err){out.textContent='下载失败：'+err.message}finally{embedBtn.disabled=false}};
-async function loadSettings(){const data=await api('/api/settings'),s=data.settings;setReadingMode((s.ui&&s.ui.reading_mode)||readingMode);$('#llmEnabled').value=bool(s.llm.enabled);$('#llmProvider').value=s.llm.provider||'openai_compatible';$('#llmBase').value=s.llm.base_url;$('#llmModel').value=s.llm.model;$('#llmAutoCheapest').value=bool(s.llm.auto_cheapest??true);$('#visionEnabled').value=bool(s.llm.vision_enabled);$('#llmDaily').value=s.llm.daily_call_limit;$('#llmPrefilter').value=s.llm.min_local_relevance??40;$('#llmLongMaterial').value=s.llm.long_material_strategy||'head_tail';$('#autoAnalyze').value=bool(s.analysis.auto??true);$('#autoDownloadPapers').value=bool(s.papers.auto_download??false);$('#readingPrompt').value=s.analysis.custom_reading_prompt;$('#llmConcurrency').value=s.analysis.concurrency??3;$('#notifyChannel').value=s.notifications.channel;$('#instantThreshold').value=s.notifications.instant_threshold;$('#batchSize').value=s.notifications.batch_size;$('#maxWait').value=s.notifications.max_wait_minutes;$('#minRelevance').value=s.notifications.min_relevance;$('#quietStart').value=s.notifications.quiet_start;$('#quietEnd').value=s.notifications.quiet_end;$('#quietCritical').value=bool(s.notifications.quiet_allow_critical);$('#paperEmail').value=s.papers.email;window.__secretProviders=data.secrets.providers||[];$('#maxPerDay').value=s.notifications.max_per_day??3;$('#sendWindows').value=(s.notifications.send_windows||[]).join(',');$('#highlightThreshold').value=s.notifications.highlight_threshold??74;$('#digestLimit').value=s.notifications.digest_limit??10;if(window.renderAccounts)renderAccounts(s.llm.accounts||[]);$('#asrEnabled').value=bool(s.video.asr_enabled);$('#asrModel').value=s.video.asr_model;$('#asrDuration').value=s.video.max_duration_minutes;$('#llmKey').disabled=$('#llmProvider').value!=='openai_compatible';$('#llmBase').disabled=$('#llmProvider').value!=='openai_compatible';$('#llmKeyStatus').textContent=data.secrets.llm_api_key?'已安全保存':'未配置';$('#dataxKeyStatus').textContent=data.secrets.datax_api_key?'已安全保存':'未配置';$('#webhookStatus').textContent=data.secrets.notification_webhook?'已安全保存':'未配置';$('#wecomKfSecretStatus').textContent=data.secrets.wecom_kf_secret?'已安全保存':'未配置';$('#proxyUrl').value=s.http_proxy||'';refreshProxyStatus();refreshEmbedStatus();loadShellPanel()}
+async function loadSettings(){const data=await api('/api/settings'),s=data.settings;setReadingMode((s.ui&&s.ui.reading_mode)||readingMode);$('#llmEnabled').value=bool(s.llm.enabled);$('#llmProvider').value=s.llm.provider||'openai_compatible';$('#llmBase').value=s.llm.base_url;$('#llmModel').value=s.llm.model;$('#llmAutoCheapest').value=bool(s.llm.auto_cheapest??true);$('#visionEnabled').value=bool(s.llm.vision_enabled);$('#llmDaily').value=s.llm.daily_call_limit;$('#llmPrefilter').value=s.llm.min_local_relevance??40;$('#llmLongMaterial').value=s.llm.long_material_strategy||'head_tail';$('#autoAnalyze').value=bool(s.analysis.auto??true);$('#autoDownloadPapers').value=bool(s.papers.auto_download??false);$('#maxImages').value=s.max_images_per_article??8;$('#compressRaw').value=bool((s.storage||{}).compress_raw??true);$('#backupKeep').value=(s.storage||{}).backup_keep??3;$('#readingPrompt').value=s.analysis.custom_reading_prompt;$('#llmConcurrency').value=s.analysis.concurrency??3;$('#notifyChannel').value=s.notifications.channel;$('#instantThreshold').value=s.notifications.instant_threshold;$('#batchSize').value=s.notifications.batch_size;$('#maxWait').value=s.notifications.max_wait_minutes;$('#minRelevance').value=s.notifications.min_relevance;$('#quietStart').value=s.notifications.quiet_start;$('#quietEnd').value=s.notifications.quiet_end;$('#quietCritical').value=bool(s.notifications.quiet_allow_critical);$('#paperEmail').value=s.papers.email;window.__secretProviders=data.secrets.providers||[];$('#maxPerDay').value=s.notifications.max_per_day??3;$('#sendWindows').value=(s.notifications.send_windows||[]).join(',');$('#highlightThreshold').value=s.notifications.highlight_threshold??74;$('#digestLimit').value=s.notifications.digest_limit??10;if(window.renderAccounts)renderAccounts(s.llm.accounts||[]);$('#asrEnabled').value=bool(s.video.asr_enabled);$('#asrModel').value=s.video.asr_model;$('#asrDuration').value=s.video.max_duration_minutes;$('#llmKey').disabled=$('#llmProvider').value!=='openai_compatible';$('#llmBase').disabled=$('#llmProvider').value!=='openai_compatible';$('#llmKeyStatus').textContent=data.secrets.llm_api_key?'已安全保存':'未配置';$('#dataxKeyStatus').textContent=data.secrets.datax_api_key?'已安全保存':'未配置';$('#webhookStatus').textContent=data.secrets.notification_webhook?'已安全保存':'未配置';$('#wecomKfSecretStatus').textContent=data.secrets.wecom_kf_secret?'已安全保存':'未配置';$('#proxyUrl').value=s.http_proxy||'';refreshProxyStatus();refreshEmbedStatus();loadShellPanel()}
 
 /* ---------- 桌面程序（托盘外壳） ---------- */
 async function loadShellPanel(){
@@ -1730,7 +1759,7 @@ async function loadCredits(){
     </div>
     ${rows?`<details><summary>最近 WorkBuddy 调用明细</summary><div class="table-wrap"><table><thead><tr><th>时间</th><th>模型</th><th>用途</th><th>点数</th><th>输入+输出</th><th>用时</th></tr></thead><tbody>${rows}</tbody></table></div></details>`:''}`;
 }
-const loaders={dashboard:()=>Promise.all([loadHealth(),loadEvents(),loadProgress(),loadCredits()]),sources:loadSources,wechat:loadWechatAccounts,library:()=>Promise.all([loadCollections('library'),loadItems(),loadProgress()]),papers:loadPapers,ideas:()=>Promise.all([loadCollections('ideas'),loadIdeas()]),notifications:loadNotifications,settings:()=>Promise.all([loadSettings(),window.wizEnsureBadge?window.wizEnsureBadge():null])};
+const loaders={dashboard:()=>Promise.all([loadHealth(),loadEvents(),loadProgress(),loadCredits()]),sources:loadSources,wechat:loadWechatAccounts,library:()=>Promise.all([loadCollections('library'),loadItems(),loadProgress()]),papers:loadPapers,ideas:()=>Promise.all([loadCollections('ideas'),loadIdeas()]),notifications:loadNotifications,settings:()=>Promise.all([loadSettings(),window.wizEnsureBadge?window.wizEnsureBadge():null,window.loadStorageUsage?window.loadStorageUsage():null])};
 function switchView(view){currentView=view;$$('.view').forEach(x=>x.classList.toggle('active',x.id===view));$$('.nav').forEach(x=>x.classList.toggle('active',x.dataset.view===view));loaders[view]().catch(e=>toast(e.message))}
 $$('.nav').forEach(x=>x.onclick=()=>switchView(x.dataset.view));
 $('#detailAsk').onclick=askCurrentItem;
@@ -1763,7 +1792,7 @@ $('#testNotification').onclick=async()=>{try{await api('/api/notifications/test'
 $('#copyPapers').onclick=async()=>{let all=[];try{all=await api('/api/papers?status=needed')}catch(e){toast(e.message);return}const text=all.map(p=>`${p.title||'题名待解析'}\n作者：${JSON.parse(p.authors_json||'[]').join('; ')}\n期刊/年份：${p.journal} ${p.year}\nDOI：https://doi.org/${p.doi}\n来源：${p.source_url||''}`).join('\n\n---\n\n');await navigator.clipboard.writeText(text||'当前没有待下载论文');toast(`已复制 ${all.length} 篇为便于人工或代下的文本`)};
 $('#llmProvider').onchange=()=>{const provider=$('#llmProvider').value,local=provider==='ollama',cloud=provider==='workbuddy_cloud',base=$('#llmBase'),model=$('#llmModel');base.disabled=provider!=='openai_compatible';$('#llmKey').disabled=provider!=='openai_compatible';if(cloud||local){base.dataset.remote=base.value.includes('127.0.0.1')?'https://api.deepseek.com/v1':base.value;model.dataset.remote=model.value}if(cloud){model.value='hy4free';$('#llmKey').value=''}else if(local){base.value='http://127.0.0.1:11434/v1';model.value='qwen3:8b';$('#llmKey').value=''}else{base.value=base.dataset.remote||'https://api.deepseek.com/v1';model.value=model.dataset.remote||'deepseek-chat'}};
 $('#loadWorkbuddyModels').onclick=async()=>{try{$('#workbuddyModelInfo').textContent='正在读取官方目录……';const r=await api('/api/llm/workbuddy/models');$('#workbuddyModelInfo').textContent=`共 ${r.models.length} 个可用模型`;$('#detailContent').innerHTML=`<h1>WorkBuddy 可用模型</h1><p class="muted">倍率仅为目录展示信息，实际扣减以每次调用记录为准。</p><div class="table-wrap"><table><thead><tr><th>模型</th><th>ID</th><th>积分倍率</th><th>图片</th><th>选择</th></tr></thead><tbody>${r.models.map(m=>`<tr><td>${esc(m.name)}</td><td><code>${esc(m.id)}</code></td><td>${esc(m.credits||'未标注')}</td><td>${m.supportsImages===true?'支持':m.supportsImages===false?'不支持':'未知'}</td><td><button data-cloud-model="${esc(m.id)}">使用</button></td></tr>`).join('')}</tbody></table></div>`;openDetail()}catch(e){$('#workbuddyModelInfo').textContent='读取失败';toast(e.message)}};
-$('#settingsForm').onsubmit=async e=>{e.preventDefault();try{const patch={llm:{enabled:$('#llmEnabled').value==='true',provider:$('#llmProvider').value,base_url:$('#llmBase').value,model:$('#llmModel').value,auto_cheapest:$('#llmAutoCheapest').value==='true',vision_enabled:$('#visionEnabled').value==='true',daily_call_limit:Number($('#llmDaily').value),min_local_relevance:Number($('#llmPrefilter').value),long_material_strategy:$('#llmLongMaterial').value,accounts:window.collectAccounts?collectAccounts():undefined},analysis:{custom_reading_prompt:$('#readingPrompt').value,auto:$('#autoAnalyze').value==='true',concurrency:Number($('#llmConcurrency').value)},notifications:{channel:$('#notifyChannel').value,instant_threshold:Number($('#instantThreshold').value),batch_size:Number($('#batchSize').value),max_wait_minutes:Number($('#maxWait').value),min_relevance:Number($('#minRelevance').value),quiet_start:$('#quietStart').value,quiet_end:$('#quietEnd').value,quiet_allow_critical:$('#quietCritical').value==='true',max_per_day:Number($('#maxPerDay').value),send_windows:$('#sendWindows').value.split(',').map(x=>x.trim()).filter(Boolean),highlight_threshold:Number($('#highlightThreshold').value),digest_limit:Number($('#digestLimit').value)},papers:{email:$('#paperEmail').value,auto_download:$('#autoDownloadPapers').value==='true'},video:{asr_enabled:$('#asrEnabled').value==='true',asr_model:$('#asrModel').value,max_duration_minutes:Number($('#asrDuration').value)},http_proxy:$('#proxyUrl').value.trim(),ui:{reading_mode:$('#uiReadingMode').value}};await api('/api/settings',{method:'PUT',body:patch});for(const [id,name] of [['llmKey','llm_api_key'],['dataxKey','datax_api_key'],['notifyWebhook','notification_webhook'],['wecomKfSecret','wecom_kf_secret']]){if($('#'+id).value){await api('/api/settings/secrets',{method:'POST',body:{name,value:$('#'+id).value}});$('#'+id).value=''}}$('#settingsResult').textContent='已保存';toast('设置已安全保存')}catch(err){toast(err.message)}};
+$('#settingsForm').onsubmit=async e=>{e.preventDefault();try{const patch={llm:{enabled:$('#llmEnabled').value==='true',provider:$('#llmProvider').value,base_url:$('#llmBase').value,model:$('#llmModel').value,auto_cheapest:$('#llmAutoCheapest').value==='true',vision_enabled:$('#visionEnabled').value==='true',daily_call_limit:Number($('#llmDaily').value),min_local_relevance:Number($('#llmPrefilter').value),long_material_strategy:$('#llmLongMaterial').value,accounts:window.collectAccounts?collectAccounts():undefined},analysis:{custom_reading_prompt:$('#readingPrompt').value,auto:$('#autoAnalyze').value==='true',concurrency:Number($('#llmConcurrency').value)},notifications:{channel:$('#notifyChannel').value,instant_threshold:Number($('#instantThreshold').value),batch_size:Number($('#batchSize').value),max_wait_minutes:Number($('#maxWait').value),min_relevance:Number($('#minRelevance').value),quiet_start:$('#quietStart').value,quiet_end:$('#quietEnd').value,quiet_allow_critical:$('#quietCritical').value==='true',max_per_day:Number($('#maxPerDay').value),send_windows:$('#sendWindows').value.split(',').map(x=>x.trim()).filter(Boolean),highlight_threshold:Number($('#highlightThreshold').value),digest_limit:Number($('#digestLimit').value)},papers:{email:$('#paperEmail').value,auto_download:$('#autoDownloadPapers').value==='true'},storage:{compress_raw:$('#compressRaw').value==='true',backup_keep:Number($('#backupKeep').value)},max_images_per_article:Number($('#maxImages').value),video:{asr_enabled:$('#asrEnabled').value==='true',asr_model:$('#asrModel').value,max_duration_minutes:Number($('#asrDuration').value)},http_proxy:$('#proxyUrl').value.trim(),ui:{reading_mode:$('#uiReadingMode').value}};await api('/api/settings',{method:'PUT',body:patch});for(const [id,name] of [['llmKey','llm_api_key'],['dataxKey','datax_api_key'],['notifyWebhook','notification_webhook'],['wecomKfSecret','wecom_kf_secret']]){if($('#'+id).value){await api('/api/settings/secrets',{method:'POST',body:{name,value:$('#'+id).value}});$('#'+id).value=''}}$('#settingsResult').textContent='已保存';toast('设置已安全保存')}catch(err){toast(err.message)}};
 /* ---------- 模态栈 ---------- */
 // showModal() 会让 dialog 子树外的一切变成 inert：浮层（对话抽屉、笔记、划词条）光待在
 // top layer 上层没用，鼠标事件会穿透到遮罩上——点「对话的关闭」先把精读页关了就是这么来的。
@@ -1850,6 +1879,7 @@ document.addEventListener('click',async e=>{if(e.target.closest('.pick'))return;
 if(t.dataset.wbAct){wbScrollActions(Number(t.dataset.wbAct));return}
 if(t.dataset.classicView){await switchClassicView(t.dataset.classicView);return}
 if(t.dataset.wbPaperOpen!==undefined){wbToggleSide('paper');return}
+if(t.dataset.smartCollect){const x=await api('/api/items/'+encodeURIComponent(t.dataset.smartCollect));await suggestCollections(x,{manual:true});return}
 if(t.dataset.paperUpload){await uploadPaper(t.dataset.paperUpload,t.dataset.paperUploadTarget||'');return}
 if(t.dataset.paperFetch){await fetchItemPapers(t.dataset.paperFetch);return}
 if(t.dataset.delete){await deleteItem(t.dataset.delete);return}
@@ -2118,25 +2148,40 @@ loadHealth();loadEvents();loadProgress().catch(()=>{});loadCredits().catch(()=>{
   load();
 })();
 
-/* ---------- 资料库备份 ---------- */
+/* ---------- 磁盘占用与备份 ---------- */
 (function(){
   const info=$('#backupInfo'),button=$('#backupRun');
   if(!info)return;
-  const mb=n=>(n?`${(n/1024/1024).toFixed(0)} MB`:'0');
+  const human=n=>{const units=['B','KB','MB','GB','TB'];let v=Math.abs(n||0),i=0;while(v>=1024&&i<units.length-1){v/=1024;i++}return `${v>=10?Math.round(v):v.toFixed(1)} ${units[i]}`};
   function paint(s){
     if(!s||s.error){info.textContent='读不到备份状态：'+((s&&s.error)||'');return}
     info.textContent=s.count
-      ? `${s.count} 份每日快照，最新 ${s.latest_at}（${mb(s.latest_size)}）`+(s.manual?`；另有 ${s.manual} 份手动留底`:'')
-      : '还没有每日快照，点右边按钮补一份';
+      ? `${s.count} 份每日快照（保留 ${s.keep||7} 份），最新 ${s.latest_at}（${human(s.latest_size)}）`+(s.manual?`；另有 ${s.manual} 份手动留底`:'')
+      : '还没有每日快照，点左边按钮补一份';
   }
   async function load(){try{paint(await api('/api/backup'))}catch(e){info.textContent='读不到备份状态：'+e.message}}
+  async function loadUsage(refresh){
+    const box=$('#storageUsageInfo'),dir=$('#storageDirText');
+    if(!box)return;
+    box.textContent='正在统计（第一次要一两秒）…';
+    try{
+      const u=await api('/api/storage/usage'+(refresh?'?refresh=1':''));
+      if(dir)dir.textContent=u.data_dir;
+      const top=(u.parts||[]).filter(p=>p.bytes>0).slice(0,5)
+        .map(p=>`${p.name} ${human(p.bytes)}`).join(' · ');
+      box.textContent=`共 ${human(u.total_bytes)}（${u.total_files} 个文件）：${top}`;
+    }catch(e){box.textContent='统计失败：'+e.message}
+  }
+  window.loadStorageUsage=loadUsage;
   if(button)button.onclick=async()=>{
     button.disabled=true;info.textContent='正在备份（库大的话要一两秒）…';
     try{const r=await api('/api/backup/run',{method:'POST',body:{}});
-      info.textContent=r.ok?`已生成 ${mb(r.size)} 的快照`:'备份失败：'+(r.error||'');
+      info.textContent=r.ok?`已生成 ${human(r.size)} 的快照`:'备份失败：'+(r.error||'');
       if(r.ok)load();
     }catch(e){info.textContent='备份失败：'+e.message}
     finally{button.disabled=false}
   };
+  const refreshBtn=$('#storageRefresh');
+  if(refreshBtn)refreshBtn.onclick=()=>loadUsage(true);
   load();
 })();

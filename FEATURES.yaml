@@ -219,7 +219,7 @@
   status: dropped
   surfaces:
     api: []
-  manual: -
+  manual: 无（该功能已放弃，界面上不提供入口）
   notes: 2026-11-16 放弃：4.x 只在收到推送或打开会话时落盘正文，实时订阅做不到稳定，
         改为「打开面板时按需读内存 + 每 30 分钟补同步」
 
@@ -264,7 +264,7 @@
     ui: ["#workbench"]
     test: ["test_reader_links.py"]
   manual: 在离线页点「原始页面」或正文里的任意链接 → 当前阅读区不跳走，链接交给系统浏览器打开；iframe 若还是被外部导航到别的地址，会自动复位回离线页
-  notes: iframe 内就地导航会变成微信「拒绝连接」且没有后退键，只能叉掉整页重开；归档页捕获 click → postMessage({type:'radar:open-url'}) → 父页面走 /api/system/open-url（app 窗口）或 window.open；外部链接一律 target=_blank&rel=noopener，guardArchiveFrame 用 load 事件兜底复位
+  notes: iframe 内就地导航会变成微信「拒绝连接」且没有后退键，只能叉掉整页重开；归档页捕获 click → postMessage({type:'radar:open-url'}) → 父页面走 /api/system/open-url（app 窗口）或 window.open；外部链接一律 target=_blank&rel=noopener，guardArchiveFrame 用 load 事件兜底复位；**阅读页是静态文件，模板改了只影响新归档**，老页面要跑 scripts/upgrade_reader_pages.py 重渲染（判据里必须同时检查 radar:open-url，否则会当成已升级跳过）
 
 - id: automation-toggles
   title: 自动下载论文 / 自动精读两个开关（省磁盘、省点数）
@@ -278,15 +278,27 @@
   notes: papers.auto_download 默认 false、analysis.auto 默认 true；process_item_papers(download=None) 时回退读设置，老任务 payload 不写 download 也能跑；手动精读带 force_analysis=True 绕过开关
 
 - id: smart-collect
-  title: 智能收藏：按精读分类/关键词对上收藏夹名字，弹框确认后收藏
+  title: 智能收藏（点按钮才推荐，不自动弹窗）
   status: done
   since: 2026-11-27
   surfaces:
     api: ["GET /api/items/{item_id}/collection-suggestions", "POST /api/collections/toggle"]
-    ui: ["#smartCollect", "#smartCollectList", "#smartCollectOk"]
-    test: ["test_collect_suggest.py"]
-  manual: 打开一条还没进任何收藏夹的条目 → 约一秒后弹「要不要收藏到这个收藏夹？」；取消勾选其中一个再点「收藏到选中的」，条目的收藏夹应只剩勾上的那几个；点「这次不用」本条不再打扰
-  notes: 向量与 IDF 关键词在科学文本上分不开（bge 余弦普遍 0.65–0.72，rna 会命中 tRNA），所以改用精读的 category/tags/title/summary 对收藏夹名字做子串匹配：命中 ≥3 字或整名命中才算 strong，最多两个、第二个要 ≥max(3.0,首位×0.7)；通用名（实验/科研杂谈）跳过；只在没有收藏夹时提示，弹框是 showModal 打断式
+    ui: ["#smartCollect", "#smartCollectList", "#smartCollectOk", "[data-smart-collect]"]
+    test: ["test_collect_suggest.py", "test_storage_policy.py"]
+  manual: 打开任意条目 → 什么都不弹；点顶栏（或经典弹层里）的「智能收藏」→ 才弹「要不要收藏到这个收藏夹？」；取消勾选其中一个再点「收藏到选中的」，条目的收藏夹应只剩勾上的那几个；没有匹配时提示「用收藏到…自己挑一个」
+  notes: 按钮触发，不再自动弹窗（连着看十几条时自动弹很烦，且用户常还没想好要不要收藏）；向量与 IDF 关键词在科学文本上分不开（bge 余弦普遍 0.65–0.72，rna 会命中 tRNA），所以改用精读的 category/tags/title/summary 对收藏夹名字做子串匹配：命中 ≥3 字或整名命中才算 strong，最多两个、第二个要 ≥max(3.0,首位×0.7)；通用名（实验/科研杂谈）跳过
+
+
+- id: storage-budget
+  title: 磁盘预算：原文压缩、配图上限、备份份数都可设
+  status: done
+  since: 2026-11-27
+  surfaces:
+    api: ["GET /api/storage/usage", "GET /api/health", "GET /api/backup", "POST /api/backup/run"]
+    ui: ["#backupPanel", "#maxImages", "#compressRaw", "#backupKeep", "#storageUsageInfo", "#storagePath"]
+    test: ["test_storage_policy.py", "test_backup.py"]
+  manual: 设置 → 磁盘占用与备份：能看到数据目录真实路径与各子目录体积；把「每篇最多保存几张配图」改成 0 应表示不限；关掉「原文快照压缩保存」后新归档的条目目录里应是 raw.html 而不是 raw.html.gz；左下角「数据位置」显示的必须是本机实际路径
+  notes: 原文快照内嵌配图 base64，单篇 3-4 MB，gzip 后约 12%，读取统一走 archive.raw_file/read_raw_bytes，压不压对前端透明；配图上限 0 = 不限（旧的 [:0] 会一张不存）；备份份数读 storage.backup_keep，写坏就退回 7 且绝不清空；左下角与分享桥示例都从 /api/health 的 data_dir 取，不许再写死开发机路径
 
 
 - id: reading-mode-switch

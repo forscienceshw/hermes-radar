@@ -384,14 +384,24 @@ def uninstall() -> int:
     return 0
 
 
+def _desktop_dir() -> Path:
+    """真实桌面目录：OneDrive 备份桌面时 `%USERPROFILE%\\Desktop` 不是用户看到的那块。"""
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders") as key:
+            value, _ = winreg.QueryValueEx(key, "Desktop")
+        if value:
+            return Path(os.path.expandvars(str(value)))
+    except OSError:
+        pass
+    return Path(os.environ.get("USERPROFILE", str(Path.home()))) / "Desktop"
+
+
 def _shortcut_paths() -> list[Path]:
-    paths = []
-    for env, parts in (("USERPROFILE", ("Desktop", f"{APP_NAME}.lnk")),
-                       ("APPDATA", ("Microsoft", "Windows", "Start Menu", "Programs", f"{APP_NAME}.lnk"))):
-        base = os.environ.get(env)
-        if base:
-            paths.append(Path(base).joinpath(*parts))
-    return [p for p in paths if p.exists()]
+    start_menu = Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Windows" / "Start Menu" / "Programs"
+    return [path for path in (_desktop_dir() / f"{APP_NAME}.lnk",
+                              start_menu / f"{APP_NAME}.lnk") if path.exists()]
 
 
 def _dir_size(path: Path) -> int:

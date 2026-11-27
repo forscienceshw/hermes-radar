@@ -22,7 +22,7 @@ from . import __version__, updater
 from .collectors import COLLECTORS
 from .db import Database, row_with_json
 from .logging_config import configure_logging
-from .paths import BLOB_DIR, DATA_DIR, LOG_DIR, WEB_DIR
+from .paths import BASE_DIR, BLOB_DIR, CONFIG_DIR, DATA_DIR, LOG_DIR, WEB_DIR
 from .services.notify import flush_open_batches, send_test_notification
 from .services.relevance import assess_candidate
 from .services import wechat_panel, wechat_public
@@ -379,7 +379,10 @@ def health() -> dict[str, Any]:
     if heartbeat:
         from .utils import parse_time, utcnow
         alive = bool(parse_time(heartbeat) and (utcnow() - parse_time(heartbeat)).total_seconds() < 15)
-    return {"status": "ok", "version": __version__, "worker_alive": alive, "time": now_iso(), **stats}
+    return {"status": "ok", "version": __version__, "worker_alive": alive, "time": now_iso(),
+            # 前端左下角直接显示这两个真实路径：安装包换台电脑、或改了
+            # RADAR_DATA_DIR 之后，界面不会再说谎。
+            "data_dir": str(DATA_DIR), "config_dir": str(CONFIG_DIR), **stats}
 
 
 @app.get("/api/progress")
@@ -922,6 +925,45 @@ def backup_status() -> dict[str, Any]:
 def backup_run() -> dict[str, Any]:
     from .services import backup
     return backup.run(force=True)
+
+
+# data/ 各目录体积缓存：设置页用来说明「空间花在哪」。全盘 walk 一次约 1-2 秒，
+# 60 秒内复用，点「刷新」才强制重算。
+_STORAGE_CACHE: dict[str, Any] = {"at": 0.0, "data": None}
+
+
+@app.get("/api/storage/usage")
+def storage_usage(refresh: int = 0) -> dict[str, Any]:
+    import time as _time
+
+    now = _time.time()
+    if _STORAGE_CACHE["data"] and not refresh and now - _STORAGE_CACHE["at"] < 60:
+        return _STORAGE_CACHE["data"]
+    buckets: dict[str, list[int]] = {}
+    for path in DATA_DIR.rglob("*"):
+        try:
+            if not path.is_file():
+                continue
+            stat = path.stat()
+        except OSError:
+            continue
+        relative = path.relative_to(DATA_DIR)
+        name = relative.parts[0] if len(relative.parts) > 1 else "（根目录文件）"
+        bucket = buckets.setdefault(name, [0, 0])
+        bucket[0] += stat.st_size
+        bucket[1] += 1
+    parts = [{"name": name, "bytes": size, "files": count}
+             for name, (size, count) in buckets.items()]
+    parts.sort(key=lambda row: row["bytes"], reverse=True)
+    payload = {
+        "data_dir": str(DATA_DIR),
+        "total_bytes": sum(row["bytes"] for row in parts),
+        "total_files": sum(row["files"] for row in parts),
+        "parts": parts,
+        "checked_at": now_iso(),
+    }
+    _STORAGE_CACHE.update({"at": now, "data": payload})
+    return payload
 
 
 
@@ -2235,7 +2277,7 @@ def job_diagnostics(job_id: str) -> dict[str, Any]:
 {chr(10).join(target_lines)}
 
 {hint_block}## 环境
-- 项目：E:\\HermesResearchRadar
+- 项目：{BASE_DIR}
 - Python：{sys.version.split()[0]}
 - 系统：{platform.platform()}
 - 数据库：{DATA_DIR / 'radar.db'}

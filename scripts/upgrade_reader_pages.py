@@ -35,9 +35,12 @@ def upgrade(limit: int = 0, dry_run: bool = False) -> dict[str, int]:
             continue
         stats["scanned"] += 1
         content = path.read_text(encoding="utf-8", errors="replace")
-        # Both markers must be present: the viewer alone means an older shell that
-        # predates the per-figure size labels.
-        if 'id="imageViewer"' in content and "imgdim" in content:
+        # 三个标记都要在：
+        #   imageViewer / imgdim —— 图片查看器与逐图尺寸标签
+        #   radar:open-url      —— 外链交给父页面/系统浏览器，避免 iframe 内跳转卡死
+        # 少任何一个都说明这一页是旧模板生成的，重渲染一次即可，正文不变。
+        if ('id="imageViewer"' in content and "imgdim" in content
+                and "radar:open-url" in content):
             stats["skipped"] += 1
             continue
         match = ARTICLE_RE.search(content)
