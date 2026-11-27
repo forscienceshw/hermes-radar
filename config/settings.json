@@ -81,7 +81,8 @@
     "max_per_item": 10,
     "extract_text": true,
     "download_references": false,
-    "title_lookup": true
+    "title_lookup": true,
+    "auto_download": false
   },
   "notifications": {
     "enabled": true,
@@ -122,6 +123,10 @@
   "analysis": {
     "custom_reading_prompt": "",
     "prompt_version": "research-reader-v2",
-    "concurrency": 4
+    "concurrency": 4,
+    "auto": true
+  },
+  "ui": {
+    "reading_mode": "workbench"
   }
 }
