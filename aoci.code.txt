@@ -87,7 +87,7 @@ public-config.json[FC5T]: F:云应用的公开配置：applicationId、resourceI
 
 ===/<repository>/config/===
 settings.example.json[FC4T]: F:默认设置模板（含 storage 磁盘策略），安装器用它生成初始配置 | R:code:app/settings.py,code:install.py | A:结构与 app/settings.py 的 DEFAULTS 保持一致 | S:新增配置项要同时改 DEFAULTS，否则用户升级后缺键会走默认分支，界面上看不到这一项；storage 与 max_images_per_article 要和 DEFAULTS 同步，否则新装机器上这两项看不见也改不了
-settings.json[CC6S]: F:本机实际配置且入库：端口、并发、轮询间隔、词表、推送时段、模型选择与自动选最便宜、阅读排布与自动精读/自动下论文开关 | R:code:app/settings.py,code:config/settings.example.json | A:阈值与词表随代码一起回滚 | S:能入库是因为可回滚，绝不能写绝对路径或凭据；llm.auto_cheapest=true 时模型名只是兜底，实际用哪个由客户端价目表决定；ui.reading_mode 默认 workbench，改成 classic 走另一套居中弹层，两套都得留着
+settings.json[CC6S]: F:本机实际配置且入库：端口、并发、轮询间隔、词表、推送时段、模型选择与自动选最便宜、阅读排布与自动精读/自动下论文开关 | R:code:app/settings.py,code:config/settings.example.json | A:阈值与词表随代码一起回滚 | S:能入库是因为可回滚，绝不能写绝对路径或凭据；llm.auto_cheapest=true 时模型名只是兜底，实际用哪个由客户端价目表决定；papers.auto_download / analysis.auto / ui.reading_mode 必须与 app/settings.py 的默认键同名同义，缺键按默认回退，两套阅读排布都得留着
 
 ===/<repository>/docs/wechat4/===
 01-技术原理.md[SD6M]: F:微信 4.2 的数据位置、SQLCipher4 加密结构、密钥来源、必须合并 WAL 的原因与表组织 | R:code:app/services/wechat4_live.py | A:与代码常量一一对应（页 4096、每页预留 80 字节） | S:这是实测推导的记录；「老办法为什么失效」一节是踩过的坑，不要照网上旧教程重试扫明文密钥

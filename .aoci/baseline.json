@@ -1,7 +1,7 @@
 {
   "version": 1,
   "created_at": "2026-11-20T17:42:55Z",
-  "updated_at": "2026-11-27T15:33:26Z",
+  "updated_at": "2026-11-27T16:38:03Z",
   "files": {
     ".console-audit.json": {
       "role": "index",
@@ -65,9 +65,9 @@
     },
     "aoci.code.txt": {
       "role": "index",
-      "sha256": "cbd4768b450348c37a9473d34f0c726373497a8bb20d9e8df28a4245f3ff6f60",
-      "size": 62779,
-      "normalized_sha256": "cbd4768b450348c37a9473d34f0c726373497a8bb20d9e8df28a4245f3ff6f60"
+      "sha256": "c6d0610188c747e1682dc49e38ee887d986f49dc599b9ea1492a892b33576aa7",
+      "size": 62846,
+      "normalized_sha256": "c6d0610188c747e1682dc49e38ee887d986f49dc599b9ea1492a892b33576aa7"
     },
     "aoci.meta.txt": {
       "role": "index",
@@ -419,9 +419,9 @@
     },
     "config/settings.json": {
       "role": "index",
-      "sha256": "bfa2e3a3d33da344c483b20e21a38f0a13b8bad923e0693e1a6bc86dba4d128a",
-      "size": 2796,
-      "normalized_sha256": "bb11065a572f09457bd02b692820e938588f6c920aa91953631c18f5dc51249d"
+      "sha256": "b96fe9c8906bb80172aa523141e70c0c295a54c3ca320cd3c668d21b9cde81e7",
+      "size": 2865,
+      "normalized_sha256": "c30622de8724363ff7c5e9a1186713c48a1b08d5841c1cf2e69ad021d54c734f"
     },
     "docs/wechat4/01-技术原理.md": {
       "role": "index",
