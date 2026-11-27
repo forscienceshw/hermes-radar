@@ -296,9 +296,9 @@
   surfaces:
     api: ["GET /api/storage/usage", "GET /api/health", "GET /api/backup", "POST /api/backup/run"]
     ui: ["#backupPanel", "#maxImages", "#compressRaw", "#backupKeep", "#storageUsageInfo", "#storagePath"]
-    test: ["test_storage_policy.py", "test_backup.py"]
-  manual: 设置 → 磁盘占用与备份：能看到数据目录真实路径与各子目录体积；把「每篇最多保存几张配图」改成 0 应表示不限；关掉「原文快照压缩保存」后新归档的条目目录里应是 raw.html 而不是 raw.html.gz；左下角「数据位置」显示的必须是本机实际路径
-  notes: 原文快照内嵌配图 base64，单篇 3-4 MB，gzip 后约 12%，读取统一走 archive.raw_file/read_raw_bytes，压不压对前端透明；配图上限 0 = 不限（旧的 [:0] 会一张不存）；备份份数读 storage.backup_keep，写坏就退回 7 且绝不清空；左下角与分享桥示例都从 /api/health 的 data_dir 取，不许再写死开发机路径
+    test: ["test_storage_policy.py", "test_backup.py", "test_trash_guard.py"]
+  manual: 设置 → 磁盘占用与备份：能看到数据目录真实路径与各子目录体积；把「每篇最多保存几张配图」改成 0 应表示不限；关掉「原文快照压缩保存」后新归档的条目目录里应是 raw.html 而不是 raw.html.gz；左下角「数据位置」显示的必须是本机实际路径；清理完跑 `python tools/trash.py check`，本项目在回收站里的条目必须是 0
+  notes: 原文快照内嵌配图 base64，单篇 3-4 MB，gzip 后约 12%，读取统一走 archive.raw_file/read_raw_bytes，压不压对前端透明；配图上限 0 = 不限（旧的 [:0] 会一张不存）；备份份数读 storage.backup_keep，写坏就退回 7 且绝不清空；左下角与分享桥示例都从 /api/health 的 data_dir 取，不许再写死开发机路径；带安全删除垫片的环境会把直删也留一份副本，目录体积降了不等于磁盘腾出来了（实测差 22.3 GB），核账只认 trash.py check
 
 
 - id: reading-mode-switch

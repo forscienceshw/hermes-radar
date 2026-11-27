@@ -238,11 +238,12 @@ def cmd_tidy() -> int:
     print(f"临时文件合计 {total / 1024 / 1024:.1f} MB")
 
     python = python_exe()
-    for prefix in (str(BASE_DIR), str(DATA_DIR)):
-        result = subprocess.run([python, str(ROOT / "tools" / "trash.py"), "purge", "--under", prefix],
-                                text=True, encoding="utf-8", errors="replace", capture_output=True)
-        tail = [line for line in (result.stdout or "").strip().splitlines() if line][-2:]
-        print("\n".join(tail) or "（回收站里没有本项目的记录）")
+    # 一次调用扫完两个前缀：purge 每次都要遍历所有盘的回收站，调两遍等于扫两遍。
+    result = subprocess.run([python, str(ROOT / "tools" / "trash.py"),
+                             "purge", "--under", f"{BASE_DIR},{DATA_DIR}"],
+                            text=True, encoding="utf-8", errors="replace", capture_output=True)
+    tail = [line for line in (result.stdout or "").strip().splitlines() if line][-2:]
+    print("\n".join(tail) or "（回收站里没有本项目的记录）")
     return 0
 
 

@@ -174,6 +174,9 @@ python radar.py where   # 各个目录在哪、数据库是哪一版
 - 程序自己产生的临时文件、缓存、旧安装包走 `app/services/purge.py` 直删，**不进回收站**；
   命令行侧对应 `python radar.py tidy`（清 `.tmp` + 直删回收站里本项目的记录）。
 - 用户资料（`data/documents`、`data/blobs`）不在直删范围里，删之前先备份。
+- **删完要核账**：`python tools/trash.py check` 会列出本项目在回收站里还剩多少带实体数据的
+  条目。带沙箱/安全删除垫片的环境会把直删也留一份副本，只看目录体积会得出"已经删了"的
+  假象（实测差 22.3 GB）；清用 `python tools/trash.py purge --under '<前缀>'`。
 
 ## 改坏了怎么办
 

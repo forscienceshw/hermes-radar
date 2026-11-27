@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import os
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -59,6 +60,32 @@ class TrashGuardTests(unittest.TestCase):
             finally:
                 self.trash._git_tracked = original
             self.assertFalse(target.exists(), "--force 就是明确要删")
+
+    def test_leftover_trash_counts_live_project_entries(self) -> None:
+        """只看本项目前缀、且有实体数据的条目；别的盘/用户自己的东西不算。"""
+        fake = [
+            {"original": str(ROOT / "data" / "documents" / "a" / "raw.html"),
+             "size": 100, "has_data": True},
+            {"original": str(ROOT / "data" / "blobs" / "b.pdf"),
+             "size": 50, "has_data": False},
+            {"original": "D:\\照片\\x.jpg", "size": 999, "has_data": True},
+        ]
+        got = self.trash.leftover_trash([str(ROOT)], fake)
+        self.assertEqual(got["count"], 1)
+        self.assertEqual(got["size"], 100)
+
+    def test_project_prefixes_follows_data_override(self) -> None:
+        original = os.environ.get("RADAR_DATA_DIR")
+        os.environ["RADAR_DATA_DIR"] = "F:\\radar-data"
+        try:
+            prefixes = self.trash.project_prefixes()
+        finally:
+            if original is None:
+                os.environ.pop("RADAR_DATA_DIR", None)
+            else:
+                os.environ["RADAR_DATA_DIR"] = original
+        self.assertTrue(any(p.casefold().endswith("radar-data") for p in prefixes),
+                        "换了 RADAR_DATA_DIR 之后，资料库前缀也要跟着换")
 
 
 if __name__ == "__main__":

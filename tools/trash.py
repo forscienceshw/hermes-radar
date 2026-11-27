@@ -230,13 +230,47 @@ def cmd_wipe(args: argparse.Namespace) -> int:
     return 0
 
 
+def project_prefixes() -> list[str]:
+    """本项目自己的回收站前缀：仓库根 + 资料库（改了 RADAR_DATA_DIR 也要算上）。"""
+    root = Path(__file__).resolve().parents[1]
+    data_dir = Path(os.environ.get("RADAR_DATA_DIR") or (root / "data"))
+    prefixes = [str(root)]
+    try:
+        data = str(data_dir.absolute())
+    except OSError:
+        data = str(root / "data")
+    if not any(data.casefold().startswith(p.casefold()) for p in prefixes):
+        prefixes.append(data)
+    return prefixes
+
+
+def leftover_trash(prefixes: list[str] | None = None, items: list[dict] | None = None) -> dict:
+    """本项目在回收站里还剩多少**带实体数据**的条目。
+
+    为什么专门查这个：沙箱会在删除后再补一条回收站记录，`purge.remove` 那种
+    "Win32 直删"照样会被留一份副本，于是脚本打印"删除成功"、目录体积也降了，
+    磁盘却没多出空间——差额全躺在回收站里。2026-11-27 实测：data 目录从 52 GB
+    降到 32 GB，回收站里同时躺着 4483 条 / 22.3 GB。删完必须核账，别只看目录体积。
+    """
+    prefixes = prefixes or project_prefixes()
+    items = entries() if items is None else items
+    live = [item for item in items
+            if item.get("has_data") and _matches(str(item.get("original") or ""), prefixes)]
+    return {"count": len(live), "size": sum(item.get("size") or 0 for item in live),
+            "prefixes": prefixes}
+
+
 def check(args: argparse.Namespace | None = None) -> int:
-    """给人工复查用：仓库里有没有被垫片拦下的残留。"""
+    """给人工复查用：仓库里有没有被垫片拦下的残留，回收站里还压着多少空间。"""
     root = Path(__file__).resolve().parents[1]
     leftovers = sorted(root.glob("data/tmp*"))
     print(f"仓库内残留临时目录 {len(leftovers)} 个")
     for item in leftovers[:10]:
         print(f"  {item.name}")
+    trash_left = leftover_trash()
+    print(f"回收站里本项目条目 {trash_left['count']} 条，{_human(trash_left['size'])}")
+    if trash_left["count"]:
+        print(f"  清掉：python tools/trash.py purge --under '{trash_left['prefixes'][0]}'")
     return 0
 
 
