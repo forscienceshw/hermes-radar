@@ -94,14 +94,32 @@ class WorkbenchMarkupTest(unittest.TestCase):
             self.assertIn(token, self.js, f"论文栏缺少 {token}")
 
     def test_action_track_pages_by_whole_buttons(self):
-        """翻页要按整按钮走，并且位置留得住；平滑滚动会被重排打断，看起来像弹回原位。"""
-        self.assertIn("function wbActPages(", self.js)
-        self.assertIn("function wbActIndex(", self.js)
-        self.assertIn("track.scrollTo({left:starts[next],behavior:'auto'})", self.js)
+        """操作条只有两页，每页一组不重复的按钮；宽度按页宽实时算，不写死像素。"""
+        # 两页各是一个满宽容器，翻页平移整条 reel —— 第二页结构上不可能混进第一页的按钮
+        self.assertIn("function wbPlanPages(", self.js)
+        self.assertIn("function wbLayoutPages(", self.js)
+        self.assertIn('class="wb-act-reel"', self.js)
+        self.assertIn('class="wb-act-page"', self.js)
+        self.assertIn("reel.style.transform=", self.js)
+        self.assertIn("pages[i].offsetLeft", self.js)
+        # 第一页最多留两个按钮给第二页：两页是硬上限，不会冒出第三个状态
+        self.assertIn("for(let k=n-2;k>=1;k--)", self.js)
+        # 宽度由 JS 按页宽与可用空间算，窗口一变就重排
+        self.assertIn("track.style.width=Math.max(120,Math.min(Math.max(pick.plan.w1,pick.plan.w2),pick.m.avail", self.js)
+        self.assertIn("wbActRO.observe(row)", self.js)
         self.assertNotIn("scrollBy({left:dir*", self.js, "不要再靠估算像素平移")
-        # 重渲染顶栏后把位置还原，否则一刷新就回到第一页
-        self.assertIn("track.scrollLeft=wb.actScroll||0", self.js)
-        self.assertIn("width:min(300px,40vw)", self.css, "操作条一次只显示三四个按钮")
+        self.assertNotIn("width:min(300px,40vw)", self.css, "写死像素的话窗口变了条子不动")
+        self.assertIn("flex:0 0 100%", self.css, "每页占满轨道，否则会露出隔壁页的半个按钮")
+        # 位置记在状态里，重渲染后回到同一页
+        self.assertIn("wbSetActPage(wb.actPage||0)", self.js)
+        # 常驻按钮不进轨道
+        self.assertIn('class="wb-act-pinned"', self.js)
+        rolling = self.js.split("const acts=[", 1)[1].split("].filter(a=>a.h);", 1)[0]
+        self.assertNotIn("data-wb-ask", rolling, "问 AI 要常驻在外面，不参与翻页")
+        self.assertNotIn("data-delete=", rolling, "删除要常驻在外面，不参与翻页")
+        pinned = self.js.split("const pinned=[", 1)[1].split("];", 1)[0]
+        self.assertIn("data-wb-ask", pinned)
+        self.assertIn("data-delete=", pinned)
 
     def test_header_shows_running_job(self):
         """点完按钮至少顶栏能看到「正在做什么」，不能只有一句转瞬即逝的提示。"""

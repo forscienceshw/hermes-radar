@@ -605,18 +605,20 @@ body.modal-open .chat-fab{display:none}
 .wb-side-switch button:hover{background:#e8eff0}
 .wb-side-switch button[aria-pressed="true"]{background:#fff;border-color:#cfe0de;color:var(--accent);font-weight:650;box-shadow:0 1px 3px rgba(18,110,103,.12)}
 .wb-item-actions{flex:1 1 320px;min-width:0;display:flex;align-items:center;gap:4px;justify-content:flex-end}
-/* 操作条只显示三四个按钮（约 340px），剩下的靠两侧箭头整页翻。
-   不设上限时宽屏会把八个按钮全塞进来：滚动余量只剩几十像素，
-   箭头「点一下动一点点」看着像没反应，标题也被挤没了。 */
-.wb-act-track{flex:0 1 auto;width:min(300px,40vw);min-width:180px;display:flex;align-items:center;gap:5px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;-ms-overflow-style:none;scroll-behavior:auto;padding:2px 1px}
-.wb-act-track::-webkit-scrollbar{display:none}
-/* 翻页用 auto 而不是 smooth：平滑滚动会被后续的布局重排打断，
-   表现是横条滑到一半自己弹回原位——用户看到的就是「按了没反应」。 */
-/* 两端渐隐：有被裁掉的按钮时给个视觉提示，而不是硬切一刀。 */
-.wb-act-track.can-prev{-webkit-mask-image:linear-gradient(90deg,transparent 0,#000 16px,#000 100%);mask-image:linear-gradient(90deg,transparent 0,#000 16px,#000 100%)}
-.wb-act-track.can-next{-webkit-mask-image:linear-gradient(90deg,#000 0,#000 calc(100% - 16px),transparent 100%);mask-image:linear-gradient(90deg,#000 0,#000 calc(100% - 16px),transparent 100%)}
-.wb-act-track.can-prev.can-next{-webkit-mask-image:linear-gradient(90deg,transparent 0,#000 16px,#000 calc(100% - 16px),transparent 100%);mask-image:linear-gradient(90deg,transparent 0,#000 16px,#000 calc(100% - 16px),transparent 100%)}
+/* 操作条分两页：宽度由 JS 按「最宽那页」算（可用空间不够时收窄并切紧凑样式），
+   不再写死像素——窗口一拉，行宽变了，条子跟着变。 */
+.wb-act-track{flex:0 1 auto;min-width:0;overflow:hidden;position:relative;padding:2px 0}
+/* 整条按钮带：翻页就是把它平移一页的距离，平移不参与布局，不会被重排打断。 */
+.wb-act-reel{display:flex;transition:transform .18s cubic-bezier(.2,.8,.3,1);will-change:transform}
+/* 每页都是轨道满宽：翻页时整页对齐，绝不会露出隔壁页的半个按钮。
+   内容靠右贴住箭头——第二页按钮少时不会在中间留一坨空白。 */
+.wb-act-page{flex:0 0 100%;min-width:0;display:flex;align-items:center;justify-content:flex-end;gap:5px;padding:0 1px}
 .wb-act-track button,.wb-act-track .button{padding:5px 10px;font-size:12px;white-space:nowrap;flex:none;height:28px;display:inline-flex;align-items:center}
+/* 问 AI 与 删除/恢复 常驻在轨道外面：不被翻页带走，任何时候都能点。 */
+.wb-act-pinned{flex:none;display:flex;align-items:center;gap:4px;padding-left:2px}
+.wb-act-pinned button{height:28px;padding:5px 10px;font-size:12px;white-space:nowrap}
+/* 窄窗口：按钮收一号，保证整框露出来而不是被切掉一半。 */
+.wb-item-actions.compact .wb-act-track button,.wb-item-actions.compact .wb-act-track .button,.wb-item-actions.compact .wb-act-pinned button{padding:5px 7px;font-size:11.5px}
 /* 两侧小圆箭头：点一下翻一屏，不出现可见滚动条。 */
 .wb-act-nav{flex:none;width:22px;height:22px;padding:0;border-radius:50%;border:1px solid #dfe6e9;background:#fff;color:#5a6672;font-size:15px;line-height:1;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;transition:background .15s,color .15s,opacity .15s}
 .wb-act-nav:hover:not(:disabled){background:var(--soft);color:var(--accent);border-color:#cbdedb}
@@ -709,4 +711,5 @@ body.modal-open .chat-fab{display:none}
 }
 @media(prefers-reduced-motion:reduce){
   .workbench[open],.wb-pane-enter{animation:none}
+  .wb-act-reel{transition:none}
 }

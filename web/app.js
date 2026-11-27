@@ -1116,7 +1116,7 @@ function afterBlock(a){
    5. 关掉一栏，剩下那栏自动回到居中。切 tab 只改 display，不重建 DOM，iframe 保住滚动位置。
 */
 const WB_VIEWS={read:'原文',reading:'精读',paper:'论文',notes:'笔记',ideas:'Ideas'};
-const wb={open:false,itemId:null,item:null,panes:[],paneSeq:0,noteSeq:0,paperIndex:0,actScroll:0};
+const wb={open:false,itemId:null,item:null,panes:[],paneSeq:0,noteSeq:0,paperIndex:0,actPage:0,actItems:[]};
 let wbIdeaTimer=null;
 function wbEl(){return $('#workbench')}
 function wbIsOpen(){const el=wbEl();return !!(el&&el.open)}
@@ -1290,24 +1290,31 @@ function wbRenderHeader(x){
   $('#wbMeta').textContent=[x.author,when,x.excluded_at?'已移出主资料库':''].filter(Boolean).join(' · ');
   // 按钮一行排开，放不下的用两侧小箭头翻页。这个位置只有一行的宽度，
   // 之前用 flex-wrap 换行会把标题栏顶成两层，所以改成「一条可翻页的轨道」。
+  // 分两组：常驻的（问 AI、删除/恢复）不进轨道，剩下的按「两页刚好装下」分页。
+  // 每一页是独立容器，翻页是把整条 reel 平移过去——第二页里不可能混进第一页的按钮。
   const acts=[
-    `<a class="button" href="${esc(x.url)}" target="_blank" rel="noopener">打开原文</a>`,
-    x.metadata&&x.metadata.original_share_url&&x.metadata.original_share_url!==x.url?`<a class="button" href="${esc(x.metadata.original_share_url)}" target="_blank" rel="noopener">原始短链</a>`:'',
-    `<button type="button" data-verify-source="${x.id}">检查原文</button>`,
-    `<button type="button" data-collect="${x.id}" data-collect-type="item" data-collect-ids="${(x.collections||[]).join(',')}">收藏到…</button>`,
-    `<button type="button" data-smart-collect="${x.id}">智能收藏</button>`,
+    {k:'打开原文',h:`<a class="button" href="${esc(x.url)}" target="_blank" rel="noopener">打开原文</a>`},
+    {k:'原始短链',h:x.metadata&&x.metadata.original_share_url&&x.metadata.original_share_url!==x.url?`<a class="button" href="${esc(x.metadata.original_share_url)}" target="_blank" rel="noopener">原始短链</a>`:''},
+    {k:'检查原文',h:`<button type="button" data-verify-source="${x.id}">检查原文</button>`},
+    {k:'收藏到',h:`<button type="button" data-collect="${x.id}" data-collect-type="item" data-collect-ids="${(x.collections||[]).join(',')}">收藏到…</button>`},
+    {k:'智能收藏',h:`<button type="button" data-smart-collect="${x.id}">智能收藏</button>`},
+    {k:'重新精读',h:x.excluded_at?'':`<button type="button" data-reanalyze="${x.id}">重新精读</button>`},
+    {k:'重新检查配图',h:((x.metadata||{}).images||[]).length?`<button type="button" data-retriage="${x.id}">重新检查配图</button>`:''},
+    {k:'屏蔽此类',h:`<button type="button" data-rule-from="${esc(x.author||'')}">屏蔽此类</button>`}
+  ].filter(a=>a.h);
+  const pinned=[
     `<button type="button" class="primary" data-wb-ask>问 AI</button>`,
-    x.excluded_at?'':`<button type="button" data-reanalyze="${x.id}">重新精读</button>`,
-    ((x.metadata||{}).images||[]).length?`<button type="button" data-retriage="${x.id}">重新检查配图</button>`:'',
-    `<button type="button" data-rule-from="${esc(x.author||'')}">屏蔽此类</button>`,
-    x.excluded_at?`<button type="button" class="primary" data-restore="${x.id}">恢复收录</button>`:`<button type="button" class="danger" data-delete="${x.id}">删除</button>`
-  ].filter(Boolean);
+    x.excluded_at?`<button type="button" class="primary" data-restore="${x.id}">恢复收录</button>`
+                 :`<button type="button" class="danger" data-delete="${x.id}">删除</button>`
+  ];
+  wb.actItems=acts.map(a=>a.h);      // 先全部装进一页，同步时按实测宽度重新分配
   $('#wbItemActions').innerHTML=`<button type="button" class="wb-act-nav" data-wb-act="-1" aria-label="上一组操作" title="上一组操作" disabled>‹</button>`
-    +`<div class="wb-act-track" id="wbActTrack" role="group" aria-label="条目操作">${acts.join('')}</div>`
-    +`<button type="button" class="wb-act-nav" data-wb-act="1" aria-label="下一组操作" title="下一组操作">›</button>`;
-  // innerHTML 重建会把 scrollLeft 归零：还原到用户刚才那一页，翻页才「留得住」。
-  const track=$('#wbActTrack');
-  if(track)track.scrollLeft=wb.actScroll||0;
+    +`<div class="wb-act-track" id="wbActTrack" role="group" aria-label="条目操作"><div class="wb-act-reel" id="wbActReel">`
+    +`<div class="wb-act-page">${wb.actItems.join('')}</div>`
+    +`</div></div>`
+    +`<button type="button" class="wb-act-nav" data-wb-act="1" aria-label="下一组操作" title="下一组操作" disabled>›</button>`
+    +`<div class="wb-act-pinned" id="wbActPinned">${pinned.join('')}</div>`;
+  // 重建后回到用户刚才那一页：翻页位置记在 wb.actPage 里，不会自己弹回第一页。
   syncWbActions();
   watchWbActions();
   wbRenderJob(x);
@@ -1346,67 +1353,106 @@ function wbRenderJob(x){
     el.hidden=true;el.textContent='';
   }
 }
-/* 顶栏那条操作轨道在 dialog 打开前量到的是 0 宽：scrollWidth==clientWidth，箭头会一直停在
-   disabled，用户就翻不到被裁掉的「屏蔽此类 / 删除」。所以既在 showModal 后补一次，也用
-   ResizeObserver 兜住「从 0 变成真实宽度」和窗口/栏数变化。 */
-let wbActRO=null;
+/* 分页规则：第一页在可用宽度里尽量多装，第二页至少留两个按钮——所以永远只有两个状态。
+   切点 k 由实测按钮宽度算，窗口一变就重新分配：宽了每页多装一个，窄了少装一个，
+   条子长度跟着走，而不是写死一个像素值。 */
+function wbPlanPages(widths,avail){
+  const n=widths.length,gap=5;
+  const span=(a,b)=>widths.slice(a,b).reduce((s,w)=>s+w,0)+Math.max(0,b-a-1)*gap;
+  if(n<=3)return {k:n,w1:span(0,n),w2:0};
+  for(let k=n-2;k>=1;k--){                 // 先试「第一页装得最多」，两页都得放得下
+    const w1=span(0,k),w2=span(k,n);
+    if(w1<=avail&&w2<=avail)return {k,w1,w2};
+  }
+  let kb=1,bd=Infinity;                    // 都放不下：取最均衡的切法，交给紧凑样式兜
+  for(let k=1;k<n;k++){
+    const d=Math.abs(span(0,k)-span(k,n));
+    if(d<bd){bd=d;kb=k}
+  }
+  return {k:kb,w1:span(0,kb),w2:span(kb,n)};
+}
+function wbLayoutPages(k){
+  const reel=$('#wbActReel'),track=$('#wbActTrack');
+  const items=wb.actItems||[];
+  if(!reel||!items.length)return;
+  const cut=Math.max(1,Math.min(items.length,k||items.length));
+  reel.innerHTML=`<div class="wb-act-page">${items.slice(0,cut).join('')}</div>`
+    +(cut<items.length?`<div class="wb-act-page">${items.slice(cut).join('')}</div>`:'');
+  if(track)track.dataset.split=String(cut);
+}
+/* 量一次：所有滚动按钮的宽度，以及轨道最多能用多宽（行宽扣掉箭头与常驻按钮）。
+   注意 compact 会改变按钮宽度，所以先按「不紧凑」量，装不下再按紧凑量一次——顺序固定，
+   不会出现「切紧凑→装得下→切回去→又装不下」的来回跳。 */
+function wbActMetrics(){
+  const row=$('#wbItemActions'),track=$('#wbActTrack'),reel=$('#wbActReel');
+  if(!row||!track||!reel)return null;
+  const widths=[...reel.querySelectorAll('.wb-act-page > *')].map(c=>c.offsetWidth);
+  const all=[...row.children];
+  const others=all.filter(c=>c!==track).reduce((s,c)=>s+c.offsetWidth,0);
+  const gaps=Math.max(0,all.length-1)*4;   // .wb-item-actions 的 gap:4px
+  const avail=Math.max(0,row.clientWidth-others-gaps);
+  return {row,track,reel,widths,avail};
+}
+/* dialog 打开前量到的是 0 宽，此时先跳过；showModal 后补一帧，之后交给 ResizeObserver。 */
+let wbActRO=null,wbActRAF=0;
 function watchWbActions(){
-  const track=$('#wbActTrack');
-  if(!track||!window.ResizeObserver)return;
-  if(!wbActRO)wbActRO=new ResizeObserver(()=>syncWbActions());
+  const row=$('#wbItemActions');
+  if(!row||!window.ResizeObserver)return;
+  if(!wbActRO)wbActRO=new ResizeObserver(()=>{
+    if(wbActRAF)return;
+    wbActRAF=requestAnimationFrame(()=>{wbActRAF=0;syncWbActions()});
+  });
   wbActRO.disconnect();
-  wbActRO.observe(track);
+  wbActRO.observe(row);
 }
 function syncWbActions(){
-  const track=$('#wbActTrack');if(!track)return;
-  const prev=$('[data-wb-act="-1"]'),next=$('[data-wb-act="1"]');
-  const {starts,max}=wbActPages();
-  const index=wbActIndex(track,starts);
-  if(prev)prev.disabled=index<=0;
-  if(next)next.disabled=index>=starts.length-1;
-  track.classList.toggle('can-prev',track.scrollLeft>2);
-  track.classList.toggle('can-next',track.scrollLeft<max-2);
-  wb.actScroll=track.scrollLeft;
-}
-/* 按「整按钮」翻页：一页三四个，翻过去正好是另外三四个。
-   位置记在 wb.actScroll 里，顶栏重渲染后仍停在同一页——不然一刷新状态就自己弹回开头，
-   看着就像按钮没生效。 */
-function wbActPages(){
-  const track=$('#wbActTrack');
-  if(!track)return {starts:[0],max:0};
-  const kids=[...track.children];
-  const max=Math.max(0,track.scrollWidth-track.clientWidth);
-  if(!kids.length||max<=2)return {starts:[0],max};
-  const base=kids[0].offsetLeft;
-  const starts=[0];
-  const per=3;
-  const minGap=48;                     // 两页之间至少挪出小半个按钮，否则等于没翻
-  for(let i=per;i<kids.length;i+=per){
-    const left=Math.min(max,Math.max(0,kids[i].offsetLeft-base));
-    if(left<=starts[starts.length-1]+minGap)continue;
-    starts.push(left);
-    if(left>=max-2)break;
+  const row=$('#wbItemActions');
+  if(!row)return;
+  const probe=(compact)=>{
+    row.classList.toggle('compact',compact);
+    const m=wbActMetrics();
+    if(!m||!m.widths.length||!m.widths[0])return null;
+    const plan=wbPlanPages(m.widths,m.avail);
+    return {m,plan,fits:plan.w1<=m.avail&&plan.w2<=m.avail};
+  };
+  const full=probe(false);
+  if(!full)return;                         // 还没布局：等 showModal 后的那一帧
+  let pick=full,compact=false;
+  if(!full.fits){                          // 正常字号装不下 → 收一号再试
+    const tight=probe(true);
+    if(tight){pick=tight;compact=true}
   }
-  if(max-starts[starts.length-1]>=minGap)starts.push(max);
-  return {starts,max};
+  row.classList.toggle('compact',compact);
+  const {track}=pick.m;
+  if(Number(track.dataset.split||0)!==pick.plan.k)wbLayoutPages(pick.plan.k);
+  // 条子宽度 = 最宽那页，受可用空间约束：窗口一动，这里就跟着动
+  track.style.width=Math.max(120,Math.min(Math.max(pick.plan.w1,pick.plan.w2),pick.m.avail||pick.plan.w1))+'px';
+  wbSetActPage(wb.actPage||0);
 }
-function wbActIndex(track,starts){
-  let index=0;
-  for(let i=0;i<starts.length;i++)if(starts[i]<=track.scrollLeft+2)index=i;
-  return index;
+/* 翻页 = 把整条 reel 平移一页的距离（每页都是轨道满宽，所以正好对齐、绝不重叠）。
+   平移不参与布局，不会像 scroll + smooth 那样被重排打断、「滑一半弹回去」。 */
+function wbSetActPage(index){
+  const track=$('#wbActTrack'),reel=$('#wbActReel');
+  if(!track||!reel)return;
+  const pages=[...reel.children];
+  if(!pages.length)return;
+  const i=Math.max(0,Math.min(pages.length-1,index));
+  wb.actPage=i;
+  const dx=pages[i].offsetLeft;          // offsetLeft 以轨道为参照：正好把这一页左边缘对齐
+  reel.style.transform=dx?`translateX(${-dx}px)`:'';
+  track.dataset.page=String(i);
+  const prev=$('[data-wb-act="-1"]'),next=$('[data-wb-act="1"]');
+  if(prev)prev.disabled=i<=0;
+  if(next)next.disabled=i>=pages.length-1;
 }
-function wbScrollActions(dir){
-  const track=$('#wbActTrack');if(!track)return;
-  const {starts}=wbActPages();
-  const index=wbActIndex(track,starts);
-  const next=Math.min(starts.length-1,Math.max(0,index+dir));
-  // 不用 smooth：平滑滚动会被随后的一次布局重排打断，看起来是「滑一半自己弹回去」。
-  track.scrollTo({left:starts[next],behavior:'auto'});
-  wb.actScroll=starts[next];
-  syncWbActions();
+function wbStepActPage(dir){
+  wbSetActPage((wb.actPage||0)+dir);
 }
-window.addEventListener('resize',()=>syncWbActions());
-document.addEventListener('scroll',e=>{if(e.target&&e.target.id==='wbActTrack')syncWbActions()},true);
+let wbActResizeTimer=0;
+window.addEventListener('resize',()=>{
+  if(wbActResizeTimer)clearTimeout(wbActResizeTimer);
+  wbActResizeTimer=setTimeout(()=>{wbActResizeTimer=0;syncWbActions()},120);
+});
 /* 手动上传原论文：用原生文件选择器，选完直接 POST 二进制，不经过表单。
    成功后 refreshOpenReader 会把论文栏和精读底部的「关联论文」一起刷新。 */
 function uploadPaper(itemId,paperId){
@@ -1450,7 +1496,7 @@ async function openWorkbench(id,opts={}){
   const sameItem=wb.itemId===x.id;
   wb.item=x;wb.itemId=x.id;wb.open=true;
   if(!sameItem)wb.paperIndex=0;
-  if(!sameItem)wb.actScroll=0;      // 换条目：按钮集合可能变了，翻页位置从头算
+  if(!sameItem)wb.actPage=0;        // 换条目：按钮集合可能变了，翻页位置从头算
   wbRenderHeader(x);
   const el=wbEl();
   if(!el.open){
@@ -2004,7 +2050,7 @@ document.addEventListener('change',e=>{
   }
   const box=e.target.closest('[data-collect-toggle]');if(box)toggleCollect(box.dataset.collectToggle,box.checked).catch(err=>toast(err.message))});
 document.addEventListener('click',async e=>{if(e.target.closest('.pick'))return;const t=e.target.closest('button,[data-item]');if(!t)return;try{
-if(t.dataset.wbAct){wbScrollActions(Number(t.dataset.wbAct));return}
+if(t.dataset.wbAct){wbStepActPage(Number(t.dataset.wbAct));return}
 if(t.dataset.classicView){await switchClassicView(t.dataset.classicView);return}
 if(t.dataset.wbPaperOpen!==undefined){wbToggleSide('paper');return}
 if(t.dataset.smartCollect){const x=await api('/api/items/'+encodeURIComponent(t.dataset.smartCollect));await suggestCollections(x,{manual:true});return}

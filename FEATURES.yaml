@@ -229,10 +229,10 @@
   since: 2026-11-26
   surfaces:
     api: ["GET /api/items/{item_id}/archive"]
-    ui: ["#workbench", "#wbBody", "#wbClose", "#wbSideSwitch", "#wbItemActions", "#wbActTrack", "#wbJob"]
+    ui: ["#workbench", "#wbBody", "#wbClose", "#wbSideSwitch", "#wbItemActions", "#wbActTrack", "#wbActReel", "#wbActPinned", "#wbJob"]
     test: ["test_workbench.py"]
-  manual: 点资料库条目 → 离线页单栏居中；点「精读」→ 原文让到左、精读进右；点「论文」→ 右栏换成 PDF；关掉一栏 → 自动回居中；点暗处与按 Esc 都不关，只有 ✕ 关；顶栏按钮区一次只露三四个，点两侧箭头整页换一组且位置留得住；按钮点为任务后标题下方要出现「正在精读 · 已读 N 字 · N 秒」这类状态
-  notes: 切 tab 用 visibility 藏 iframe（display:none 会重置内部滚动位置）；Esc 合成的 cancel 是 cancelable:false，必须拦 keydown；离线页不能加 X-Frame-Options；四种右栏（精读/论文/笔记/Ideas）抢同一块位置；顶栏操作条按「整按钮」翻页（宽 300px ≈ 四个按钮），滚动位置存 wb.actScroll，重渲染后还原，别用 smooth（会被重排打断，看起来像弹回原位）；toast 要挂进最上层 modal 子树，body 里的浮层会被工作台遮罩压住
+  manual: 点资料库条目 → 离线页单栏居中；点「精读」→ 原文让到左、精读进右；点「论文」→ 右栏换成 PDF；关掉一栏 → 自动回居中；点暗处与按 Esc 都不关，只有 ✕ 关；顶栏「问 AI / 删除」常驻在轨道外永远可点，其余按钮只有两页、点箭头整页换一组且两页不重复；拉窗口宽度时条子跟着变长变短，任一个按钮的框都不许被切；按钮点为任务后标题下方要出现「正在精读 · 已读 N 字 · N 秒」这类状态
+  notes: 切 tab 用 visibility 藏 iframe（display:none 会重置内部滚动位置）；Esc 合成的 cancel 是 cancelable:false，必须拦 keydown；离线页不能加 X-Frame-Options；四种右栏（精读/论文/笔记/Ideas）抢同一块位置；顶栏操作条分两页（第一页在可用宽度内尽量多装、第二页至少留两个，所以永远只有两个状态），每页是轨道满宽的独立容器，翻页靠平移 reel 而不是 scroll——平移不参与布局，不会被重排打断，也绝不会露出隔壁页的半个按钮；宽度由 wbPlanPages 按实测按钮宽度与可用空间算，窗口一变就重新分配（别写死像素）；当前页存 wb.actPage，重渲染后还原；toast 要挂进最上层 modal 子树，body 里的浮层会被工作台遮罩压住
 
 - id: action-feedback
   title: 点按钮有可见反馈（提示条 + 顶栏任务状态）
