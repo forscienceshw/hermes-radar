@@ -127,7 +127,7 @@
     "auto": true
   },
   "ui": {
-    "reading_mode": "classic"
+    "reading_mode": "workbench"
   },
   "storage": {
     "compress_raw": true,
