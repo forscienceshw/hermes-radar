@@ -273,8 +273,8 @@ class JobRunner:
             await triage_archived_images(self.db, item_id)
         except Exception as exc:  # noqa: BLE001 - never block archiving on a vision call
             log.warning("归档后图片分诊跳过（%s）：%s", item_id, exc)
-        # 归档流程是唯一能说「顺手精读」的地方：手动「补全文」「找论文」都带
-        # skip_analysis / archive_only，到这里就是 False，论文步骤不会再排精读。
+        # 归档流程是唯一能说「顺手精读」的地方：手动「补全文」带 skip_analysis=True，
+        # 「找论文」「重试下载」根本不走这里，所以论文步骤不会替手动操作排精读。
         from .settings import get_settings
         auto_analyze = bool(get_settings().get("analysis", {}).get("auto", True))
         analysis_after = (not archive_only and not skip_analysis
