@@ -1,3 +1,4 @@
+import asyncio
 import csv
 import io
 import json
@@ -12,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -1129,6 +1130,136 @@ def retry_wechat_archives() -> dict[str, Any]:
     return {"queued": queued, "considered": len(rows)}
 
 
+@app.post("/api/items/{item_id}/paper")
+async def upload_item_paper(item_id: str, request: Request, filename: str = "", paper_id: str = "") -> dict[str, Any]:
+    """手动上传原论文 PDF，归到这条推文的论文文件夹里。
+
+    付费墙、出版社拦截、没识别到 DOI 的情况很常见。用户自己下载好之后，这里
+    负责落盘、提取文字（精读要引用），并把 papers 行标成 downloaded。
+    用原始 body 而不是 multipart：少一层依赖，100 MB 以内也够用。
+    """
+    from pypdf import PdfReader
+
+    from .storage import atomic_write, paper_folder
+
+    item = db.one("SELECT id,title FROM items WHERE id=?", (item_id,))
+    if not item:
+        raise HTTPException(404, "条目不存在")
+    settings = get_settings()["papers"]
+    limit = int(settings.get("max_pdf_mb", 100)) * 1024 * 1024
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > limit:
+        raise HTTPException(413, f"PDF 超过 {limit // 1024 // 1024} MB 上限")
+    body = await request.body()
+    if not body:
+        raise HTTPException(400, "没有收到文件内容")
+    if len(body) > limit:
+        raise HTTPException(413, f"PDF 超过 {limit // 1024 // 1024} MB 上限")
+    if not body.startswith(b"%PDF-"):
+        raise HTTPException(400, "这不是 PDF 文件（文件头不是 %PDF-）")
+
+    paper = None
+    if paper_id:
+        paper = db.one("""SELECT p.id,p.doi,p.local_path,p.metadata_json FROM papers p
+                          JOIN item_papers ip ON p.id=ip.paper_id
+                          WHERE ip.item_id=? AND p.id=?""", (item_id, paper_id))
+        if not paper:
+            raise HTTPException(404, "这篇论文不属于当前推文")
+    if not paper:
+        # 有「已识别但没下下来」的论文时优先填它，这样 DOI、期刊信息都不用丢。
+        paper = db.one("""SELECT p.id,p.doi,p.local_path,p.metadata_json FROM papers p
+                          JOIN item_papers ip ON p.id=ip.paper_id
+                          WHERE ip.item_id=?
+                          ORDER BY (p.local_path IS NULL) DESC, p.created_at""", (item_id,))
+    created = False
+    if paper:
+        pid, doi = paper["id"], paper["doi"]
+    else:
+        pid = uuid.uuid4().hex
+        doi = f"upload/{item_id}/{uuid.uuid4().hex[:8]}"
+        created = True
+
+    folder = paper_folder(doi)
+    part = folder / "paper.pdf.part"
+    local_path = folder / "paper.pdf"
+    try:
+        part.write_bytes(body)
+        os.replace(part, local_path)
+    except OSError as exc:
+        try:
+            part.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise HTTPException(500, f"保存 PDF 失败：{exc}") from exc
+
+    pages = 0
+    chars = 0
+    text_path = None
+    try:
+        reader = await asyncio.to_thread(PdfReader, str(local_path))
+        pages = len(reader.pages)
+        text = await asyncio.to_thread(
+            lambda: "\n\n".join(page.extract_text() or "" for page in reader.pages))
+        if text.strip():
+            text_path = atomic_write(folder / "paper.txt", text)
+            chars = len(text)
+        atomic_write(folder / "metadata.json", json.dumps({
+            "doi": doi, "title": item.get("title") or "", "pages": pages,
+            "source": "upload", "original_filename": Path(filename or "paper.pdf").name,
+            "uploaded_at": now_iso(),
+        }, ensure_ascii=False, indent=2))
+    except Exception:                       # noqa: BLE001 - 扫描版 PDF 没有文字层，照样能看
+        pages, chars, text_path = 0, 0, None
+
+    timestamp = now_iso()
+    metadata = json_loads((paper or {}).get("metadata_json"), {}) or {}
+    metadata.update({"source": "upload", "original_filename": Path(filename or "paper.pdf").name})
+    if created:
+        db.execute("""INSERT INTO papers(id,doi,title,local_path,text_path,status,metadata_json,created_at,updated_at)
+                      VALUES(?,?,?,?,?,?,?,?,?)""",
+                   (pid, doi, item.get("title") or "", str(local_path), str(text_path) if text_path else None,
+                    "downloaded", stable_json(metadata), timestamp, timestamp))
+        db.execute("INSERT OR IGNORE INTO item_papers(item_id,paper_id,evidence) VALUES(?,?,?)",
+                   (item_id, pid, "手动上传"))
+    else:
+        db.execute("""UPDATE papers SET local_path=?,text_path=?,status='downloaded',error=NULL,
+                      title=CASE WHEN title='' THEN ? ELSE title END,
+                      metadata_json=?,updated_at=? WHERE id=?""",
+                   (str(local_path), str(text_path) if text_path else None, item.get("title") or "",
+                    stable_json(metadata), timestamp, pid))
+    return {"ok": True, "paper_id": pid, "doi": doi, "path": str(local_path),
+            "pages": pages, "chars": chars}
+
+
+@app.post("/api/items/{item_id}/papers/fetch")
+def fetch_item_papers(item_id: str) -> dict[str, Any]:
+    """让后台按 DOI / 标题再去找一次开放 PDF（手动触发，会真的下载）。"""
+    if not db.one("SELECT id FROM items WHERE id=? AND excluded_at IS NULL", (item_id,)):
+        raise HTTPException(404, "条目不存在或已移出资料库")
+    running = db.one("""SELECT id FROM jobs WHERE state IN ('READY','RETRY_WAIT','LEASED')
+        AND kind='papers_item' AND json_extract(payload_json,'$.item_id')=?""", (item_id,))
+    if running:
+        return {"queued": True, "already_running": True}
+    db.enqueue_job("papers_item", {"version": 1, "item_id": item_id, "download": True,
+                                   "skip_analysis": True},
+                   dedupe_key=f"papers:{item_id}:manual:{uuid.uuid4()}", priority=30, max_attempts=3)
+    return {"queued": True}
+
+
+@app.get("/api/items/{item_id}/collection-suggestions")
+def item_collection_suggestions(item_id: str) -> dict[str, Any]:
+    """按精读内容推荐收藏夹（最多两个）。只给建议，写不写由用户确认。"""
+    row = db.one("SELECT * FROM items WHERE id=?", (item_id,))
+    if not row:
+        raise HTTPException(404, "条目不存在")
+    existing = db.collection_ids_for("item", [item_id]).get(item_id, [])
+    from .services.collect_suggest import suggest
+    try:
+        return suggest(db, row, existing)
+    except Exception as exc:                # noqa: BLE001 - 推荐失败不能挡住阅读
+        return {"suggestions": [], "engine": "error", "error": str(exc)[:200]}
+
+
 @app.get("/api/items/{item_id}/archive", response_class=HTMLResponse)
 def item_archive(item_id: str) -> HTMLResponse:
     row = db.one("SELECT html_path FROM items WHERE id=?", (item_id,))
@@ -1320,7 +1451,7 @@ def process_discovered_item(item_id: str) -> dict[str, Any]:
         raise HTTPException(404, "条目不存在")
     if item["status"] != "discovered":
         return {"queued": False, "reason": "该条目已进入或完成处理流程"}
-    db.enqueue_job("archive_item", {"version": 1, "item_id": item_id},
+    db.enqueue_job("archive_item", {"version": 1, "item_id": item_id, "force_analysis": True},
                    dedupe_key=f"archive:{item_id}:initial", priority=50)
     return {"queued": True}
 

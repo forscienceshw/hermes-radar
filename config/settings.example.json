@@ -11,10 +11,17 @@
   },
   "papers": {
     "enabled": true,
-    "email": ""
+    "email": "",
+    "auto_download": false
   },
   "notifications": {
     "enabled": false,
     "channel": "inbox"
+  },
+  "analysis": {
+    "auto": true
+  },
+  "ui": {
+    "reading_mode": "workbench"
   }
 }

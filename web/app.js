@@ -12,6 +12,31 @@ if(APP_WIN)document.addEventListener('click',event=>{
   event.preventDefault();event.stopPropagation();
   api('/api/system/open-url',{method:'POST',body:{url:link.href}}).catch(err=>toast(err.message));
 },true);
+// 离线页在自己的 iframe 里，上面那个顶层监听看不到它。页面会把外链 postMessage
+// 过来（见 archive._reader_html），这里接住再交给系统浏览器——绝不让 iframe 就地
+// 跳到微信的错误页，那边没有后退按钮，用户只能把整个阅读页叉掉。
+window.addEventListener('message',event=>{
+  if(event.origin!==location.origin)return;
+  const data=event.data;
+  if(!data||data.type!=='radar:open-url'||typeof data.url!=='string')return;
+  if(!/^https?:\/\//i.test(data.url))return;
+  if(APP_WIN){api('/api/system/open-url',{method:'POST',body:{url:data.url}}).catch(err=>toast(err.message));return}
+  window.open(data.url,'_blank','noopener');
+});
+// 兜底：万一页面还是被导航走了（浏览器错误页），把它拉回本地快照。
+// 首次 about:blank 也会触发 load，所以只在真正加载过离线页之后才复位。
+function guardArchiveFrame(frame){
+  if(!frame||frame.dataset.guarded)return;
+  frame.dataset.guarded='1';
+  frame.addEventListener('load',()=>{
+    let inside=false;
+    try{inside=frame.contentWindow.location.pathname.startsWith('/api/items/')}catch(e){inside=false}
+    if(inside){frame.dataset.ready='1';return}
+    if(!frame.dataset.ready)return;
+    const src=frame.dataset.src||frame.getAttribute('src');
+    if(src)frame.src=src;
+  });
+}
 const toast=message=>{const el=$('#toast');if(!el)return;el.textContent=message;if(el.showPopover&&!el.matches(':popover-open')){try{el.showPopover()}catch(e){}}el.classList.add('show');clearTimeout(el._hideTimer);el._hideTimer=setTimeout(()=>el.classList.remove('show'),3200)};
 const time=value=>value?new Date(value).toLocaleString('zh-CN',{hour12:false}):'—';
 const bool=value=>value?'true':'false';
@@ -845,6 +870,55 @@ async function toggleCollect(collectionId,member){
   if(target.refresh)target.refresh().catch(()=>{});
   toast(r.member?'已加入收藏夹':'已移出收藏夹');
 }
+/* ---------- 智能收藏建议 ----------
+   本地语义模型判断「这篇更像哪个收藏夹」，一次最多两个。只在条目还没进任何
+   收藏夹时问，且必须点确认才写入——自动塞错夹子比多问一句代价大得多。 */
+let smartCollectItemId=null,smartCollectRows=[];
+const smartCollectDismissed=new Set();
+async function suggestCollections(x){
+  if(!x||!x.id||(x.collections||[]).length||smartCollectDismissed.has(x.id))return;
+  if($('#smartCollect').open)return;
+  let data=null;
+  try{data=await api('/api/items/'+encodeURIComponent(x.id)+'/collection-suggestions')}catch(e){return}
+  const rows=(data&&data.suggestions)||[];
+  if(!rows.length)return;
+  // 请求回来时用户可能已经切到别的条目了，别把建议弹到新页面上。
+  const stillHere=(wbIsOpen()&&wb.itemId===x.id)||(classicItemId===x.id&&$('#detailDialog').open);
+  if(!stillHere)return;
+  smartCollectItemId=x.id;smartCollectRows=rows;
+  $('#smartCollectLead').textContent=`这篇的分类与关键词刚好对上了下面${rows.length>1?'这几个':'这个'}收藏夹的名字。建议在本地算，不花点数；勾选后点确认才会收藏。`;
+  const title=$('#smartCollectTitle');
+  if(title)title.textContent=rows.length>1?'要不要收藏到这几个收藏夹？':'要不要收藏到这个收藏夹？';
+  $('#smartCollectList').innerHTML=rows.map((s,i)=>`<label class="sc-row"><input type="checkbox" data-sc-pick="${i}" checked><span class="sc-name">${esc(s.name)}</span><span class="sc-score">${(s.score||0)>=4.5?'很相关':'相关'}</span><small>${esc(s.reason||'主题接近')}</small></label>`).join('');
+  $('#smartCollect').showModal();
+}
+function closeSmartCollect(dismiss){
+  if(dismiss&&smartCollectItemId)smartCollectDismissed.add(smartCollectItemId);
+  const d=$('#smartCollect');if(d.open)d.close();
+  smartCollectItemId=null;smartCollectRows=[];
+}
+async function applySmartCollect(){
+  const itemId=smartCollectItemId;
+  const picked=[...document.querySelectorAll('[data-sc-pick]:checked')]
+    .map(box=>smartCollectRows[Number(box.dataset.scPick)]).filter(Boolean);
+  closeSmartCollect(false);
+  if(!picked.length||!itemId)return;
+  try{
+    for(const row of picked){
+      await api('/api/collections/toggle',{method:'POST',
+        body:{collection_id:row.id,entry_type:'item',entry_id:itemId,member:true}});
+    }
+    toast(`已收藏到 ${picked.map(row=>row.name).join('、')}`);
+    await loadCollections('library').catch(()=>{});
+    if($('#detailDialog').open)await showItemClassic(itemId,true,true).catch(()=>{});
+    else await refreshOpenReader(itemId).catch(()=>{});
+    loadItems().catch(()=>{});
+  }catch(err){toast(err.message)}
+}
+$('#smartCollectClose').onclick=()=>closeSmartCollect(true);
+$('#smartCollectSkip').onclick=()=>closeSmartCollect(true);
+$('#smartCollectOk').onclick=()=>applySmartCollect().catch(err=>toast(err.message));
+$('#smartCollect').addEventListener('click',e=>{if(e.target===e.currentTarget)closeSmartCollect(true)});
 async function createCollectionFor(name,scope,entry){
   if(!name.trim())return toast('先写一个收藏夹名称');
   const created=await api('/api/collections',{method:'POST',body:{name:name.trim(),scope}});
@@ -954,8 +1028,8 @@ function afterBlock(a){
    4. 只有右上角 ✕ 关整页；点暗处、按 Esc 都不关（读长文手滑不该丢进度）。
    5. 关掉一栏，剩下那栏自动回到居中。切 tab 只改 display，不重建 DOM，iframe 保住滚动位置。
 */
-const WB_VIEWS={read:'原文',reading:'精读',notes:'笔记',ideas:'Ideas'};
-const wb={open:false,itemId:null,item:null,panes:[],paneSeq:0,noteSeq:0};
+const WB_VIEWS={read:'原文',reading:'精读',paper:'论文',notes:'笔记',ideas:'Ideas'};
+const wb={open:false,itemId:null,item:null,panes:[],paneSeq:0,noteSeq:0,paperIndex:0};
 let wbIdeaTimer=null;
 function wbEl(){return $('#workbench')}
 function wbIsOpen(){const el=wbEl();return !!(el&&el.open)}
@@ -1016,14 +1090,15 @@ async function wbSetView(pane,view,opts={}){
   if(!box||!wb.item)return;
   if(view==='read'){
     // 同一个条目的 iframe 一旦建好就不再重建：来回切 tab 必须保住阅读位置。
-    if(!box.querySelector('iframe')||box.dataset.item!==wb.item.id){
-      box.dataset.item=wb.item.id;
-      box.innerHTML=wbReaderHTML(wb.item);
-    }
+    if(!box.querySelector('iframe')||box.dataset.item!==wb.item.id)wbMountReader(box,wb.item);
     return;
   }
   if(view==='reading'){
     box.innerHTML=wbReadingHTML(wb.item);
+    return;
+  }
+  if(view==='paper'){
+    box.innerHTML=paperPaneHTML(wb.item,{index:wb.paperIndex||0});
     return;
   }
   if(view==='notes')return wbRenderNotes(pane);
@@ -1031,7 +1106,13 @@ async function wbSetView(pane,view,opts={}){
 }
 function wbReaderHTML(x){
   if(!x.html_path)return `<div class="wb-empty"><b>这篇还没有离线阅读页</b><p class="muted">正文与配图还没归档。完成后这里会自动出现原文；也可以先看精读。</p>${x.status==='discovered'?`<button type="button" class="primary" data-process="${x.id}">归档并精读</button>`:'<span class="muted">正在处理，完成后自动刷新。</span>'}</div>`;
-  return `<iframe src="/api/items/${encodeURIComponent(x.id)}/archive" title="离线阅读页" loading="eager"></iframe>`;
+  const src=`/api/items/${encodeURIComponent(x.id)}/archive`;
+  return `<iframe data-src="${src}" src="${src}" title="离线阅读页" loading="eager"></iframe>`;
+}
+function wbMountReader(box,x){
+  box.dataset.item=x.id;
+  box.innerHTML=wbReaderHTML(x);
+  guardArchiveFrame(box.querySelector('iframe'));
 }
 function wbBadges(x){
   const stage=itemStage(x),a=x.analysis||{};
@@ -1053,8 +1134,55 @@ function wbNotices(x){
   const goneLine=gone&&gone.state==='deleted'?`<div class="notice"><b>原文已被发布者删除</b>：${esc(gone.reason||'原页面无法访问')}。<br><small>本地已保存离线页，所以这条继续留在资料库；内容以离线页为准。</small></div>`:'';
   return `${excludedLine}${goneLine}${jobLine}${liveLine}${deadLine}${x.error?`<div class="notice error-text">${esc(x.error)}</div>`:''}`;
 }
-function wbPapers(x){
-  return `<div class="detail-section"><h2>关联论文</h2>${(x.papers||[]).map(p=>`<p><a href="https://doi.org/${esc(p.doi)}" target="_blank">${esc(p.doi)}</a> · ${esc(p.status)} · ${esc(p.title)}<br>${p.local_path?`<span class="actions"><button data-pdf-preview="${p.id}">网页预览</button><button data-paper-wps="${p.id}">WPS 打开</button><button data-paper-reveal="${p.id}">所在目录</button></span><br><small>${esc(p.local_path)}</small>`:''}<br><small>${esc(p.error||'')}</small></p>`).join('')||'<p class="muted">未识别到 DOI</p>'}</div>`;
+function paperReady(x){return ((x&&x.papers)||[]).filter(p=>p&&p.local_path)}
+function paperLabel(p){
+  const doi=String((p&&p.doi)||'');
+  if(!doi||doi.startsWith('upload/'))return '手动上传的 PDF';
+  return doi;
+}
+/* 论文栏：有 PDF 就直接在栏里看，没有就给「再找一次 / 手动上传」两条路。
+   以前这里只有居中的网页预览弹层，想和精读并排看根本做不到。 */
+function paperPaneHTML(x,opts={}){
+  const ready=paperReady(x);
+  const all=(x&&x.papers)||[];
+  if(!ready.length){
+    const tries=all.length?`<ul class="wb-paper-tries">${all.map(p=>`<li><code>${esc(paperLabel(p))}</code> · ${esc(p.status||'未下载')}${p.error?` · ${esc(String(p.error).slice(0,140))}`:''}</li>`).join('')}</ul>`:'';
+    return `<div class="wb-paper-pane"><div class="wb-empty wb-paper-empty">
+      <div class="wb-paper-mark">PDF</div>
+      <b>尚未下载到原论文</b>
+      <p class="muted">这条推文没有能直接下载的开放论文——可能是付费墙、出版社限制，或者正文里没识别到 DOI。可以让软件再找一次，也可以把手动下载好的 PDF 传上来。</p>
+      ${tries}
+      <div class="wb-paper-actions">
+        <button type="button" class="primary" data-paper-fetch="${x.id}">让软件去找论文</button>
+        <button type="button" data-paper-upload="${x.id}">上传 PDF</button>
+      </div>
+      <p class="muted wb-paper-tip">上传后按这篇推文归档，并自动提取文字供精读引用。文件落在 data/papers/ 下这篇的文件夹里。</p>
+    </div></div>`;
+  }
+  const index=Math.max(0,Math.min(opts.index||0,ready.length-1));
+  const current=ready[index];
+  const picker=ready.length>1?`<select class="wb-paper-pick" data-paper-switch="${x.id}" aria-label="切换这篇推文的论文">${ready.map((p,i)=>`<option value="${i}"${i===index?' selected':''}>${esc(String(p.title||paperLabel(p)).slice(0,70))}</option>`).join('')}</select>`:'';
+  return `<div class="wb-paper-pane">
+    <div class="wb-paper-bar">
+      <div class="wb-paper-meta"><b>${esc(current.title||'原论文')}</b><span>${esc(paperLabel(current))}${current.year?` · ${esc(current.year)}`:''}</span></div>
+      ${picker}
+      <div class="wb-paper-buttons">
+        <button type="button" data-paper-upload="${x.id}" data-paper-upload-target="${current.id}">换一份</button>
+        <button type="button" data-paper-wps="${current.id}">WPS 打开</button>
+        <button type="button" data-paper-reveal="${current.id}">所在目录</button>
+      </div>
+    </div>
+    <iframe class="wb-paper-frame" src="/api/papers/${encodeURIComponent(current.id)}/file#view=FitH&navpanes=0" title="原论文 PDF"></iframe>
+  </div>`;
+}
+function wbPapers(x,target='workbench'){
+  const ready=paperReady(x);
+  const open=target==='classic'?'data-classic-view="paper"':'data-wb-paper-open';
+  if(!ready.length){
+    const count=((x&&x.papers)||[]).length;
+    return `<div class="detail-section"><h2>关联论文</h2><p class="muted">尚未下载到原论文${count?`：已识别到 ${count} 篇，但都没能下载下来`:''}。到「论文」栏可以再找一次，或手动上传 PDF。</p><div class="actions"><button type="button" ${open}>打开论文栏</button></div></div>`;
+  }
+  return `<div class="detail-section"><h2>关联论文</h2>${ready.map(p=>`<p><b>${esc(p.title||'原论文')}</b><br><small>${esc(paperLabel(p))}${p.year?` · ${esc(p.year)}`:''}</small></p>`).join('')}<div class="actions"><button type="button" ${open}>在论文栏阅读</button></div></div>`;
 }
 function wbReadingHTML(x){
   const a=x.analysis||{};
@@ -1073,16 +1201,86 @@ function wbRenderHeader(x){
   $('#wbTitle').textContent=x.title||x.url||'未命名条目';
   const when=time(x.published_at||x.discovered_at);
   $('#wbMeta').textContent=[x.author,when,x.excluded_at?'已移出主资料库':''].filter(Boolean).join(' · ');
-  // 用户点名的按钮一个都不能少：打开原文 / 检查原文 / 收藏到 / 删除 / 问 AI。
-  $('#wbItemActions').innerHTML=`
-    <a class="button" href="${esc(x.url)}" target="_blank" rel="noopener">打开原文</a>
-    ${x.metadata&&x.metadata.original_share_url&&x.metadata.original_share_url!==x.url?`<a class="button" href="${esc(x.metadata.original_share_url)}" target="_blank" rel="noopener">原始短链</a>`:''}
-    <button type="button" data-verify-source="${x.id}">检查原文</button>
-    <button type="button" data-collect="${x.id}" data-collect-type="item" data-collect-ids="${(x.collections||[]).join(',')}">收藏到…</button>
-    ${x.excluded_at?`<button type="button" class="primary" data-restore="${x.id}">恢复收录</button>`:`<button type="button" class="danger" data-delete="${x.id}">删除</button>`}
-    <button type="button" class="primary" data-wb-ask>问 AI</button>`;
+  // 按钮一行排开，放不下的用两侧小箭头翻页。这个位置只有一行的宽度，
+  // 之前用 flex-wrap 换行会把标题栏顶成两层，所以改成「一条可翻页的轨道」。
+  const acts=[
+    `<a class="button" href="${esc(x.url)}" target="_blank" rel="noopener">打开原文</a>`,
+    x.metadata&&x.metadata.original_share_url&&x.metadata.original_share_url!==x.url?`<a class="button" href="${esc(x.metadata.original_share_url)}" target="_blank" rel="noopener">原始短链</a>`:'',
+    `<button type="button" data-verify-source="${x.id}">检查原文</button>`,
+    `<button type="button" data-collect="${x.id}" data-collect-type="item" data-collect-ids="${(x.collections||[]).join(',')}">收藏到…</button>`,
+    `<button type="button" class="primary" data-wb-ask>问 AI</button>`,
+    x.excluded_at?'':`<button type="button" data-reanalyze="${x.id}">重新精读</button>`,
+    ((x.metadata||{}).images||[]).length?`<button type="button" data-retriage="${x.id}">重新检查配图</button>`:'',
+    `<button type="button" data-rule-from="${esc(x.author||'')}">屏蔽此类</button>`,
+    x.excluded_at?`<button type="button" class="primary" data-restore="${x.id}">恢复收录</button>`:`<button type="button" class="danger" data-delete="${x.id}">删除</button>`
+  ].filter(Boolean);
+  $('#wbItemActions').innerHTML=`<button type="button" class="wb-act-nav" data-wb-act="-1" aria-label="上一组操作" title="上一组操作" disabled>‹</button>`
+    +`<div class="wb-act-track" id="wbActTrack" role="group" aria-label="条目操作">${acts.join('')}</div>`
+    +`<button type="button" class="wb-act-nav" data-wb-act="1" aria-label="下一组操作" title="下一组操作">›</button>`;
+  syncWbActions();
+  watchWbActions();
   // 工作台不在 #detailContent 的 MutationObserver 范围内，得主动通知对话面板换上下文。
   if(window.syncCurrentItem)window.syncCurrentItem();
+}
+/* 顶栏那条操作轨道在 dialog 打开前量到的是 0 宽：scrollWidth==clientWidth，箭头会一直停在
+   disabled，用户就翻不到被裁掉的「屏蔽此类 / 删除」。所以既在 showModal 后补一次，也用
+   ResizeObserver 兜住「从 0 变成真实宽度」和窗口/栏数变化。 */
+let wbActRO=null;
+function watchWbActions(){
+  const track=$('#wbActTrack');
+  if(!track||!window.ResizeObserver)return;
+  if(!wbActRO)wbActRO=new ResizeObserver(()=>syncWbActions());
+  wbActRO.disconnect();
+  wbActRO.observe(track);
+}
+function syncWbActions(){
+  const track=$('#wbActTrack');if(!track)return;
+  const prev=$('[data-wb-act="-1"]'),next=$('[data-wb-act="1"]');
+  const max=Math.max(0,track.scrollWidth-track.clientWidth);
+  if(prev)prev.disabled=track.scrollLeft<=2;
+  if(next)next.disabled=track.scrollLeft>=max-2;
+  track.classList.toggle('can-prev',track.scrollLeft>2);
+  track.classList.toggle('can-next',track.scrollLeft<max-2);
+}
+function wbScrollActions(dir){
+  const track=$('#wbActTrack');if(!track)return;
+  track.scrollBy({left:dir*Math.max(150,Math.round(track.clientWidth*.82)),behavior:'smooth'});
+  clearTimeout(wbScrollActions._t);
+  wbScrollActions._t=setTimeout(syncWbActions,360);
+}
+window.addEventListener('resize',()=>syncWbActions());
+document.addEventListener('scroll',e=>{if(e.target&&e.target.id==='wbActTrack')syncWbActions()},true);
+/* 手动上传原论文：用原生文件选择器，选完直接 POST 二进制，不经过表单。
+   成功后 refreshOpenReader 会把论文栏和精读底部的「关联论文」一起刷新。 */
+function uploadPaper(itemId,paperId){
+  const input=document.createElement('input');
+  input.type='file';input.accept='application/pdf,.pdf';input.style.display='none';
+  document.body.appendChild(input);
+  input.onchange=async()=>{
+    const file=input.files&&input.files[0];
+    input.remove();
+    if(!file)return;
+    if(file.size>100*1024*1024){toast('PDF 超过 100 MB，先压缩或拆分再传');return}
+    toast('正在上传并解析 PDF…');
+    try{
+      const url=`/api/items/${encodeURIComponent(itemId)}/paper?filename=${encodeURIComponent(file.name)}`
+        +(paperId?`&paper_id=${encodeURIComponent(paperId)}`:'');
+      const r=await fetch(url,{method:'POST',body:file,headers:{'Content-Type':'application/pdf'}});
+      const data=await r.json().catch(()=>({}));
+      if(!r.ok)throw new Error(data.detail||'上传失败');
+      toast(`已归档${data.pages?`，共 ${data.pages} 页`:''}${data.chars?`，提取 ${data.chars} 字`:''}`);
+      if($('#detailDialog').open&&classicItemId===itemId)await showItemClassic(itemId,true,true);
+      else await refreshOpenReader(itemId);
+    }catch(err){toast(err.message)}
+  };
+  input.click();
+}
+async function fetchItemPapers(itemId){
+  try{
+    const r=await api(`/api/items/${itemId}/papers/fetch`,{method:'POST'});
+    toast(r.already_running?'已经在找了，完成后论文栏会自动刷新':'已开始查找开放论文，完成后论文栏会出现 PDF');
+    watchItem(itemId);
+  }catch(e){toast(e.message)}
 }
 function askCurrentItem(){
   const item=window.__currentItem||wb.item;
@@ -1094,11 +1292,14 @@ async function openWorkbench(id,opts={}){
   window.__currentItem=x;
   const sameItem=wb.itemId===x.id;
   wb.item=x;wb.itemId=x.id;wb.open=true;
+  if(!sameItem)wb.paperIndex=0;
   wbRenderHeader(x);
   const el=wbEl();
   if(!el.open){
     el.showModal();
     lockPageScroll();
+    // 刚 showModal，布局还没算出来；补一帧再判箭头启停。
+    requestAnimationFrame(()=>syncWbActions());
     wb.panes=[];$('#wbBody').innerHTML='';
     wbAddPane('read');
   }else if(!wb.panes.length){
@@ -1106,7 +1307,7 @@ async function openWorkbench(id,opts={}){
   }else if(!sameItem){
     // 换了条目：原文 iframe 换地址，精读与笔记按当前栏重建；Ideas 是全局的，不必动。
     wb.panes.forEach(p=>{
-      if(p.view==='read'){const box=wbViewEl(p,'read');if(box){box.dataset.item='';box.innerHTML=wbReaderHTML(x)}}
+      if(p.view==='read'){const box=wbViewEl(p,'read');if(box)wbMountReader(box,x)}
       else if(p.view==='reading')wbSetView(p,'reading',{force:true});
       else if(p.view==='notes')wbRenderNotes(p);
     });
@@ -1114,7 +1315,9 @@ async function openWorkbench(id,opts={}){
     wb.panes.forEach(p=>{if(p.view==='reading')wbSetView(p,'reading',{force:true})});
   }
   wbSyncLayout();
+  requestAnimationFrame(()=>syncWbActions());
   if(x.active_job)watchItem(id);else if(detailWatchId===id)stopItemWatch();
+  if(!opts.silent)setTimeout(()=>suggestCollections(x).catch(()=>{}),900);
   return x;
 }
 async function refreshWorkbench(id){
@@ -1126,8 +1329,9 @@ async function refreshWorkbench(id){
     if(p.view==='read'){
       const box=wbViewEl(p,'read');
       // 归档刚完成时把占位换成真正的离线页；已经加载好的 iframe 不重建，保住滚动位置。
-      if(box&&!box.querySelector('iframe')&&x.html_path){box.dataset.item=x.id;box.innerHTML=wbReaderHTML(x)}
+      if(box&&!box.querySelector('iframe')&&x.html_path)wbMountReader(box,x);
     }else if(p.view==='reading'){wbSetView(p,'reading',{force:true})}
+    else if(p.view==='paper'){wbSetView(p,'paper',{force:true})}
     else if(p.view==='notes'&&!($('#wbNoteDraft')&&document.activeElement===$('#wbNoteDraft'))){wbRenderNotes(p)}
   });
   return x;
@@ -1270,17 +1474,29 @@ function setReadingMode(mode){
   const sel=$('#uiReadingMode');if(sel)sel.value=readingMode;
   const hint=$('#uiReadingHint');
   if(hint)hint.textContent=readingMode==='classic'
-    ?'经典弹层：点条目先看精读；需要配图时点弹层里的「离线阅读页」，在浏览器新标签打开。适合精读为主、原文只作核对。'
-    :'工作台：点条目直接在软件里读原文（配图按原文位置显示）；点「精读」原文让到左边、精读从右侧进来，两栏并排。笔记与 Ideas 抢同一块右栏，边读边记不用退出。';
+    ?'经典弹层：点条目先看原文，用弹层顶部的「原文 / 精读 / 论文」切换；离线页仍可另开浏览器。适合精读为主、原文只作核对。'
+    :'工作台：点条目直接在软件里读原文（配图按原文位置显示）；点「精读」原文让到左边、精读从右侧进来，两栏并排。论文、笔记与 Ideas 抢同一块右栏，边读边记不用退出。';
 }
 // 旧排布：精读弹层 + 离线页走浏览器。逻辑与工作台之前完全一致，只是入口多了个分支。
-async function showItemClassic(id,silent){
+let classicView='read',classicItemId=null,classicPaperIndex=0,classicPaperCount=0;
+async function showItemClassic(id,silent,forceRender){
   const seq=++detailSeq;
   const x=await api('/api/items/'+id),a=x.analysis||{},stage=itemStage(x);
   // A slower response for the previous item must not overwrite the one just opened.
   if(seq!==detailSeq)return x;
   if(detailWatchId&&detailWatchId!==id)stopItemWatch();
   window.__currentItem=x;
+  const same=classicItemId===id;
+  // 点开推文先看原文：换条目或重新打开时都回到 read；只有本来就没归档正文时才落到精读。
+  if(!same||!$('#detailDialog').open){classicView=x.html_path?'read':'reading';classicPaperIndex=0}
+  classicItemId=id;
+  // 后台刷新别重建原文/论文的 iframe——每隔几秒把阅读位置顶回顶部比不刷新更烦。
+  // 例外：论文栏里「刚下载好」或「刚上传」导致 PDF 数量变了，必须重画一次。
+  if(same&&silent&&!forceRender&&classicView!=='reading'){
+    if(classicView!=='paper'||paperReady(x).length===classicPaperCount)return x;
+  }
+  const paperCount=paperReady(x).length;
+  if(classicView==='paper')classicPaperCount=paperCount;
   const progress=x.progress||null;
   const jobLine=x.active_job
     ? `<div class="notice progress-note"><span class="spin"></span>${x.active_job==='analyze'?'正在调用云模型精读，完成后本页自动刷新…':x.active_job==='verify'?'微信要求人机验证，正文暂时抓不到；30 分钟后自动重试，链接和标题都已保留…':'正在抓取正文、图片与原始快照…'}</div>`
@@ -1300,10 +1516,34 @@ async function showItemClassic(id,silent){
   const body=insufficient
     ? `<div class="notice insufficient"><b>无法详细归档</b><br>${esc(a.summary||'没有取得足以讲清这篇研究的材料。')}<br><small>为避免用只言片语编造解释，这里不做猜测性精读。</small></div>`
     : (recordNote+(main?`${main}${figureBlock(x)}${afterBlock(a)}`:`<section class="reading">${legacyBody(a)}${figureBlock(x)}${afterBlock(a)}</section>`));
-  $('#detailContent').innerHTML=`<h1 class="detail-title">${esc(x.title||x.url)}</h1><p>${esc(x.author)} · ${time(x.published_at||x.discovered_at)}</p><div class="actions">${x.html_path?`<a class="button primary" href="/api/items/${x.id}/archive" target="_blank">离线阅读页</a>`:''}<a class="button" href="${esc(x.url)}" target="_blank" rel="noopener">打开原文</a>${x.metadata&&x.metadata.original_share_url&&x.metadata.original_share_url!==x.url?`<a class="button" href="${esc(x.metadata.original_share_url)}" target="_blank" rel="noopener">原始分享短链</a>`:''}${x.excluded_at?'':(x.status==='discovered'?`<button class="primary" data-process="${x.id}">归档并精读</button>`:`<button data-reanalyze="${x.id}">重新精读</button>`)}<button type="button" data-verify-source="${x.id}">检查原文</button>${((x.metadata||{}).images||[]).length?`<button type="button" data-retriage="${x.id}">重新判断配图</button>`:''}<button type="button" data-collect="${x.id}" data-collect-type="item" data-collect-ids="${(x.collections||[]).join(',')}">收藏到…</button>${x.excluded_at?'':`<button type="button" class="danger" data-delete="${x.id}">删除</button>`}<button type="button" data-rule-from="${esc(x.author||'')}">以后屏蔽这类</button>${(x.collections||[]).map(id=>{const n=collectionName('library',id);return n?`<span class="collection-chip">${esc(n)}</span>`:''}).join('')}</div><p><span class="badge ${x.status==='ready'?'ok':x.status==='error'?'error':x.status==='discovered'?'wait':''}">${esc(stage.badge)}</span> <span class="badge">重要度 ${Math.round(x.importance)}</span> <span class="badge">相关度 ${Math.round(x.relevance)}</span> <span class="badge">证据 ${esc((x.metadata||{}).archive_completeness||'未知')}</span>${elapsed?` <span class="badge">精读用时 ${elapsed}</span>`:''}${((x.metadata||{}).image_triage||{}).dropped?` <span class="badge">已过滤 ${x.metadata.image_triage.dropped} 张无用配图</span>`:''}</p>${excludedLine}${goneLine}${jobLine}${liveLine}${deadLine}${x.error?`<div class="notice error-text">${esc(x.error)}</div>`:''}${body}<details class="raw-text"><summary>归档全文 / 转录</summary><div class="detail-text">${esc(x.text||'尚无正文')}</div></details><div class="detail-section"><h2>关联论文</h2>${(x.papers||[]).map(p=>`<p><a href="https://doi.org/${esc(p.doi)}" target="_blank">${esc(p.doi)}</a> · ${esc(p.status)} · ${esc(p.title)}<br>${p.local_path?`<span class="actions"><button data-pdf-preview="${p.id}">网页预览</button><button data-paper-wps="${p.id}">WPS 打开</button><button data-paper-reveal="${p.id}">所在目录</button></span><br><small>${esc(p.local_path)}</small>`:''}<br><small>${esc(p.error||'')}</small></p>`).join('')||'<p class="muted">未识别到 DOI</p>'}</div>`;
+  const badges=`<p><span class="badge ${x.status==='ready'?'ok':x.status==='error'?'error':x.status==='discovered'?'wait':''}">${esc(stage.badge)}</span> <span class="badge">重要度 ${Math.round(x.importance)}</span> <span class="badge">相关度 ${Math.round(x.relevance)}</span> <span class="badge">证据 ${esc((x.metadata||{}).archive_completeness||'未知')}</span>${elapsed?` <span class="badge">精读用时 ${elapsed}</span>`:''}${((x.metadata||{}).image_triage||{}).dropped?` <span class="badge">已过滤 ${x.metadata.image_triage.dropped} 张无用配图</span>`:''}</p>`;
+  const acts=[x.html_path?`<a class="button" href="/api/items/${x.id}/archive" target="_blank">离线阅读页</a>`:'',
+    `<a class="button" href="${esc(x.url)}" target="_blank" rel="noopener">打开原文</a>`,
+    x.metadata&&x.metadata.original_share_url&&x.metadata.original_share_url!==x.url?`<a class="button" href="${esc(x.metadata.original_share_url)}" target="_blank" rel="noopener">原始分享短链</a>`:'',
+    x.excluded_at?'':(x.status==='discovered'?`<button class="primary" data-process="${x.id}">归档并精读</button>`:`<button data-reanalyze="${x.id}">重新精读</button>`),
+    `<button type="button" data-verify-source="${x.id}">检查原文</button>`,
+    ((x.metadata||{}).images||[]).length?`<button type="button" data-retriage="${x.id}">重新检查配图</button>`:'',
+    `<button type="button" data-collect="${x.id}" data-collect-type="item" data-collect-ids="${(x.collections||[]).join(',')}">收藏到…</button>`,
+    x.excluded_at?`<button type="button" class="primary" data-restore="${x.id}">恢复收录</button>`:`<button type="button" class="danger" data-delete="${x.id}">删除</button>`,
+    `<button type="button" data-rule-from="${esc(x.author||'')}">以后屏蔽这类</button>`].filter(Boolean).join('');
+  const tabs=[['read','原文'],['reading','精读'],['paper','论文']].map(([key,label])=>
+    `<button type="button" role="tab" data-classic-view="${key}" aria-selected="${classicView===key}">${label}</button>`).join('');
+  const readBody=x.html_path
+    ? `<div class="classic-read"><iframe data-src="/api/items/${encodeURIComponent(x.id)}/archive" src="/api/items/${encodeURIComponent(x.id)}/archive" title="离线阅读页"></iframe></div>`
+    : `<div class="notice">这篇还没有离线阅读页，先看精读。</div>`;
+  const readingBodyHtml=`${excludedLine}${goneLine}${jobLine}${liveLine}${deadLine}${x.error?`<div class="notice error-text">${esc(x.error)}</div>`:''}${badges}${body}<details class="raw-text"><summary>归档全文 / 转录</summary><div class="detail-text">${esc(x.text||'尚无正文')}</div></details>${wbPapers(x,'classic')}`;
+  const shown=classicView==='read'?readBody:classicView==='paper'?`<div class="classic-paper">${paperPaneHTML(x,{index:classicPaperIndex})}</div>`:readingBodyHtml;
+  $('#detailContent').innerHTML=`<h1 class="detail-title">${esc(x.title||x.url)}</h1><p>${esc(x.author)} · ${time(x.published_at||x.discovered_at)}</p><div class="actions">${acts}${(x.collections||[]).map(cid=>{const n=collectionName('library',cid);return n?`<span class="collection-chip">${esc(n)}</span>`:''}).join('')}</div><div class="detail-tabs" role="tablist" aria-label="这篇显示哪一部分">${tabs}</div>${shown}`;
+  guardArchiveFrame($('#detailContent .classic-read iframe'));
   if(!silent||!$('#detailDialog').open)openDetail();
   if(x.active_job)watchItem(id);else if(detailWatchId===id)stopItemWatch();
+  if(!silent)setTimeout(()=>suggestCollections(x).catch(()=>{}),900);
   return x;
+}
+async function switchClassicView(view){
+  if(!['read','reading','paper'].includes(view)||!classicItemId)return;
+  classicView=view;
+  await showItemClassic(classicItemId,true,true);
 }
 // 打开条目：按设置分派。调用方（列表点击、笔记库、任务完成刷新）不用关心当前是哪套。
 async function showItem(id,silent){
@@ -1384,7 +1624,7 @@ async function refreshProxyStatus(force){const box=$('#proxyStatus');if(!box)ret
 const proxyProbeBtn=$('#proxyProbe');if(proxyProbeBtn)proxyProbeBtn.onclick=()=>refreshProxyStatus(true);
 async function refreshEmbedStatus(){const box=$('#embedStatus');if(!box)return;try{const d=await api('/api/embedding/status');if(d.available){box.innerHTML=`已启用（模型 ${(d.size/1048576).toFixed(1)} MB，纯 CPU 推理）`;$('#embedFetch').textContent='重新下载';}else{box.innerHTML=`未启用：${esc(d.reason||'模型未下载')}。检索仍然可用，只是同义改写会漏。`;}}catch(err){box.textContent='检测失败：'+err.message}}
 const embedBtn=$('#embedFetch');if(embedBtn)embedBtn.onclick=async()=>{const out=$('#embedResult');try{embedBtn.disabled=true;out.textContent='正在下载（约 24 MB）…';const d=await api('/api/embedding/fetch',{method:'POST'});out.textContent=d.ok?`完成：${d.detail}`:`失败：${d.detail}`;await refreshEmbedStatus()}catch(err){out.textContent='下载失败：'+err.message}finally{embedBtn.disabled=false}};
-async function loadSettings(){const data=await api('/api/settings'),s=data.settings;setReadingMode((s.ui&&s.ui.reading_mode)||readingMode);$('#llmEnabled').value=bool(s.llm.enabled);$('#llmProvider').value=s.llm.provider||'openai_compatible';$('#llmBase').value=s.llm.base_url;$('#llmModel').value=s.llm.model;$('#llmAutoCheapest').value=bool(s.llm.auto_cheapest??true);$('#visionEnabled').value=bool(s.llm.vision_enabled);$('#llmDaily').value=s.llm.daily_call_limit;$('#llmPrefilter').value=s.llm.min_local_relevance??40;$('#llmLongMaterial').value=s.llm.long_material_strategy||'head_tail';$('#readingPrompt').value=s.analysis.custom_reading_prompt;$('#llmConcurrency').value=s.analysis.concurrency??3;$('#notifyChannel').value=s.notifications.channel;$('#instantThreshold').value=s.notifications.instant_threshold;$('#batchSize').value=s.notifications.batch_size;$('#maxWait').value=s.notifications.max_wait_minutes;$('#minRelevance').value=s.notifications.min_relevance;$('#quietStart').value=s.notifications.quiet_start;$('#quietEnd').value=s.notifications.quiet_end;$('#quietCritical').value=bool(s.notifications.quiet_allow_critical);$('#paperEmail').value=s.papers.email;window.__secretProviders=data.secrets.providers||[];$('#maxPerDay').value=s.notifications.max_per_day??3;$('#sendWindows').value=(s.notifications.send_windows||[]).join(',');$('#highlightThreshold').value=s.notifications.highlight_threshold??74;$('#digestLimit').value=s.notifications.digest_limit??10;if(window.renderAccounts)renderAccounts(s.llm.accounts||[]);$('#asrEnabled').value=bool(s.video.asr_enabled);$('#asrModel').value=s.video.asr_model;$('#asrDuration').value=s.video.max_duration_minutes;$('#llmKey').disabled=$('#llmProvider').value!=='openai_compatible';$('#llmBase').disabled=$('#llmProvider').value!=='openai_compatible';$('#llmKeyStatus').textContent=data.secrets.llm_api_key?'已安全保存':'未配置';$('#dataxKeyStatus').textContent=data.secrets.datax_api_key?'已安全保存':'未配置';$('#webhookStatus').textContent=data.secrets.notification_webhook?'已安全保存':'未配置';$('#wecomKfSecretStatus').textContent=data.secrets.wecom_kf_secret?'已安全保存':'未配置';$('#proxyUrl').value=s.http_proxy||'';refreshProxyStatus();refreshEmbedStatus();loadShellPanel()}
+async function loadSettings(){const data=await api('/api/settings'),s=data.settings;setReadingMode((s.ui&&s.ui.reading_mode)||readingMode);$('#llmEnabled').value=bool(s.llm.enabled);$('#llmProvider').value=s.llm.provider||'openai_compatible';$('#llmBase').value=s.llm.base_url;$('#llmModel').value=s.llm.model;$('#llmAutoCheapest').value=bool(s.llm.auto_cheapest??true);$('#visionEnabled').value=bool(s.llm.vision_enabled);$('#llmDaily').value=s.llm.daily_call_limit;$('#llmPrefilter').value=s.llm.min_local_relevance??40;$('#llmLongMaterial').value=s.llm.long_material_strategy||'head_tail';$('#autoAnalyze').value=bool(s.analysis.auto??true);$('#autoDownloadPapers').value=bool(s.papers.auto_download??false);$('#readingPrompt').value=s.analysis.custom_reading_prompt;$('#llmConcurrency').value=s.analysis.concurrency??3;$('#notifyChannel').value=s.notifications.channel;$('#instantThreshold').value=s.notifications.instant_threshold;$('#batchSize').value=s.notifications.batch_size;$('#maxWait').value=s.notifications.max_wait_minutes;$('#minRelevance').value=s.notifications.min_relevance;$('#quietStart').value=s.notifications.quiet_start;$('#quietEnd').value=s.notifications.quiet_end;$('#quietCritical').value=bool(s.notifications.quiet_allow_critical);$('#paperEmail').value=s.papers.email;window.__secretProviders=data.secrets.providers||[];$('#maxPerDay').value=s.notifications.max_per_day??3;$('#sendWindows').value=(s.notifications.send_windows||[]).join(',');$('#highlightThreshold').value=s.notifications.highlight_threshold??74;$('#digestLimit').value=s.notifications.digest_limit??10;if(window.renderAccounts)renderAccounts(s.llm.accounts||[]);$('#asrEnabled').value=bool(s.video.asr_enabled);$('#asrModel').value=s.video.asr_model;$('#asrDuration').value=s.video.max_duration_minutes;$('#llmKey').disabled=$('#llmProvider').value!=='openai_compatible';$('#llmBase').disabled=$('#llmProvider').value!=='openai_compatible';$('#llmKeyStatus').textContent=data.secrets.llm_api_key?'已安全保存':'未配置';$('#dataxKeyStatus').textContent=data.secrets.datax_api_key?'已安全保存':'未配置';$('#webhookStatus').textContent=data.secrets.notification_webhook?'已安全保存':'未配置';$('#wecomKfSecretStatus').textContent=data.secrets.wecom_kf_secret?'已安全保存':'未配置';$('#proxyUrl').value=s.http_proxy||'';refreshProxyStatus();refreshEmbedStatus();loadShellPanel()}
 
 /* ---------- 桌面程序（托盘外壳） ---------- */
 async function loadShellPanel(){
@@ -1504,7 +1744,7 @@ $('#uiReadingMode').onchange=async e=>{
   try{await api('/api/settings',{method:'PUT',body:{ui:{reading_mode:next}}})}
   catch(err){toast('保存失败：'+err.message);return}
   if(!changed)return;
-  if(next==='classic'){if(wbIsOpen())closeWorkbench();toast('已切到经典弹层：下次点条目先看精读，离线页在浏览器新标签打开')}
+  if(next==='classic'){if(wbIsOpen())closeWorkbench();toast('已切到经典弹层：点条目先在弹层里看原文，精读与论文用顶部按钮切换')}
   else{if($('#detailDialog').open)closeDetail();toast('已切到阅读工作台：下次点条目直接在软件里看原文')}
 };
 $('#ingestBtn').onclick=async()=>{try{const result=await api('/api/ingest',{method:'POST',body:{text:$('#quickText').value}});$('#ingestResult').textContent=`已接收 ${result.items.length} 条，其中新增 ${result.items.filter(x=>x.created).length} 条`;$('#quickText').value='';loadHealth()}catch(e){toast(e.message)}};
@@ -1523,7 +1763,7 @@ $('#testNotification').onclick=async()=>{try{await api('/api/notifications/test'
 $('#copyPapers').onclick=async()=>{let all=[];try{all=await api('/api/papers?status=needed')}catch(e){toast(e.message);return}const text=all.map(p=>`${p.title||'题名待解析'}\n作者：${JSON.parse(p.authors_json||'[]').join('; ')}\n期刊/年份：${p.journal} ${p.year}\nDOI：https://doi.org/${p.doi}\n来源：${p.source_url||''}`).join('\n\n---\n\n');await navigator.clipboard.writeText(text||'当前没有待下载论文');toast(`已复制 ${all.length} 篇为便于人工或代下的文本`)};
 $('#llmProvider').onchange=()=>{const provider=$('#llmProvider').value,local=provider==='ollama',cloud=provider==='workbuddy_cloud',base=$('#llmBase'),model=$('#llmModel');base.disabled=provider!=='openai_compatible';$('#llmKey').disabled=provider!=='openai_compatible';if(cloud||local){base.dataset.remote=base.value.includes('127.0.0.1')?'https://api.deepseek.com/v1':base.value;model.dataset.remote=model.value}if(cloud){model.value='hy4free';$('#llmKey').value=''}else if(local){base.value='http://127.0.0.1:11434/v1';model.value='qwen3:8b';$('#llmKey').value=''}else{base.value=base.dataset.remote||'https://api.deepseek.com/v1';model.value=model.dataset.remote||'deepseek-chat'}};
 $('#loadWorkbuddyModels').onclick=async()=>{try{$('#workbuddyModelInfo').textContent='正在读取官方目录……';const r=await api('/api/llm/workbuddy/models');$('#workbuddyModelInfo').textContent=`共 ${r.models.length} 个可用模型`;$('#detailContent').innerHTML=`<h1>WorkBuddy 可用模型</h1><p class="muted">倍率仅为目录展示信息，实际扣减以每次调用记录为准。</p><div class="table-wrap"><table><thead><tr><th>模型</th><th>ID</th><th>积分倍率</th><th>图片</th><th>选择</th></tr></thead><tbody>${r.models.map(m=>`<tr><td>${esc(m.name)}</td><td><code>${esc(m.id)}</code></td><td>${esc(m.credits||'未标注')}</td><td>${m.supportsImages===true?'支持':m.supportsImages===false?'不支持':'未知'}</td><td><button data-cloud-model="${esc(m.id)}">使用</button></td></tr>`).join('')}</tbody></table></div>`;openDetail()}catch(e){$('#workbuddyModelInfo').textContent='读取失败';toast(e.message)}};
-$('#settingsForm').onsubmit=async e=>{e.preventDefault();try{const patch={llm:{enabled:$('#llmEnabled').value==='true',provider:$('#llmProvider').value,base_url:$('#llmBase').value,model:$('#llmModel').value,auto_cheapest:$('#llmAutoCheapest').value==='true',vision_enabled:$('#visionEnabled').value==='true',daily_call_limit:Number($('#llmDaily').value),min_local_relevance:Number($('#llmPrefilter').value),long_material_strategy:$('#llmLongMaterial').value,accounts:window.collectAccounts?collectAccounts():undefined},analysis:{custom_reading_prompt:$('#readingPrompt').value,concurrency:Number($('#llmConcurrency').value)},notifications:{channel:$('#notifyChannel').value,instant_threshold:Number($('#instantThreshold').value),batch_size:Number($('#batchSize').value),max_wait_minutes:Number($('#maxWait').value),min_relevance:Number($('#minRelevance').value),quiet_start:$('#quietStart').value,quiet_end:$('#quietEnd').value,quiet_allow_critical:$('#quietCritical').value==='true',max_per_day:Number($('#maxPerDay').value),send_windows:$('#sendWindows').value.split(',').map(x=>x.trim()).filter(Boolean),highlight_threshold:Number($('#highlightThreshold').value),digest_limit:Number($('#digestLimit').value)},papers:{email:$('#paperEmail').value},video:{asr_enabled:$('#asrEnabled').value==='true',asr_model:$('#asrModel').value,max_duration_minutes:Number($('#asrDuration').value)},http_proxy:$('#proxyUrl').value.trim(),ui:{reading_mode:$('#uiReadingMode').value}};await api('/api/settings',{method:'PUT',body:patch});for(const [id,name] of [['llmKey','llm_api_key'],['dataxKey','datax_api_key'],['notifyWebhook','notification_webhook'],['wecomKfSecret','wecom_kf_secret']]){if($('#'+id).value){await api('/api/settings/secrets',{method:'POST',body:{name,value:$('#'+id).value}});$('#'+id).value=''}}$('#settingsResult').textContent='已保存';toast('设置已安全保存')}catch(err){toast(err.message)}};
+$('#settingsForm').onsubmit=async e=>{e.preventDefault();try{const patch={llm:{enabled:$('#llmEnabled').value==='true',provider:$('#llmProvider').value,base_url:$('#llmBase').value,model:$('#llmModel').value,auto_cheapest:$('#llmAutoCheapest').value==='true',vision_enabled:$('#visionEnabled').value==='true',daily_call_limit:Number($('#llmDaily').value),min_local_relevance:Number($('#llmPrefilter').value),long_material_strategy:$('#llmLongMaterial').value,accounts:window.collectAccounts?collectAccounts():undefined},analysis:{custom_reading_prompt:$('#readingPrompt').value,auto:$('#autoAnalyze').value==='true',concurrency:Number($('#llmConcurrency').value)},notifications:{channel:$('#notifyChannel').value,instant_threshold:Number($('#instantThreshold').value),batch_size:Number($('#batchSize').value),max_wait_minutes:Number($('#maxWait').value),min_relevance:Number($('#minRelevance').value),quiet_start:$('#quietStart').value,quiet_end:$('#quietEnd').value,quiet_allow_critical:$('#quietCritical').value==='true',max_per_day:Number($('#maxPerDay').value),send_windows:$('#sendWindows').value.split(',').map(x=>x.trim()).filter(Boolean),highlight_threshold:Number($('#highlightThreshold').value),digest_limit:Number($('#digestLimit').value)},papers:{email:$('#paperEmail').value,auto_download:$('#autoDownloadPapers').value==='true'},video:{asr_enabled:$('#asrEnabled').value==='true',asr_model:$('#asrModel').value,max_duration_minutes:Number($('#asrDuration').value)},http_proxy:$('#proxyUrl').value.trim(),ui:{reading_mode:$('#uiReadingMode').value}};await api('/api/settings',{method:'PUT',body:patch});for(const [id,name] of [['llmKey','llm_api_key'],['dataxKey','datax_api_key'],['notifyWebhook','notification_webhook'],['wecomKfSecret','wecom_kf_secret']]){if($('#'+id).value){await api('/api/settings/secrets',{method:'POST',body:{name,value:$('#'+id).value}});$('#'+id).value=''}}$('#settingsResult').textContent='已保存';toast('设置已安全保存')}catch(err){toast(err.message)}};
 /* ---------- 模态栈 ---------- */
 // showModal() 会让 dialog 子树外的一切变成 inert：浮层（对话抽屉、笔记、划词条）光待在
 // top layer 上层没用，鼠标事件会穿透到遮罩上——点「对话的关闭」先把精读页关了就是这么来的。
@@ -1597,8 +1837,21 @@ $('#collectionPopSort').onchange=renderCollectPop;
 $('#collectionNewName').oninput=renderCollectPop;
 $('#collectionDialogClose').onclick=()=>$('#collectionDialog').close();
 $('#collectionManageCreate').onclick=async()=>{const input=$('#collectionManageName');const scope=window.__manageScope||'library';try{await createCollectionFor(input.value,scope,false);input.value='';renderCollectionManage()}catch(e){toast(e.message)}};
-document.addEventListener('change',e=>{const box=e.target.closest('[data-collect-toggle]');if(box)toggleCollect(box.dataset.collectToggle,box.checked).catch(err=>toast(err.message))});
+document.addEventListener('change',e=>{
+  const pick=e.target.closest('[data-paper-switch]');
+  if(pick){
+    const index=Number(pick.value)||0;
+    if($('#detailDialog').open){classicPaperIndex=index;switchClassicView('paper').catch(err=>toast(err.message))}
+    else{wb.paperIndex=index;const pane=wb.panes.find(p=>p.view==='paper');if(pane)wbSetView(pane,'paper',{force:true})}
+    return;
+  }
+  const box=e.target.closest('[data-collect-toggle]');if(box)toggleCollect(box.dataset.collectToggle,box.checked).catch(err=>toast(err.message))});
 document.addEventListener('click',async e=>{if(e.target.closest('.pick'))return;const t=e.target.closest('button,[data-item]');if(!t)return;try{
+if(t.dataset.wbAct){wbScrollActions(Number(t.dataset.wbAct));return}
+if(t.dataset.classicView){await switchClassicView(t.dataset.classicView);return}
+if(t.dataset.wbPaperOpen!==undefined){wbToggleSide('paper');return}
+if(t.dataset.paperUpload){await uploadPaper(t.dataset.paperUpload,t.dataset.paperUploadTarget||'');return}
+if(t.dataset.paperFetch){await fetchItemPapers(t.dataset.paperFetch);return}
 if(t.dataset.delete){await deleteItem(t.dataset.delete);return}
 if(t.dataset.ruleFrom){await openRuleDialog({account:t.dataset.ruleFrom,scope:'account',field:'title',patterns:''});return}
 if(t.dataset.ruleToggle!==undefined){await api(`/api/filter-rules/${t.dataset.ruleToggle}`,{method:'PATCH',body:{enabled:t.dataset.enabled!=='1'}});await loadRuleList();reloadItems();return}
@@ -1722,6 +1975,10 @@ $('#bulkDelete').onclick=()=>deletePicked().catch(e=>toast(e.message));
 $('#bulkClear').onclick=()=>{itemPicked.clear();loadItems().catch(()=>{})};
 document.addEventListener('change',e=>{const box=e.target.closest('[data-pick]');if(!box)return;if(box.checked)itemPicked.add(box.dataset.pick);else itemPicked.delete(box.dataset.pick);const card=box.closest('.item');if(card)card.classList.toggle('picked',box.checked);syncBulkBar()});
 const deepView=new URLSearchParams(location.search).get('view');if(deepView)setTimeout(()=>{if(loaders[deepView])switchView(deepView)},0);
+// 深链：?item=<id>&pane=paper 直接打开某条与某一栏。通知、书签和自动化截图都用得上。
+const deepItem=new URLSearchParams(location.search).get('item');
+const deepPane=new URLSearchParams(location.search).get('pane');
+if(deepItem)setTimeout(async()=>{try{await showItem(deepItem);if(deepPane&&wbIsOpen())wbToggleSide(deepPane)}catch(err){toast(err.message)}},200);
 loadHealth();loadEvents();loadProgress().catch(()=>{});loadCredits().catch(()=>{});setInterval(loadHealth,5000);setInterval(()=>{if(currentView==='dashboard')loadCredits().catch(()=>{})},60000);setInterval(()=>{if(['dashboard','library'].includes(currentView))loadProgress().catch(()=>{})},2500);setInterval(()=>{if(['dashboard','sources','notifications'].includes(currentView))loaders[currentView]().catch(()=>{})},20000);
 
 /* ---------- 自动更新 ----------

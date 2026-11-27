@@ -13,7 +13,7 @@ from pypdf import PdfReader
 from ..db import Database
 from ..net import download_file, get_json, request
 from ..settings import get_settings
-from ..storage import atomic_write, paper_folder, store_blob_file
+from ..storage import atomic_write, paper_folder
 from . import purge
 from .archive import raw_file, read_raw_bytes
 from ..utils import extract_dois, json_loads, now_iso, stable_json
@@ -304,7 +304,8 @@ async def resolve_and_download(db: Database, paper_id: str) -> None:
                                 attempts=6, read_timeout=120)
             local_path = folder / "paper.pdf"
             os.replace(part_path, local_path)
-            store_blob_file(local_path, ".pdf")
+            # 不再往 blobs 里存一份：同一篇 PDF 在 papers/<doi>/ 已经有一份，
+            # 再存一遍等于把整库论文翻倍（实测 1493 篇、9.5 GB 纯重复）。
             text_path = None
             if settings.get("extract_text", True):
                 reader = await asyncio.to_thread(PdfReader, str(local_path))
@@ -354,7 +355,8 @@ async def _guess_dois(db: Database, item_id: str, body_text: str, raw_text: str,
 
 
 async def process_item_papers(db: Database, item_id: str, archive_only: bool = False,
-                              skip_analysis: bool = False) -> None:
+                              skip_analysis: bool = False, download: bool | None = None,
+                              force_analysis: bool = False) -> None:
     item = db.one("SELECT id,url,text,raw_path,excluded_at FROM items WHERE id=?", (item_id,))
     if not item:
         raise ValueError("条目不存在")
@@ -384,6 +386,9 @@ async def process_item_papers(db: Database, item_id: str, archive_only: bool = F
     # Figure/supplement DOIs are components of the main work, not separate papers to buy or download.
     candidates = [doi for doi in candidates if not any(doi != parent and doi.startswith(parent + ".") for parent in candidates)]
     settings = get_settings()["papers"]
+    if download is None:
+        # 老任务（payload 里没这个字段）按开处理，保持升级前行为。
+        download = bool(settings.get("auto_download", True))
     if primary and not settings.get("download_references", False):
         candidates = primary
     dois = candidates[:int(settings["max_per_item"])]
@@ -405,13 +410,14 @@ async def process_item_papers(db: Database, item_id: str, archive_only: bool = F
                               timestamp, timestamp))
             conn.execute("INSERT OR IGNORE INTO item_papers(item_id,paper_id) VALUES(?,?)", (item_id, paper_id))
         paper_ids.append(paper_id)
-    if get_settings()["papers"]["enabled"]:
+    if settings["enabled"] and download:
         for paper_id in paper_ids:
             try:
                 await resolve_and_download(db, paper_id)
             except Exception as exc:
                 db.execute("UPDATE papers SET status='failed',error=?,updated_at=? WHERE id=?",
                            (str(exc)[:4000], now_iso(), paper_id))
-    if not archive_only and not skip_analysis:
+    auto_analyze = bool(get_settings().get("analysis", {}).get("auto", True))
+    if not archive_only and not skip_analysis and (auto_analyze or force_analysis):
         db.enqueue_job("analyze_item", {"version": 1, "item_id": item_id},
                        dedupe_key=f"analyze:{item_id}:initial", priority=60, max_attempts=4)

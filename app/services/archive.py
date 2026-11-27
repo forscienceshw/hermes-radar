@@ -191,8 +191,26 @@ def _reader_html(title: str, author: str, source_url: str, body: str, warning: s
     return f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>{html.escape(title)}</title>
 <style>body{{max-width:820px;margin:36px auto;padding:0 20px;font:17px/1.85 system-ui,'Microsoft YaHei',sans-serif;color:#20242a;background:#fff}}h1{{line-height:1.35;font-size:30px}}.meta{{color:#68707b;font-size:14px;border-bottom:1px solid #e5e7eb;padding-bottom:18px}}img{{max-width:100%;height:auto;cursor:zoom-in}}a{{color:#1769aa}}.notice{{background:#fff5dc;border:1px solid #edd69b;padding:12px;border-radius:8px}}pre{{white-space:pre-wrap}}#js_content,[style*="visibility"],[style*="opacity"]{{visibility:visible!important;opacity:1!important}}#imageViewer{{position:fixed;inset:0;z-index:99;background:rgba(10,16,22,.95);overflow:hidden;cursor:grab}}#imageViewer[hidden]{{display:none}}#imageViewer img{{position:absolute;transform-origin:0 0;max-width:none;max-height:none;background:#fff;box-shadow:0 12px 48px rgba(0,0,0,.55);cursor:zoom-out}}.imgdim{{font-size:12px;color:#8a929c;margin:-4px 0 14px;font-family:ui-monospace,Consolas,monospace}}#viewerHint{{position:fixed;left:0;right:0;bottom:14px;text-align:center;color:#c6d2dc;font-size:13px;pointer-events:none}}</style></head>
-<body><h1>{html.escape(title)}</h1><div class="meta">{html.escape(author)} · <a href="{html.escape(source_url, quote=True)}">原始页面</a></div>{notice}<article>{body}</article>
+<body><h1>{html.escape(title)}</h1><div class="meta">{html.escape(author)} · <a href="{html.escape(source_url, quote=True)}" target="_blank" rel="noopener">原始页面</a></div>{notice}<article>{body}</article>
 <div id="imageViewer" hidden><img id="viewerImg" alt=""><div id="viewerHint">双击放大 / 复位 · 滚轮缩放 · 拖动平移 · Esc 关闭</div></div>
+<script>
+/* 离线页会被嵌在软件工作台的 iframe 里。链接如果就地跳转，微信会回「拒绝连接」，
+   而那个错误页在 iframe 里没有后退按钮——用户只能把整个阅读页关掉。所以外链一律
+   交给外层（软件窗口 → 系统浏览器），页面本身永远停在本地快照。 */
+(function(){{
+  document.addEventListener('click',function(e){{
+    var a=e.target&&e.target.closest?e.target.closest('a'):null;
+    if(!a)return;
+    var href=a.getAttribute('href')||'';
+    if(!/^https?:/i.test(href))return;
+    e.preventDefault();e.stopPropagation();
+    if(window.parent&&window.parent!==window){{
+      try{{window.parent.postMessage({{type:'radar:open-url',url:href}},'*');return}}catch(_){{}}
+    }}
+    window.open(href,'_blank','noopener');
+  }},true);
+}})();
+</script>
 <script>
 (function(){{
   var box=document.getElementById('imageViewer'),im=document.getElementById('viewerImg'),hint=document.getElementById('viewerHint');

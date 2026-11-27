@@ -65,7 +65,8 @@ class WorkbenchMarkupTest(unittest.TestCase):
 
     def test_skeleton_exists(self):
         for token in ('id="workbench"', 'id="wbBody"', 'id="wbClose"',
-                      'data-wb-side="reading"', 'data-wb-side="notes"', 'data-wb-side="ideas"'):
+                      'data-wb-side="reading"', 'data-wb-side="paper"',
+                      'data-wb-side="notes"', 'data-wb-side="ideas"'):
             self.assertIn(token, self.html, f"工作台骨架缺少 {token}")
 
     def test_only_close_button_closes(self):
@@ -81,9 +82,16 @@ class WorkbenchMarkupTest(unittest.TestCase):
         self.assertIn("classList.toggle('is-active'", self.js)
 
     def test_key_actions_stay_in_header(self):
-        """用户点名的按钮：打开原文 / 检查原文 / 收藏到 / 删除 / 问 AI。"""
-        for token in ('>打开原文<', '>检查原文<', '>收藏到…<', '>删除<', 'data-wb-ask'):
+        """顶栏那一行必须能翻到所有操作，不能为了好看把功能删了。"""
+        for token in ('>打开原文<', '>检查原文<', '>收藏到…<', '>重新精读<',
+                      '>重新检查配图<', '>屏蔽此类<', '>删除<', 'data-wb-ask',
+                      'data-wb-act="-1"', 'data-wb-act="1"', 'wb-act-track'):
             self.assertIn(token, self.js, f"顶栏操作缺失 {token}")
+
+    def test_paper_pane_has_upload_and_fetch(self):
+        for token in ('data-paper-upload', 'data-paper-fetch', '尚未下载到原论文',
+                      '/api/papers/', 'paperPaneHTML'):
+            self.assertIn(token, self.js, f"论文栏缺少 {token}")
 
 
 class ReadingModeSwitchTest(unittest.TestCase):
@@ -123,6 +131,29 @@ class ReadingModeSwitchTest(unittest.TestCase):
     def test_setting_is_persisted(self):
         self.assertIn("ui:{reading_mode:$('#uiReadingMode').value}", self.js)
         self.assertIn("body:{ui:{reading_mode:next}}", self.js)
+
+    def test_classic_opens_on_offline_page(self):
+        """经典弹层也改成先看原文；只有本来就没归档正文时才落到精读。"""
+        self.assertIn("classicView=x.html_path?'read':'reading'", self.js)
+        self.assertIn("['read','原文'],['reading','精读'],['paper','论文']", self.js)
+        self.assertIn('data-classic-view="${key}"', self.js)
+
+
+class AutomationDefaultsTest(unittest.TestCase):
+    """自动下载论文默认关（PDF 是磁盘大头）；自动精读默认开，但两个都能在设置里改。"""
+
+    def test_defaults(self):
+        from app.settings import DEFAULTS
+        self.assertFalse(DEFAULTS["papers"]["auto_download"])
+        self.assertTrue(DEFAULTS["analysis"]["auto"])
+
+    def test_settings_controls_exist(self):
+        html = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
+        js = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+        for token in ('id="autoAnalyze"', 'id="autoDownloadPapers"'):
+            self.assertIn(token, html, f"设置页缺少 {token}")
+        self.assertIn("auto:$('#autoAnalyze').value==='true'", js)
+        self.assertIn("auto_download:$('#autoDownloadPapers').value==='true'", js)
 
 
 if __name__ == "__main__":

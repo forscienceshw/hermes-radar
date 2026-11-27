@@ -224,15 +224,70 @@
         改为「打开面板时按需读内存 + 每 30 分钟补同步」
 
 - id: reading-workbench
-  title: 阅读工作台（离线原文与精读/笔记/Ideas 并排）
+  title: 阅读工作台（离线原文与精读/笔记/Ideas/论文并排）
   status: done
   since: 2026-11-26
   surfaces:
     api: ["GET /api/items/{item_id}/archive"]
-    ui: ["#workbench", "#wbBody", "#wbClose"]
+    ui: ["#workbench", "#wbBody", "#wbClose", "#wbSideSwitch"]
     test: ["test_workbench.py"]
-  manual: 点资料库条目 → 离线页单栏居中；点「精读」→ 原文让到左、精读进右；关掉一栏 → 自动回居中；点暗处与按 Esc 都不关，只有 ✕ 关
-  notes: 切 tab 用 visibility 藏 iframe（display:none 会重置内部滚动位置）；Esc 合成的 cancel 是 cancelable:false，必须拦 keydown；离线页不能加 X-Frame-Options
+  manual: 点资料库条目 → 离线页单栏居中；点「精读」→ 原文让到左、精读进右；点「论文」→ 右栏换成 PDF；关掉一栏 → 自动回居中；点暗处与按 Esc 都不关，只有 ✕ 关
+  notes: 切 tab 用 visibility 藏 iframe（display:none 会重置内部滚动位置）；Esc 合成的 cancel 是 cancelable:false，必须拦 keydown；离线页不能加 X-Frame-Options；四种右栏（精读/论文/笔记/Ideas）抢同一块位置
+
+- id: workbench-paper-pane
+  title: 论文栏：有 PDF 就直接看，没有就上传或让软件去找
+  status: done
+  since: 2026-11-27
+  surfaces:
+    api: ["POST /api/items/{item_id}/paper", "POST /api/items/{item_id}/papers/fetch", "GET /api/papers/{paper_id}/file"]
+    ui: ["#wbSideSwitch", "data-paper-upload", "data-paper-fetch"]
+    test: ["test_paper_upload.py", "test_workbench.py"]
+  manual: 打开一条没有 PDF 的条目点「论文」→ 显示「尚未下载到原论文」；点「上传 PDF」选一个本地文件 → 提示页数/字数，PDF 立刻显示；再点「让软件去找论文」→ 任务队列出现 papers_item
+  notes: 上传走 POST 原始 body（校验 %PDF- 与 max_pdf_mb），落 paper_folder(doi)/paper.pdf 并写 papers 行 + item_papers(evidence='手动上传')；pypdf 提页数与文字到 paper.txt，供精读复用；没有 PDF 时才显示上传入口
+
+- id: workbench-action-pager
+  title: 工作台顶栏操作条，放不下就用两侧小箭头翻页
+  status: done
+  since: 2026-11-27
+  surfaces:
+    ui: ["#wbActTrack", "#wbItemActions", ".wb-act-nav"]
+    test: ["test_workbench.py"]
+  manual: 打开任一条目，顶栏右侧应有一个约五六个按钮的操作条；点右箭头 › 向左翻一屏（出现「屏蔽此类 / 重新精读 / 删除」），点左箭头 ‹ 翻回来；两端按钮不应被裁掉半个字
+  notes: 轨道 max-width 收在 min(46vw,470px)，否则宽屏会把十来个按钮全塞进来、箭头永远 disabled；scrollWidth 只在真溢出时才翻，can-prev/can-next 类同时控制两端渐隐；dialog 打开前量到的宽度是 0，所以 showModal 后补一帧 syncWbActions + ResizeObserver 兜底
+
+- id: archive-link-guard
+  title: 离线页里的外链不劫持阅读区，也不再卡在「拒绝连接」
+  status: done
+  since: 2026-11-27
+  surfaces:
+    api: ["POST /api/system/open-url"]
+    ui: ["#workbench"]
+    test: ["test_reader_links.py"]
+  manual: 在离线页点「原始页面」或正文里的任意链接 → 当前阅读区不跳走，链接交给系统浏览器打开；iframe 若还是被外部导航到别的地址，会自动复位回离线页
+  notes: iframe 内就地导航会变成微信「拒绝连接」且没有后退键，只能叉掉整页重开；归档页捕获 click → postMessage({type:'radar:open-url'}) → 父页面走 /api/system/open-url（app 窗口）或 window.open；外部链接一律 target=_blank&rel=noopener，guardArchiveFrame 用 load 事件兜底复位
+
+- id: automation-toggles
+  title: 自动下载论文 / 自动精读两个开关（省磁盘、省点数）
+  status: done
+  since: 2026-11-27
+  surfaces:
+    api: ["GET /api/settings", "PUT /api/settings"]
+    ui: ["#autoDownloadPapers", "#autoAnalyze"]
+    test: ["test_workbench.py"]
+  manual: 设置里把「自动下载开放论文」设为关闭 → 新条目归档后不再下 PDF，论文栏显示「尚未下载到原论文」；把「自动生成精读」设为关闭 → 归档后不排精读任务，但手点「归档并精读」仍然会跑
+  notes: papers.auto_download 默认 false、analysis.auto 默认 true；process_item_papers(download=None) 时回退读设置，老任务 payload 不写 download 也能跑；手动精读带 force_analysis=True 绕过开关
+
+- id: smart-collect
+  title: 智能收藏：按精读分类/关键词对上收藏夹名字，弹框确认后收藏
+  status: done
+  since: 2026-11-27
+  surfaces:
+    api: ["GET /api/items/{item_id}/collection-suggestions", "POST /api/collections/toggle"]
+    ui: ["#smartCollect", "#smartCollectList", "#smartCollectOk"]
+    test: ["test_collect_suggest.py"]
+  manual: 打开一条还没进任何收藏夹的条目 → 约一秒后弹「要不要收藏到这个收藏夹？」；取消勾选其中一个再点「收藏到选中的」，条目的收藏夹应只剩勾上的那几个；点「这次不用」本条不再打扰
+  notes: 向量与 IDF 关键词在科学文本上分不开（bge 余弦普遍 0.65–0.72，rna 会命中 tRNA），所以改用精读的 category/tags/title/summary 对收藏夹名字做子串匹配：命中 ≥3 字或整名命中才算 strong，最多两个、第二个要 ≥max(3.0,首位×0.7)；通用名（实验/科研杂谈）跳过；只在没有收藏夹时提示，弹框是 showModal 打断式
+
 
 - id: reading-mode-switch
   title: 阅读排布可切换（阅读工作台 / 经典弹层）
@@ -242,7 +297,7 @@
     api: ["GET /api/settings", "PUT /api/settings"]
     ui: ["#uiReadingMode", "#uiReadingHint", "#uiPanel"]
     test: ["test_workbench.py"]
-  manual: 设置 → 参数设置 → 界面与阅读：选「经典弹层」后点任意条目，先看精读、离线阅读页在浏览器新标签打开；选回「阅读工作台」，点条目直接在软件里看原文
+  manual: 设置 → 参数设置 → 界面与阅读：选「经典弹层」后点任意条目，先在弹层里看原文（顶部「原文/精读/论文」切换）；选回「阅读工作台」，点条目同样是原文优先
   notes: 两套界面都保留，只换渲染入口（showItemClassic / openWorkbench）；watchItem 的存活判断要按模式分别看 detailDialog.open 与 wbIsOpen；切换时把另一套收掉，否则两个 modal 同时挂在 top layer
 
 - id: release-directory

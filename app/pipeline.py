@@ -86,10 +86,14 @@ class JobRunner:
         if kind == "poll_source":
             await self._poll(job, payload)
         elif kind == "archive_item":
-            await self._archive(payload["item_id"], archive_only=bool(payload.get("archive_only")))
+            await self._archive(payload["item_id"], archive_only=bool(payload.get("archive_only")),
+                                skip_analysis=bool(payload.get("skip_analysis")),
+                                force_analysis=bool(payload.get("force_analysis")))
         elif kind == "papers_item":
             await process_item_papers(self.db, payload["item_id"], archive_only=bool(payload.get("archive_only")),
-                                      skip_analysis=bool(payload.get("skip_analysis")))
+                                      skip_analysis=bool(payload.get("skip_analysis")),
+                                      download=payload.get("download"),
+                                      force_analysis=bool(payload.get("force_analysis")))
         elif kind == "archive_history_batch":
             await self._archive_history_batch(payload)
         elif kind == "analyze_item":
@@ -239,7 +243,8 @@ class JobRunner:
         except Exception as exc:
             log.warning("重新匹配论文失败 item=%s：%s", item_id, exc)
 
-    async def _archive(self, item_id: str, archive_only: bool = False, skip_analysis: bool = False) -> None:
+    async def _archive(self, item_id: str, archive_only: bool = False, skip_analysis: bool = False,
+                       force_analysis: bool = False) -> None:
         row = self.db.one("SELECT * FROM items WHERE id=?", (item_id,))
         if not row:
             raise ValueError("待归档条目不存在")
@@ -268,7 +273,8 @@ class JobRunner:
         except Exception as exc:  # noqa: BLE001 - never block archiving on a vision call
             log.warning("归档后图片分诊跳过（%s）：%s", item_id, exc)
         self.db.enqueue_job("papers_item", {"version": 1, "item_id": item_id, "archive_only": archive_only,
-                                            "skip_analysis": skip_analysis},
+                                            "skip_analysis": skip_analysis,
+                                            "force_analysis": force_analysis},
                             dedupe_key=f"papers:{item_id}:initial", priority=55, max_attempts=4)
 
     def _source_gone(self, item_id: str, reason: str) -> None:

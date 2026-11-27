@@ -73,6 +73,9 @@ DEFAULTS: dict[str, Any] = {
         "download_references": False,
         # 正文里没有 DOI 时，按「正文链接反推」和「引号里的论文标题」再找一遍。
         "title_lookup": True,
+        # 归档后是否自动去找并下载开放论文。PDF 是磁盘占用的大头，默认关：
+        # DOI 照样识别、条目照样关联，等用户点「论文」栏再去下载。手动不受影响。
+        "auto_download": False,
     },
     "notifications": {
         "enabled": True,
@@ -104,6 +107,9 @@ DEFAULTS: dict[str, Any] = {
         # 同时有几篇在精读。精读是网络等待型任务（httpx 异步），并发比串行快得多；
         # 上限受云模型端限流和本机带宽约束，8 已经够用，再高收益很小。
         "concurrency": 3,
+        # 归档完成后是否自动精读。关掉之后条目不花点数，只留原文；想看时点「精读」。
+        # 手动「重新精读」「归档并精读」不受这里影响。
+        "auto": True,
     },
     # 点资料库条目时的排布。两套界面都保留，这里只决定用哪一套：
     # workbench = 先看内嵌离线页，精读/笔记/Ideas 可并排；classic = 经典精读弹层，
