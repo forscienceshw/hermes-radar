@@ -231,8 +231,8 @@
     api: ["GET /api/items/{item_id}/archive"]
     ui: ["#workbench", "#wbBody", "#wbClose", "#wbSideSwitch", "#wbItemActions", "#wbActTrack", "#wbActReel", "#wbActPinned", "#wbJob"]
     test: ["test_workbench.py"]
-  manual: 点资料库条目 → 离线页单栏居中；点「精读」→ 原文让到左、精读进右；点「论文」→ 右栏换成 PDF；关掉一栏 → 自动回居中；点暗处与按 Esc 都不关，只有 ✕ 关；顶栏「问 AI / 删除」常驻在轨道外永远可点，其余按钮只有两页、点箭头整页换一组且两页不重复；拉窗口宽度时条子跟着变长变短，任一个按钮的框都不许被切；按钮点为任务后标题下方要出现「正在精读 · 已读 N 字 · N 秒」这类状态
-  notes: 切 tab 用 visibility 藏 iframe（display:none 会重置内部滚动位置）；Esc 合成的 cancel 是 cancelable:false，必须拦 keydown；离线页不能加 X-Frame-Options；四种右栏（精读/论文/笔记/Ideas）抢同一块位置；顶栏操作条分两页（第一页在可用宽度内尽量多装、第二页至少留两个，所以永远只有两个状态），每页是轨道满宽的独立容器，翻页靠平移 reel 而不是 scroll——平移不参与布局，不会被重排打断，也绝不会露出隔壁页的半个按钮；宽度由 wbPlanPages 按实测按钮宽度与可用空间算，窗口一变就重新分配（别写死像素）；当前页存 wb.actPage，重渲染后还原；toast 要挂进最上层 modal 子树，body 里的浮层会被工作台遮罩压住
+  manual: 点资料库条目 → 离线页单栏居中；点「精读」→ 原文让到左、精读进右；点「论文」→ 右栏换成 PDF；点「原文」→ 收起并排回到只看原文；关掉一栏 → 自动回居中；点暗处与按 Esc 都不关，只有 ✕ 关；顶栏「问 AI / 删除」常驻在轨道外永远可点；第一页固定「打开原文 / 检查原文 / 收藏到… / 智能收藏」，第二页放「原始短链 / 重新精读 / 重新检查配图 / 屏蔽此类」，点箭头整页换一组且两页不重复；拉窗口宽度时条子跟着变长变短，任一个按钮的框都不许被切；任务跑着的时候按钮行与正文都不许自己抖；没有离线页时点「让软件去找原文」只抓正文与配图，不排精读
+  notes: 切 tab 用 visibility 藏 iframe（display:none 会重置内部滚动位置）；Esc 合成的 cancel 是 cancelable:false，必须拦 keydown；离线页不能加 X-Frame-Options；四种右栏（精读/论文/笔记/Ideas）抢同一块位置，「原文」按钮是收起并排的出口；顶栏操作条两页的切点是固定的 4（wb.actSplit=first.length），不许再按宽度漂移——切点一变，用户刚记住第几页有什么就乱了；每页是轨道满宽的独立容器，翻页靠平移 reel 而不是 scroll，平移不参与布局，不会被重排打断，也不会露出隔壁页的半个按钮；宽度只由 wbPlanPages 按实测按钮宽度与可用空间算，窗口变了只改长度不改分组；当前页存 wb.actPage，重渲染后还原；轮询每 3 秒回一次，按钮行与正文都按签名（wb.actSig / wbItemSig）判断，内容没变一律不重建——重建会把光标下的按钮换人、把正在读的那一栏滚回顶部、把 PDF 的 iframe 重新加载；toast 要挂进最上层 modal 子树，body 里的浮层会被工作台遮罩压住
 
 - id: action-feedback
   title: 点按钮有可见反馈（提示条 + 顶栏任务状态）
@@ -285,8 +285,8 @@
     api: ["GET /api/settings", "PUT /api/settings"]
     ui: ["#autoDownloadPapers", "#autoAnalyze"]
     test: ["test_workbench.py"]
-  manual: 设置里把「自动下载开放论文」设为关闭 → 新条目归档后不再下 PDF，论文栏显示「尚未下载到原论文」；把「自动生成精读」设为关闭 → 归档后不排精读任务，但手点「归档并精读」仍然会跑
-  notes: papers.auto_download 默认 false、analysis.auto 默认 true；process_item_papers(download=None) 时回退读设置，老任务 payload 不写 download 也能跑；手动精读带 force_analysis=True 绕过开关
+  manual: 设置里把「自动下载开放论文」设为关闭 → 新条目归档后不再下 PDF，论文栏显示「尚未下载到原论文」；把「自动生成精读」设为关闭 → 归档后不排精读任务；手点「重新精读」仍会跑（force_analysis=True 绕过开关），但「让软件去找原文」只补正文、任何时候都不排精读
+  notes: papers.auto_download 默认 false、analysis.auto 默认 true；process_item_papers(download=None) 时回退读设置，老任务 payload 不写 download 也能跑；手动精读走 /reanalyze 带 force=True 绕过开关；找原文走 /process 且 payload 带 skip_analysis=True——不带的话「补正文」会顺手花一次点数，用户读成「点了 A 触发了 B」
 
 - id: smart-collect
   title: 智能收藏（点按钮才推荐，不自动弹窗）

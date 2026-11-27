@@ -180,6 +180,23 @@ class PanelActionsTest(unittest.TestCase):
         self.assertEqual(again["existing"], 1)
         self.assertEqual(self.db.one("SELECT COUNT(*) c FROM items")["c"], 1)
 
+    def test_backfill_fulltext_does_not_queue_analysis(self):
+        """面板上的「补全文」只补正文：已在库里但没有 html_path 的条目，排队时不带精读。
+
+        用户点它是要拿回原文，不是要再花一次点数；精读得在详情里显式点。
+        """
+        article = self.article(1050, "只有索引的一篇")
+        wechat_panel.import_articles(self.db, self.account, "gh_abc", [article])
+        self.db.execute("UPDATE items SET status='discovered', html_path=NULL")
+        self.db.execute("DELETE FROM jobs")
+        wechat_panel.import_articles(self.db, self.account, "gh_abc", [article])
+        job = self.db.one("SELECT payload_json FROM jobs WHERE kind='archive_item'")
+        self.assertIsNotNone(job)
+        self.assertIn('"skip_analysis":true', job["payload_json"].replace(" ", ""))
+        self.assertEqual(
+            self.db.one("SELECT COUNT(*) c FROM jobs WHERE kind='archive_item'")["c"], 1,
+            "补全文只该排一个归档任务，两个任务叠着跑会顺手把精读也做了")
+
     def test_exclude_one_only_touches_that_article(self):
         article = self.article(1003, "某条广告")
         wechat_panel.import_articles(self.db, self.account, "gh_abc", [article])

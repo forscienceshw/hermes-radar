@@ -1493,7 +1493,9 @@ def process_discovered_item(item_id: str) -> dict[str, Any]:
         raise HTTPException(404, "条目不存在")
     if item["status"] != "discovered":
         return {"queued": False, "reason": "该条目已进入或完成处理流程"}
-    db.enqueue_job("archive_item", {"version": 1, "item_id": item_id, "force_analysis": True},
+    # 只补原文：抓正文与配图，不调用云模型。想精读再单独点「重新精读」——
+    # 不然「让软件去找原文」会顺手排一次精读，用户看到的就是「点了 A 却触发了 B」。
+    db.enqueue_job("archive_item", {"version": 1, "item_id": item_id, "skip_analysis": True},
                    dedupe_key=f"archive:{item_id}:initial", priority=50)
     return {"queued": True}
 

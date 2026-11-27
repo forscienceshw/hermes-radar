@@ -65,7 +65,7 @@ class WorkbenchMarkupTest(unittest.TestCase):
 
     def test_skeleton_exists(self):
         for token in ('id="workbench"', 'id="wbBody"', 'id="wbClose"',
-                      'data-wb-side="reading"', 'data-wb-side="paper"',
+                      'data-wb-side="read"', 'data-wb-side="reading"', 'data-wb-side="paper"',
                       'data-wb-side="notes"', 'data-wb-side="ideas"'):
             self.assertIn(token, self.html, f"工作台骨架缺少 {token}")
 
@@ -94,7 +94,7 @@ class WorkbenchMarkupTest(unittest.TestCase):
             self.assertIn(token, self.js, f"论文栏缺少 {token}")
 
     def test_action_track_pages_by_whole_buttons(self):
-        """操作条只有两页，每页一组不重复的按钮；宽度按页宽实时算，不写死像素。"""
+        """操作条只有两页，每页一组固定、不重复的按钮；宽度按页宽实时算，不写死像素。"""
         # 两页各是一个满宽容器，翻页平移整条 reel —— 第二页结构上不可能混进第一页的按钮
         self.assertIn("function wbPlanPages(", self.js)
         self.assertIn("function wbLayoutPages(", self.js)
@@ -102,24 +102,65 @@ class WorkbenchMarkupTest(unittest.TestCase):
         self.assertIn('class="wb-act-page"', self.js)
         self.assertIn("reel.style.transform=", self.js)
         self.assertIn("pages[i].offsetLeft", self.js)
-        # 第一页最多留两个按钮给第二页：两页是硬上限，不会冒出第三个状态
-        self.assertIn("for(let k=n-2;k>=1;k--)", self.js)
+        # 切点固定：第一页永远是「打开原文 / 检查原文 / 收藏到… / 智能收藏」四个
+        self.assertIn("wb.actSplit=first.length", self.js)
+        self.assertIn("const k=Math.max(1,Math.min(wb.actSplit||4,n))", self.js)
+        self.assertNotIn("for(let k=n-2;k>=1;k--)", self.js,
+                         "切点不许再按宽度漂移：用户刚记住第几页有什么就变了")
+        page1 = self.js.split("const first=[", 1)[1].split("].filter(a=>a.h);", 1)[0]
+        for token in (">打开原文<", ">检查原文<", ">收藏到…<", ">智能收藏<"):
+            self.assertIn(token, page1, f"第一页必须有 {token}")
+        for token in (">重新精读<", ">重新检查配图<", ">屏蔽此类<"):
+            self.assertNotIn(token, page1, f"{token} 属于第二页")
+        page2 = self.js.split("const more=[", 1)[1].split("].filter(a=>a.h);", 1)[0]
+        for token in (">重新精读<", ">重新检查配图<", ">屏蔽此类<"):
+            self.assertIn(token, page2, f"第二页必须有 {token}")
         # 宽度由 JS 按页宽与可用空间算，窗口一变就重排
         self.assertIn("track.style.width=Math.max(120,Math.min(Math.max(pick.plan.w1,pick.plan.w2),pick.m.avail", self.js)
         self.assertIn("wbActRO.observe(row)", self.js)
         self.assertNotIn("scrollBy({left:dir*", self.js, "不要再靠估算像素平移")
         self.assertNotIn("width:min(300px,40vw)", self.css, "写死像素的话窗口变了条子不动")
         self.assertIn("flex:0 0 100%", self.css, "每页占满轨道，否则会露出隔壁页的半个按钮")
-        # 位置记在状态里，重渲染后回到同一页
+        # 位置记在状态里，重渲染后回到同一页；只有点箭头才做动画
         self.assertIn("wbSetActPage(wb.actPage||0)", self.js)
+        self.assertIn("reel.style.transition='none'", self.js)
         # 常驻按钮不进轨道
         self.assertIn('class="wb-act-pinned"', self.js)
-        rolling = self.js.split("const acts=[", 1)[1].split("].filter(a=>a.h);", 1)[0]
-        self.assertNotIn("data-wb-ask", rolling, "问 AI 要常驻在外面，不参与翻页")
-        self.assertNotIn("data-delete=", rolling, "删除要常驻在外面，不参与翻页")
+        for token in ("data-wb-ask", "data-delete="):
+            self.assertNotIn(token, page1 + page2, "问 AI 与删除要常驻在外面，不参与翻页")
         pinned = self.js.split("const pinned=[", 1)[1].split("];", 1)[0]
         self.assertIn("data-wb-ask", pinned)
         self.assertIn("data-delete=", pinned)
+
+    def test_refresh_keeps_button_row_and_panes_still(self):
+        """轮询每 3 秒回一次；内容没变就别重建，否则按钮换位、正文被拽回顶部。"""
+        self.assertIn("function wbItemSig(", self.js)
+        self.assertIn("if(wb.actSig!==sig){", self.js)
+        self.assertIn("if(sig===wb.sig)return x;", self.js)
+        # 线程：整篇签名不含 progress（进度只更新顶栏胶囊），否则每 3 秒都会重建
+        sig = self.js.split("function wbItemSig(", 1)[1].split("\n}", 1)[0]
+        self.assertNotIn("progress", sig, "签名里带上进度的话，轮询每次都会重画正文")
+
+    def test_one_click_runs_one_action(self):
+        """全局委托里每个分支执行完必须 return：一次点击只能触发一个动作。"""
+        self.assertGreaterEqual(self.js.count(";return}if(t.dataset."), 10,
+                                "分支之间没有 return，一个按钮可能连带触发后面的动作")
+        self.assertIn("data-process", self.js)
+        self.assertIn("if(t.dataset.process){", self.js)
+
+    def test_find_source_button_only_archives(self):
+        """「让软件去找原文」只排队归档，不强制精读——手点它不该顺手花一次点数。"""
+        api = (ROOT / "app" / "api.py").read_text(encoding="utf-8")
+        block = api.split("def process_discovered_item", 1)[1].split('return {"queued": True}', 1)[0]
+        self.assertIn('"skip_analysis": True', block)
+        self.assertNotIn("force_analysis", block)
+
+    def test_side_switch_offers_read(self):
+        """顶栏并排开关要能回到「只看原文」：原文 / 精读 / 论文 / 笔记 / Ideas。"""
+        self.assertIn('data-wb-side="read"', self.html)
+        self.assertIn("if(view==='read'){", self.js)
+        self.assertIn("wbRemovePane(wb.panes[1].key)", self.js)
+        self.assertIn("const onlyRead=n===1&&wb.panes[0].view==='read'", self.js)
 
     def test_header_shows_running_job(self):
         """点完按钮至少顶栏能看到「正在做什么」，不能只有一句转瞬即逝的提示。"""

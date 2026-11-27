@@ -173,11 +173,18 @@ def import_articles(db: Any, account: dict[str, Any], gh_id: str, articles: list
         if hit:
             idx = int(hit.group(1))
         key = f"wechat-panel:{gh_id or account.get('name', '')}:{article.get('message_id') or canonical}"
+        # 先看库里有没有这条、有没有正文：没有正文说明用户点的是「补全文」。
+        # 这条信息同时要喂给 discover_item —— 否则它会按普通「发现」再排一次归档，
+        # 两个任务叠在一起，补全文就顺带把精读也跑了。
+        known = db.one("""SELECT id,status,html_path FROM items
+            WHERE kind='article' AND canonical_url=?""", (canonical,))
+        backfill = bool(known and not known["html_path"])
         candidate = {
             "kind": "article",
             "url": url,
             "canonical_url": canonical,
             "external_key": key + (f"#{idx}" if idx > 1 else ""),
+            "defer_processing": backfill,
             "title": str(article.get("title") or "").strip(),
             "author": account.get("name") or "",
             "published_at": article.get("published_at"),
@@ -200,8 +207,11 @@ def import_articles(db: Any, account: dict[str, Any], gh_id: str, articles: list
             row = rows[0]
             if row["excluded_at"]:
                 db.set_items_excluded([row["id"]], "公众号面板补录", excluded=False, manual=True)
-            if not is_new and (row["status"] == "discovered" or not row["html_path"]):
-                db.enqueue_job("archive_item", {"version": 1, "item_id": row["id"]},
+            if backfill:
+                # 「补全文」只抓正文：这条已经在库里，用户点它是为了补原文，
+                # 不该顺手排一次云精读。想精读去详情点「重新精读」。
+                db.enqueue_job("archive_item",
+                               {"version": 1, "item_id": row["id"], "skip_analysis": True},
                                dedupe_key=f"archive:{row['id']}:panel", priority=60)
         db.execute("DELETE FROM wechat_article_marks WHERE canonical_url=?", (canonical,))
     return {"created": created, "existing": existed, "requested": len(articles)}
