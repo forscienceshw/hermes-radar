@@ -229,10 +229,21 @@
   since: 2026-11-26
   surfaces:
     api: ["GET /api/items/{item_id}/archive"]
-    ui: ["#workbench", "#wbBody", "#wbClose", "#wbSideSwitch"]
+    ui: ["#workbench", "#wbBody", "#wbClose", "#wbSideSwitch", "#wbItemActions", "#wbActTrack", "#wbJob"]
     test: ["test_workbench.py"]
-  manual: 点资料库条目 → 离线页单栏居中；点「精读」→ 原文让到左、精读进右；点「论文」→ 右栏换成 PDF；关掉一栏 → 自动回居中；点暗处与按 Esc 都不关，只有 ✕ 关
-  notes: 切 tab 用 visibility 藏 iframe（display:none 会重置内部滚动位置）；Esc 合成的 cancel 是 cancelable:false，必须拦 keydown；离线页不能加 X-Frame-Options；四种右栏（精读/论文/笔记/Ideas）抢同一块位置
+  manual: 点资料库条目 → 离线页单栏居中；点「精读」→ 原文让到左、精读进右；点「论文」→ 右栏换成 PDF；关掉一栏 → 自动回居中；点暗处与按 Esc 都不关，只有 ✕ 关；顶栏按钮区一次只露三四个，点两侧箭头整页换一组且位置留得住；按钮点为任务后标题下方要出现「正在精读 · 已读 N 字 · N 秒」这类状态
+  notes: 切 tab 用 visibility 藏 iframe（display:none 会重置内部滚动位置）；Esc 合成的 cancel 是 cancelable:false，必须拦 keydown；离线页不能加 X-Frame-Options；四种右栏（精读/论文/笔记/Ideas）抢同一块位置；顶栏操作条按「整按钮」翻页（宽 300px ≈ 四个按钮），滚动位置存 wb.actScroll，重渲染后还原，别用 smooth（会被重排打断，看起来像弹回原位）；toast 要挂进最上层 modal 子树，body 里的浮层会被工作台遮罩压住
+
+- id: action-feedback
+  title: 点按钮有可见反馈（提示条 + 顶栏任务状态）
+  status: done
+  since: 2026-11-27
+  surfaces:
+    ui: ["#toast", "#wbJob"]
+    test: ["test_workbench.py"]
+  manual: 工作台里点「检查原文」→ 右下角立刻出现深色提示条，且压在工作台之上；点「重新精读」→ 标题下方出现「正在精读 · 已读 N 字 · N 秒」，完成后换成结束提示；没有任务时这条状态不占位
+  notes: toast 要挂进最上层 modal 的子树并同时保留 popover（旧 WebView2 没有 Popover API 时 `[popover]` 恒为 display:none，必须摘掉属性退回 .show 类，否则一片安静）；watchItem 头两次看不到 active_job 属正常（任务还没进库），别急着停表；失败信息留在原位，不要只闪一下就消失
+
 
 - id: workbench-paper-pane
   title: 论文栏：有 PDF 就直接看，没有就上传或让软件去找
@@ -283,10 +294,10 @@
   since: 2026-11-27
   surfaces:
     api: ["GET /api/items/{item_id}/collection-suggestions", "POST /api/collections/toggle"]
-    ui: ["#smartCollect", "#smartCollectList", "#smartCollectOk", "[data-smart-collect]"]
-    test: ["test_collect_suggest.py", "test_storage_policy.py"]
-  manual: 打开任意条目 → 什么都不弹；点顶栏（或经典弹层里）的「智能收藏」→ 才弹「要不要收藏到这个收藏夹？」；取消勾选其中一个再点「收藏到选中的」，条目的收藏夹应只剩勾上的那几个；没有匹配时提示「用收藏到…自己挑一个」
-  notes: 按钮触发，不再自动弹窗（连着看十几条时自动弹很烦，且用户常还没想好要不要收藏）；向量与 IDF 关键词在科学文本上分不开（bge 余弦普遍 0.65–0.72，rna 会命中 tRNA），所以改用精读的 category/tags/title/summary 对收藏夹名字做子串匹配：命中 ≥3 字或整名命中才算 strong，最多两个、第二个要 ≥max(3.0,首位×0.7)；通用名（实验/科研杂谈）跳过
+    ui: ["#smartCollect", "#smartCollectList", "#smartCollectOk", "#smartCollectPick", "[data-smart-collect]"]
+    test: ["test_collect_suggest.py", "test_storage_policy.py", "test_workbench.py"]
+  manual: 打开任意条目 → 什么都不弹；点顶栏（或经典弹层里）的「智能收藏」→ 才弹「要不要收藏到这个收藏夹？」；取消勾选其中一个再点「收藏到选中的」，条目的收藏夹应只剩勾上的那几个；没有匹配时弹窗照样要出现，写清是「已经在这个夹子里」还是「缺分类关键词」，并留「自己挑收藏夹」按钮；点它应直接弹出挑夹子的弹层
+  notes: 按钮触发，不再自动弹窗（连着看十几条时自动弹很烦，且用户常还没想好要不要收藏）；向量与 IDF 关键词在科学文本上分不开（bge 余弦普遍 0.65–0.72，rna 会命中 tRNA），所以改用精读的 category/tags/title/summary 对收藏夹名字做子串匹配：命中 ≥3 字或整名命中才算 strong，最多两个、第二个要 ≥max(3.0,首位×0.7)；通用名（实验/科研杂谈）跳过；没有 analysis 时回退用条目自己的 category/tags_json，否则未精读的条目永远「没找到」；完全没候选也要弹窗说明并给「自己挑收藏夹」出口，静默返回等于按钮坏了
 
 
 - id: storage-budget

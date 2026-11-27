@@ -66,6 +66,33 @@ class CollectSuggestTest(unittest.TestCase):
         for item in suggestions:
             self.assertGreaterEqual(item["score"], 3.0)
 
+    def test_reports_names_already_holding_the_item(self):
+        """全部命中项都收藏过了，也要把名字报回去——界面才能说「已经在里面了」。"""
+        cid = self._collection("微流控")
+        row = db.one("SELECT * FROM items WHERE id=?", (self.item_id,))
+        result = suggest(db, row, [cid])
+        self.assertEqual(result["suggestions"], [])
+        self.assertIn("微流控", result["already"])
+
+    def test_falls_back_to_item_category_without_analysis(self):
+        """还没精读的条目：用抓取时打的 category / tags 兜底，否则永远「没找到」。"""
+        plain_id = f"test-suggest-plain-{uuid.uuid4().hex[:8]}"
+        db.execute("""INSERT INTO items(id,kind,external_key,url,canonical_url,discovered_at,title,
+                      category,tags_json)
+                      VALUES(?,?,?,?,?,?,?,?,?)""",
+                   (plain_id, "article", plain_id, "https://example.com/p",
+                    "https://example.com/p", "2026-11-27T00:00:00+00:00",
+                    "微流控芯片上的单细胞分选", "微流控", '["单细胞"]'))
+        try:
+            cid = self._collection("微流控")
+            row = db.one("SELECT * FROM items WHERE id=?", (plain_id,))
+            names = [item["name"] for item in suggest(db, row, [])["suggestions"]]
+            self.assertEqual(names, ["微流控"])
+            self.assertEqual(suggest(db, row, [cid])["already"], ["微流控"])
+        finally:
+            db.execute("DELETE FROM collection_entries WHERE entry_id=?", (plain_id,))
+            db.execute("DELETE FROM items WHERE id=?", (plain_id,))
+
 
 if __name__ == "__main__":
     unittest.main()

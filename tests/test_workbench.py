@@ -93,6 +93,37 @@ class WorkbenchMarkupTest(unittest.TestCase):
                       '/api/papers/', 'paperPaneHTML'):
             self.assertIn(token, self.js, f"论文栏缺少 {token}")
 
+    def test_action_track_pages_by_whole_buttons(self):
+        """翻页要按整按钮走，并且位置留得住；平滑滚动会被重排打断，看起来像弹回原位。"""
+        self.assertIn("function wbActPages(", self.js)
+        self.assertIn("function wbActIndex(", self.js)
+        self.assertIn("track.scrollTo({left:starts[next],behavior:'auto'})", self.js)
+        self.assertNotIn("scrollBy({left:dir*", self.js, "不要再靠估算像素平移")
+        # 重渲染顶栏后把位置还原，否则一刷新就回到第一页
+        self.assertIn("track.scrollLeft=wb.actScroll||0", self.js)
+        self.assertIn("width:min(300px,40vw)", self.css, "操作条一次只显示三四个按钮")
+
+    def test_header_shows_running_job(self):
+        """点完按钮至少顶栏能看到「正在做什么」，不能只有一句转瞬即逝的提示。"""
+        self.assertIn('id="wbJob"', self.html)
+        for token in ("function wbRenderJob(", "function wbJobText(", ".wb-job{"):
+            self.assertIn(token, self.js if token.endswith("(") else self.css, f"缺少 {token}")
+        self.assertIn("wbRenderJob(x)", self.js)
+
+    def test_toast_lives_in_top_modal(self):
+        """提示条必须挂进最上层 modal 的子树，否则被工作台的遮罩压住 = 点了没反应。"""
+        self.assertIn("function toastHome(", self.js)
+        self.assertIn("window.topModal&&window.topModal()", self.js)
+        # 老 WebView2 没有 Popover API 时要退化成普通定位元素
+        self.assertIn("typeof el.showPopover==='function'", self.js)
+
+    def test_smart_collect_always_answers(self):
+        """没匹配到也要有可见回应，并给「自己挑收藏夹」的出口。"""
+        self.assertIn('id="smartCollectPick"', self.html)
+        self.assertIn("这次没有对得上的收藏夹", self.js)
+        self.assertIn("data&&data.already", self.js)
+        self.assertIn("自己挑一个", self.js)
+
 
 class ReadingModeSwitchTest(unittest.TestCase):
     """两套排布都要留着，靠设置切换。

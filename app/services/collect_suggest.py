@@ -38,6 +38,12 @@ def _haystack(row: dict[str, Any]) -> tuple[str, str]:
     parts = [row.get("title"), row.get("summary"), analysis.get("category"),
              analysis.get("summary"), analysis.get("one_sentence"),
              _flat(analysis.get("tags")), _flat(analysis.get("terms"))]
+    # 还没精读的条目没有 analysis，但抓取时已按规则打上过 category / tags。
+    # 缺了它们，未精读的条目点「智能收藏」永远只能回一句「没找到」。
+    if not analysis.get("category"):
+        parts.append(row.get("category"))
+    if not analysis.get("tags"):
+        parts.append(_flat(json_loads(row.get("tags_json"), [])))
     raw = " ".join(str(part) for part in parts if part)
     words = re.sub(r"[^a-z0-9]+", " ", raw.lower())
     return _norm(raw), words
@@ -66,7 +72,7 @@ def _parts(name: str) -> list[str]:
 def suggest(db: Database, row: dict[str, Any], existing: list[str], limit: int = 2) -> dict[str, Any]:
     text = _haystack(row)
     if not text[0]:
-        return {"suggestions": [], "engine": "keywords"}
+        return {"suggestions": [], "already": [], "engine": "keywords"}
     rows = db.query("SELECT id,name FROM collections WHERE scope='library'")
     scored: list[dict[str, Any]] = []
     for collection in rows:
@@ -97,4 +103,7 @@ def suggest(db: Database, row: dict[str, Any], existing: list[str], limit: int =
             break
     for item in picked:
         item["reason"] = "命中：" + "、".join(item.get("matched") or [])
-    return {"suggestions": picked, "engine": "keywords"}
+    # 命中了但已经收藏过的夹子：界面要能说「这篇已经在这里了」，
+    # 而不是含糊地说「没找到对得上的」——那会让人以为推荐坏了。
+    already = [item["name"] for item in scored if item["id"] in set(existing)]
+    return {"suggestions": picked, "already": already, "engine": "keywords"}

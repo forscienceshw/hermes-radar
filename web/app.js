@@ -37,7 +37,37 @@ function guardArchiveFrame(frame){
     if(src)frame.src=src;
   });
 }
-const toast=message=>{const el=$('#toast');if(!el)return;el.textContent=message;if(el.showPopover&&!el.matches(':popover-open')){try{el.showPopover()}catch(e){}}el.classList.add('show');clearTimeout(el._hideTimer);el._hideTimer=setTimeout(()=>el.classList.remove('show'),3200)};
+/* 提示条：必须挂在「最上层 modal」的子树里，否则等于没提示。
+   阅读工作台与精读页都是 showModal()，它们进 top layer 之后，留在 body 里的浮层
+   会被遮罩压在下面——用户点完按钮什么也看不见，反馈就成了「点了没反应」。
+   老 WebView2 没有 Popover API 时 `[popover]` 一直是 display:none，所以还要能退化成
+   普通定位元素，光靠 showPopover() 会给出一片安静。 */
+function toastHome(el){
+  const home=(window.topModal&&window.topModal())||document.body;
+  if(el.parentElement===home)return;
+  const shown=el.matches(':popover-open');
+  if(shown){try{el.hidePopover()}catch(e){}}
+  home.appendChild(el);
+  if(shown){try{el.showPopover()}catch(e){}}
+}
+const toast=message=>{
+  const el=$('#toast');if(!el)return;
+  toastHome(el);
+  el.textContent=message;
+  if(typeof el.showPopover==='function'){
+    if(!el.matches(':popover-open')){try{el.showPopover()}catch(e){el.removeAttribute('popover')}}
+  }else if(el.hasAttribute('popover')){
+    el.removeAttribute('popover');       // 没有 Popover API：交给 .show 类控制显隐
+  }
+  el.classList.add('show');
+  clearTimeout(el._hideTimer);
+  el._hideTimer=setTimeout(()=>el.classList.remove('show'),3600);
+};
+// 模态关掉时提示条还留在它的子树里，会跟着一起消失；搬回 body，下次触发再挂回去。
+document.addEventListener('close',event=>{
+  const el=$('#toast');
+  if(el&&event.target&&event.target.contains&&event.target.contains(el))document.body.appendChild(el);
+},true);
 const time=value=>value?new Date(value).toLocaleString('zh-CN',{hour12:false}):'—';
 const bool=value=>value?'true':'false';
 let currentView='dashboard', currentPapers=[];
@@ -897,29 +927,44 @@ let smartCollectItemId=null,smartCollectRows=[];
 async function suggestCollections(x,opts){
   const manual=!!(opts&&opts.manual);
   if(!x||!x.id)return;
-  if($('#smartCollect').open)return;
+  const dlg=$('#smartCollect');
+  if(dlg.open)return;
+  // 按钮按下去就要有动静：本地库大时这一步也要几百毫秒，什么都不显示就成了「没反应」。
+  // 但正常只要几十毫秒，提示一闪而过反而像闪烁，所以慢过 250ms 才冒出来。
+  const slow=manual?setTimeout(()=>toast('正在看哪几个收藏夹对得上…'),250):null;
   let data=null;
   try{data=await api('/api/items/'+encodeURIComponent(x.id)+'/collection-suggestions')}
-  catch(e){if(manual)toast(e.message||'取收藏建议失败');return}
+  catch(e){if(slow)clearTimeout(slow);toast(`取收藏建议失败：${e.message||e}`);return}
+  if(slow)clearTimeout(slow);
   const rows=(data&&data.suggestions)||[];
-  if(!rows.length){
-    if(manual)toast((x.collections||[]).length
-      ? '这篇已经在收藏夹里，也没有别的更对得上的夹子'
-      : '没找到名字对得上的收藏夹，用「收藏到…」自己挑一个吧');
-    return;
-  }
   // 请求回来时用户可能已经切到别的条目了，别把建议弹到新页面上。
   const stillHere=(wbIsOpen()&&wb.itemId===x.id)||(classicItemId===x.id&&$('#detailDialog').open);
-  if(!stillHere)return;
+  if(!stillHere){if(manual)toast('这条已经关掉了，重新打开再点一次');return}
   smartCollectItemId=x.id;smartCollectRows=rows;
-  $('#smartCollectLead').textContent=`这篇的分类与关键词刚好对上了下面${rows.length>1?'这几个':'这个'}收藏夹的名字。建议在本地算，不花点数；勾选后点确认才会收藏。`;
-  const title=$('#smartCollectTitle');
-  if(title)title.textContent=rows.length>1?'要不要收藏到这几个收藏夹？':'要不要收藏到这个收藏夹？';
-  $('#smartCollectList').innerHTML=rows.map((s,i)=>`<label class="sc-row"><input type="checkbox" data-sc-pick="${i}" checked><span class="sc-name">${esc(s.name)}</span><span class="sc-score">${(s.score||0)>=4.5?'很相关':'相关'}</span><small>${esc(s.reason||'主题接近')}</small></label>`).join('');
-  const dlg=$('#smartCollect');
+  const title=$('#smartCollectTitle'),lead=$('#smartCollectLead'),list=$('#smartCollectList');
+  const ok=$('#smartCollectOk'),pick=$('#smartCollectPick');
+  if(rows.length){
+    title.textContent=rows.length>1?'要不要收藏到这几个收藏夹？':'要不要收藏到这个收藏夹？';
+    lead.textContent=`这篇的分类与关键词刚好对上了下面${rows.length>1?'这几个':'这个'}收藏夹的名字。建议在本地算，不花点数；勾选后点确认才会收藏。`;
+    list.innerHTML=rows.map((s,i)=>`<label class="sc-row"><input type="checkbox" data-sc-pick="${i}" checked><span class="sc-name">${esc(s.name)}</span><span class="sc-score">${(s.score||0)>=4.5?'很相关':'相关'}</span><small>${esc(s.reason||'主题接近')}</small></label>`).join('');
+    list.hidden=false;ok.hidden=false;
+    if(pick)pick.hidden=true;
+  }else{
+    // 没匹配到也不能当成「什么都没发生」：说清是「已经收藏过了」还是「对不上」，并给出口。
+    const already=(data&&data.already)||[];
+    title.textContent='这次没有对得上的收藏夹';
+    if(already.length){
+      lead.textContent=`这篇已经在「${already.join('」「')}」里了，没有别的更对得上的收藏夹。要挪到别处就自己挑一个。`;
+    }else if((x.collections||[]).length){
+      lead.textContent='这篇的分类与关键词没有对上任何一个「还没收藏」的收藏夹。可以自己挑一个放进去。';
+    }else{
+      lead.textContent='这篇还缺可用来匹配的分类或关键词（精读完成后会准得多）。先自己挑一个收藏夹吧。';
+    }
+    list.innerHTML='';list.hidden=true;ok.hidden=true;
+    if(pick)pick.hidden=false;
+  }
   dlg.showModal();
   // showModal 默认把焦点给第一个可聚焦元素（右上角的 ✕），焦点环看着像个黑框。
-  // 让 dialog 自己接焦点，键盘用户按 Tab 照样能到 ✕ 和复选框。
   dlg.focus();
 }
 function closeSmartCollect(){
@@ -946,6 +991,15 @@ async function applySmartCollect(){
 }
 $('#smartCollectClose').onclick=()=>closeSmartCollect();
 $('#smartCollectSkip').onclick=()=>closeSmartCollect();
+// 没匹配到收藏夹时的出口：直接开「收藏到…」那个挑夹子的弹层，省得用户再去找按钮。
+$('#smartCollectPick').onclick=async()=>{
+  const itemId=smartCollectItemId;
+  const ids=(window.__currentItem&&window.__currentItem.collections)||[];
+  closeSmartCollect();
+  if(!itemId)return;
+  const anchor=$('#wbItemActions [data-collect]')||$('#detailDialog [data-collect]')||document.body;
+  await openCollectPop('item',itemId,ids,anchor,()=>currentView==='library'?loadItems():loadIdeas());
+};
 $('#smartCollectOk').onclick=()=>applySmartCollect().catch(err=>toast(err.message));
 $('#smartCollect').addEventListener('click',e=>{if(e.target===e.currentTarget)closeSmartCollect()});
 async function createCollectionFor(name,scope,entry){
@@ -992,7 +1046,11 @@ function watchItem(id){if(detailWatchId===id&&detailWatchTimer)return;stopItemWa
     if(!alive||detailWatchId!==id){stopItemWatch();return}
     try{const x=await api('/api/items/'+id);const hasAnalysis=x.analysis&&Object.keys(x.analysis).length>0;
     if(detailWatchId!==id)return;
-    if(!x.active_job){stopItemWatch();toast(hasAnalysis?'精读已完成，结果已更新':'处理已结束，可查看最新状态')}
+    // 刚点完「重新精读」时任务还没进库，前两次看不到 active_job 是正常的，别急着收摊。
+    const job=x.last_job||{};
+    const queued=x.active_job||['READY','LEASED','RETRY_WAIT'].includes(String(job.state||''));
+    if(!queued&&ticks>2){stopItemWatch();toast(hasAnalysis?'精读已完成，结果已更新':'处理已结束，可查看最新状态')}
+    wbRenderJob(x);
     await refreshOpenReader(id)}catch(e){stopItemWatch()}},3000)}
 const READ_STEP_FIELDS=[['why','为什么做这一步'],['did','具体做了什么'],['saw','看到了什么'],['means','说明什么']];
 function blobUrl(path){const parts=String(path||'').split(/[\\/]/);return parts.length>=2?`/api/blobs/${parts[parts.length-2]}/${parts[parts.length-1]}`:''}
@@ -1058,7 +1116,7 @@ function afterBlock(a){
    5. 关掉一栏，剩下那栏自动回到居中。切 tab 只改 display，不重建 DOM，iframe 保住滚动位置。
 */
 const WB_VIEWS={read:'原文',reading:'精读',paper:'论文',notes:'笔记',ideas:'Ideas'};
-const wb={open:false,itemId:null,item:null,panes:[],paneSeq:0,noteSeq:0,paperIndex:0};
+const wb={open:false,itemId:null,item:null,panes:[],paneSeq:0,noteSeq:0,paperIndex:0,actScroll:0};
 let wbIdeaTimer=null;
 function wbEl(){return $('#workbench')}
 function wbIsOpen(){const el=wbEl();return !!(el&&el.open)}
@@ -1247,10 +1305,46 @@ function wbRenderHeader(x){
   $('#wbItemActions').innerHTML=`<button type="button" class="wb-act-nav" data-wb-act="-1" aria-label="上一组操作" title="上一组操作" disabled>‹</button>`
     +`<div class="wb-act-track" id="wbActTrack" role="group" aria-label="条目操作">${acts.join('')}</div>`
     +`<button type="button" class="wb-act-nav" data-wb-act="1" aria-label="下一组操作" title="下一组操作">›</button>`;
+  // innerHTML 重建会把 scrollLeft 归零：还原到用户刚才那一页，翻页才「留得住」。
+  const track=$('#wbActTrack');
+  if(track)track.scrollLeft=wb.actScroll||0;
   syncWbActions();
   watchWbActions();
+  wbRenderJob(x);
   // 工作台不在 #detailContent 的 MutationObserver 范围内，得主动通知对话面板换上下文。
   if(window.syncCurrentItem)window.syncCurrentItem();
+}
+/* 顶栏任务状态：只回答「点的按钮现在到哪了」。
+   active_job 有值就转圈；精读还带已读字数与耗时（worker 每秒写一次 progress:*）。
+   没有任务但上次失败，就把失败留在原地，别让人以为还在跑。 */
+function wbJobText(x){
+  const job=x&&x.active_job, p=x&&x.progress;
+  if(job==='analyze'){
+    if(p&&p.phase==='analyzing'){
+      const chars=Number(p.reasoning||0)+Number(p.content||0);
+      const spent=Number(p.elapsed||0);
+      return `正在精读 · 已读 ${chars>=1000?Math.round(chars/1000)+'k 字':(chars||'…')+' 字'}`
+        +(spent?` · ${spent<60?spent+' 秒':Math.floor(spent/60)+' 分 '+spent%60+' 秒'}`:'');
+    }
+    return '正在精读这篇…';
+  }
+  if(job==='archive')return '正在归档原文与配图…';
+  if(job==='verify')return '原文要人机验证，等它放开…';
+  return '';
+}
+function wbRenderJob(x){
+  const el=$('#wbJob');if(!el)return;
+  const text=wbJobText(x);
+  const failed=!text&&x&&x.last_job&&x.last_job.error;
+  if(text){
+    el.hidden=false;el.classList.remove('failed');
+    el.innerHTML=`<i class="spin"></i><span>${esc(text)}</span>`;
+  }else if(failed){
+    el.hidden=false;el.classList.add('failed');
+    el.textContent=`上次处理失败：${String(x.last_job.error).slice(0,60)}`;
+  }else{
+    el.hidden=true;el.textContent='';
+  }
 }
 /* 顶栏那条操作轨道在 dialog 打开前量到的是 0 宽：scrollWidth==clientWidth，箭头会一直停在
    disabled，用户就翻不到被裁掉的「屏蔽此类 / 删除」。所以既在 showModal 后补一次，也用
@@ -1266,17 +1360,50 @@ function watchWbActions(){
 function syncWbActions(){
   const track=$('#wbActTrack');if(!track)return;
   const prev=$('[data-wb-act="-1"]'),next=$('[data-wb-act="1"]');
-  const max=Math.max(0,track.scrollWidth-track.clientWidth);
-  if(prev)prev.disabled=track.scrollLeft<=2;
-  if(next)next.disabled=track.scrollLeft>=max-2;
+  const {starts,max}=wbActPages();
+  const index=wbActIndex(track,starts);
+  if(prev)prev.disabled=index<=0;
+  if(next)next.disabled=index>=starts.length-1;
   track.classList.toggle('can-prev',track.scrollLeft>2);
   track.classList.toggle('can-next',track.scrollLeft<max-2);
+  wb.actScroll=track.scrollLeft;
+}
+/* 按「整按钮」翻页：一页三四个，翻过去正好是另外三四个。
+   位置记在 wb.actScroll 里，顶栏重渲染后仍停在同一页——不然一刷新状态就自己弹回开头，
+   看着就像按钮没生效。 */
+function wbActPages(){
+  const track=$('#wbActTrack');
+  if(!track)return {starts:[0],max:0};
+  const kids=[...track.children];
+  const max=Math.max(0,track.scrollWidth-track.clientWidth);
+  if(!kids.length||max<=2)return {starts:[0],max};
+  const base=kids[0].offsetLeft;
+  const starts=[0];
+  const per=3;
+  const minGap=48;                     // 两页之间至少挪出小半个按钮，否则等于没翻
+  for(let i=per;i<kids.length;i+=per){
+    const left=Math.min(max,Math.max(0,kids[i].offsetLeft-base));
+    if(left<=starts[starts.length-1]+minGap)continue;
+    starts.push(left);
+    if(left>=max-2)break;
+  }
+  if(max-starts[starts.length-1]>=minGap)starts.push(max);
+  return {starts,max};
+}
+function wbActIndex(track,starts){
+  let index=0;
+  for(let i=0;i<starts.length;i++)if(starts[i]<=track.scrollLeft+2)index=i;
+  return index;
 }
 function wbScrollActions(dir){
   const track=$('#wbActTrack');if(!track)return;
-  track.scrollBy({left:dir*Math.max(150,Math.round(track.clientWidth*.82)),behavior:'smooth'});
-  clearTimeout(wbScrollActions._t);
-  wbScrollActions._t=setTimeout(syncWbActions,360);
+  const {starts}=wbActPages();
+  const index=wbActIndex(track,starts);
+  const next=Math.min(starts.length-1,Math.max(0,index+dir));
+  // 不用 smooth：平滑滚动会被随后的一次布局重排打断，看起来是「滑一半自己弹回去」。
+  track.scrollTo({left:starts[next],behavior:'auto'});
+  wb.actScroll=starts[next];
+  syncWbActions();
 }
 window.addEventListener('resize',()=>syncWbActions());
 document.addEventListener('scroll',e=>{if(e.target&&e.target.id==='wbActTrack')syncWbActions()},true);
@@ -1323,6 +1450,7 @@ async function openWorkbench(id,opts={}){
   const sameItem=wb.itemId===x.id;
   wb.item=x;wb.itemId=x.id;wb.open=true;
   if(!sameItem)wb.paperIndex=0;
+  if(!sameItem)wb.actScroll=0;      // 换条目：按钮集合可能变了，翻页位置从头算
   wbRenderHeader(x);
   const el=wbEl();
   if(!el.open){
@@ -1896,7 +2024,7 @@ if(t.dataset.restore){await api(`/api/items/${t.dataset.restore}/restore`,{metho
 if(t.dataset.useCollection){await toggleCollect(t.dataset.useCollection,true);$('#collectionNewName').value='';renderCollectPop();return}
 if(t.dataset.collectionSave){const input=document.querySelector(`[data-collection-name="${t.dataset.collectionSave}"]`);await api(`/api/collections/${t.dataset.collectionSave}`,{method:'PATCH',body:{name:input.value}});toast('已改名');await loadCollections(window.__manageScope||'library');renderCollectionManage();return}
 if(t.dataset.collectionDelete){if(!confirm('删除这个收藏夹？条目本身不会被删除。'))return;const scope=window.__manageScope||'library';await api(`/api/collections/${t.dataset.collectionDelete}`,{method:'DELETE'});toast('已删除收藏夹');if(collectionFilterValue(scope)===t.dataset.collectionDelete){if(scope==='library')libraryCollectionFilter='';else ideaCollectionFilter=''}await loadCollections(scope);renderCollectionManage();syncCollectionButton(scope);if(scope==='library')loadItems().catch(()=>{});else loadIdeas().catch(()=>{});return}
-if(t.dataset.run){await api(`/api/sources/${t.dataset.run}/run`,{method:'POST'});toast('已加入立即检查队列')}if(t.dataset.archiveHistory){if(!confirm('将控速归档历史全文、图片和可获取论文，不自动调用云精读。确定开始吗？'))return;const r=await api(`/api/sources/${t.dataset.archiveHistory}/archive-history`,{method:'POST'});toast(r.queued?`已开始历史归档，剩余 ${r.remaining} 条；云精读调用 0`:'没有待归档的历史索引')}if(t.dataset.toggle){await api(`/api/sources/${t.dataset.toggle}`,{method:'PATCH',body:{enabled:t.dataset.enabled!=='1'}});loadSources()}if(t.dataset.process){await api(`/api/items/${t.dataset.process}/process`,{method:'POST'});toast('已加入归档与精读队列，完成后本页自动刷新');refreshOpenReader(t.dataset.process).catch(()=>{});loadItems().catch(()=>{})}if(t.dataset.reanalyze){await api(`/api/items/${t.dataset.reanalyze}/reanalyze`,{method:'POST'});toast('已排队，正在精读，完成后自动刷新');refreshOpenReader(t.dataset.reanalyze).catch(()=>{});loadItems().catch(()=>{})}if(t.dataset.retriage){toast('正在让模型重新判断配图…');const r=await api(`/api/items/${t.dataset.retriage}/retriage-images`,{method:'POST'});toast(r.dropped?`已删除 ${r.dropped} 张无关配图`:'没有发现需要删除的配图');await refreshOpenReader(t.dataset.retriage);loadItems().catch(()=>{})}if(t.dataset.verifySource){const r=await api(`/api/items/${t.dataset.verifySource}/verify-source`,{method:'POST'});toast(r.exists?'原文仍可访问':(r.kept?'原文已删除，但离线页已保存，继续保留':'原文已删除且没有离线页，已移出资料库'));await refreshOpenReader(t.dataset.verifySource);loadItems().catch(()=>{})}if(t.dataset.archiveIndex!==undefined){if(!confirm('将限速归档所有仅索引条目（正文、图片、原始快照），不调用云精读。条目较多时会持续一段时间，可随时查看进度。确定开始吗？'))return;const r=await api('/api/archive-index-only',{method:'POST'});toast(r.queued?`已开始归档，剩余 ${r.remaining} 条；云精读调用 0`:'没有待归档的索引条目');loadProgress().catch(()=>{})}if(t.dataset.archiveStop!==undefined){if(!confirm('停止批量归档？正在下载的这一条会先做完，之后不再继续排队。已归档的条目不受影响。'))return;const r=await api('/api/archive-index-only/stop',{method:'POST'});toast(`已暂停：撤销 ${r.cancelled} 个排队批次${r.running_batches?`，正在跑的那批收尾后停下`:''}；还剩 ${r.remaining} 条未归档`);loadProgress().catch(()=>{})}if(t.dataset.cloudModel){$('#llmProvider').value='workbuddy_cloud';$('#llmProvider').dispatchEvent(new Event('change'));$('#llmModel').value=t.dataset.cloudModel;$('#detailDialog').close();toast('已选择模型，保存设置后生效')}if(t.dataset.paperRetry){await api(`/api/papers/${t.dataset.paperRetry}/retry`,{method:'POST'});toast('已重试论文解析与下载')}if(t.dataset.jobRetry){await api(`/api/jobs/${t.dataset.jobRetry}/retry`,{method:'POST'});toast('任务已重新排队');await loadTaskQueue()}if(t.dataset.jobDiagnostic){const d=await api(`/api/jobs/${t.dataset.jobDiagnostic}/diagnostics`);window.currentDiagnostic=d.markdown;$('#detailContent').innerHTML=`<h1>任务失败诊断</h1>${d.hint?'<div class="notice"><b>已知模式：'+esc(d.hint)+'</b><br>'+esc(d.hint_advice)+'</div>':''}<p>${d.retryable?'<span class="badge wait">疑似临时错误，可重试</span>':'<span class="badge error">不是临时错误，盲目重试会再次失败</span>'}</p><p class="muted">复制下面内容，粘贴到 WorkBuddy 对话即可定位和修复。</p><div class="actions"><button class="primary" data-copy-diagnostic="1">复制诊断给 WorkBuddy</button></div><div class="detail-text"><pre style="white-space:pre-wrap">${esc(d.markdown)}</pre></div>`;openDetail()}if(t.dataset.copyDiagnostic){try{await navigator.clipboard.writeText(window.currentDiagnostic||'')}catch(err){const ta=document.createElement('textarea');ta.value=window.currentDiagnostic||'';document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove()}toast('诊断已复制，可直接粘贴到 WorkBuddy')}if(t.dataset.pdfPreview){await previewPaper(t.dataset.pdfPreview)}if(t.dataset.paperWps){const r=await api(`/api/papers/${t.dataset.paperWps}/open-wps`,{method:'POST'});toast(`${r.application} 已打开：${r.path}`)}if(t.dataset.paperReveal){const r=await api(`/api/papers/${t.dataset.paperReveal}/reveal`,{method:'POST'});toast(`已打开目录：${r.directory}`)}if(t.dataset.ideaEdit){const x=window.ideaRows.find(i=>i.id===t.dataset.ideaEdit);$('#ideaId').value=x.id;$('#ideaTitle').value=x.title;$('#ideaContent').value=x.content;$('#ideaTags').value=(x.tags||[]).join(', ');scrollTo({top:0,behavior:'smooth'})}if(t.dataset.ideaToggle){const x=window.ideaRows.find(i=>i.id===t.dataset.ideaToggle);await api('/api/ideas/'+x.id,{method:'PATCH',body:{title:x.title,content:x.content,tags:x.tags,enabled:t.dataset.enabled!=='1'}});loadIdeas()}if(t.dataset.batch){const x=await api('/api/notifications/'+t.dataset.batch);$('#detailContent').innerHTML=`<h1>汇报内容</h1><div class="detail-text">${esc(x.text)}</div>`;openDetail()}if(t.dataset.batchRetry){const r=await api(`/api/notifications/${t.dataset.batchRetry}/retry`,{method:'POST'});toast(r.queued===false?(r.reason||'该批次无需重试'):'已重新进入发送队列');loadNotifications().catch(()=>{})}}catch(err){toast(err.message)}});
+if(t.dataset.run){await api(`/api/sources/${t.dataset.run}/run`,{method:'POST'});toast('已加入立即检查队列')}if(t.dataset.archiveHistory){if(!confirm('将控速归档历史全文、图片和可获取论文，不自动调用云精读。确定开始吗？'))return;const r=await api(`/api/sources/${t.dataset.archiveHistory}/archive-history`,{method:'POST'});toast(r.queued?`已开始历史归档，剩余 ${r.remaining} 条；云精读调用 0`:'没有待归档的历史索引')}if(t.dataset.toggle){await api(`/api/sources/${t.dataset.toggle}`,{method:'PATCH',body:{enabled:t.dataset.enabled!=='1'}});loadSources()}if(t.dataset.process){await api(`/api/items/${t.dataset.process}/process`,{method:'POST'});toast('已加入归档与精读队列，完成后本页自动刷新');watchItem(t.dataset.process);refreshOpenReader(t.dataset.process).catch(()=>{});loadItems().catch(()=>{})}if(t.dataset.reanalyze){await api(`/api/items/${t.dataset.reanalyze}/reanalyze`,{method:'POST'});toast('已排队，正在精读，完成后自动刷新');watchItem(t.dataset.reanalyze);refreshOpenReader(t.dataset.reanalyze).catch(()=>{});loadItems().catch(()=>{})}if(t.dataset.retriage){toast('正在让模型重新判断配图…');const r=await api(`/api/items/${t.dataset.retriage}/retriage-images`,{method:'POST'});toast(r.dropped?`已删除 ${r.dropped} 张无关配图`:'没有发现需要删除的配图');await refreshOpenReader(t.dataset.retriage);loadItems().catch(()=>{})}if(t.dataset.verifySource){toast('正在检查原文是否还能打开…');const r=await api(`/api/items/${t.dataset.verifySource}/verify-source`,{method:'POST'});toast(r.exists?'原文仍可访问':(r.kept?'原文已删除，但离线页已保存，继续保留':'原文已删除且没有离线页，已移出资料库'));await refreshOpenReader(t.dataset.verifySource);loadItems().catch(()=>{})}if(t.dataset.archiveIndex!==undefined){if(!confirm('将限速归档所有仅索引条目（正文、图片、原始快照），不调用云精读。条目较多时会持续一段时间，可随时查看进度。确定开始吗？'))return;const r=await api('/api/archive-index-only',{method:'POST'});toast(r.queued?`已开始归档，剩余 ${r.remaining} 条；云精读调用 0`:'没有待归档的索引条目');loadProgress().catch(()=>{})}if(t.dataset.archiveStop!==undefined){if(!confirm('停止批量归档？正在下载的这一条会先做完，之后不再继续排队。已归档的条目不受影响。'))return;const r=await api('/api/archive-index-only/stop',{method:'POST'});toast(`已暂停：撤销 ${r.cancelled} 个排队批次${r.running_batches?`，正在跑的那批收尾后停下`:''}；还剩 ${r.remaining} 条未归档`);loadProgress().catch(()=>{})}if(t.dataset.cloudModel){$('#llmProvider').value='workbuddy_cloud';$('#llmProvider').dispatchEvent(new Event('change'));$('#llmModel').value=t.dataset.cloudModel;$('#detailDialog').close();toast('已选择模型，保存设置后生效')}if(t.dataset.paperRetry){await api(`/api/papers/${t.dataset.paperRetry}/retry`,{method:'POST'});toast('已重试论文解析与下载')}if(t.dataset.jobRetry){await api(`/api/jobs/${t.dataset.jobRetry}/retry`,{method:'POST'});toast('任务已重新排队');await loadTaskQueue()}if(t.dataset.jobDiagnostic){const d=await api(`/api/jobs/${t.dataset.jobDiagnostic}/diagnostics`);window.currentDiagnostic=d.markdown;$('#detailContent').innerHTML=`<h1>任务失败诊断</h1>${d.hint?'<div class="notice"><b>已知模式：'+esc(d.hint)+'</b><br>'+esc(d.hint_advice)+'</div>':''}<p>${d.retryable?'<span class="badge wait">疑似临时错误，可重试</span>':'<span class="badge error">不是临时错误，盲目重试会再次失败</span>'}</p><p class="muted">复制下面内容，粘贴到 WorkBuddy 对话即可定位和修复。</p><div class="actions"><button class="primary" data-copy-diagnostic="1">复制诊断给 WorkBuddy</button></div><div class="detail-text"><pre style="white-space:pre-wrap">${esc(d.markdown)}</pre></div>`;openDetail()}if(t.dataset.copyDiagnostic){try{await navigator.clipboard.writeText(window.currentDiagnostic||'')}catch(err){const ta=document.createElement('textarea');ta.value=window.currentDiagnostic||'';document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove()}toast('诊断已复制，可直接粘贴到 WorkBuddy')}if(t.dataset.pdfPreview){await previewPaper(t.dataset.pdfPreview)}if(t.dataset.paperWps){const r=await api(`/api/papers/${t.dataset.paperWps}/open-wps`,{method:'POST'});toast(`${r.application} 已打开：${r.path}`)}if(t.dataset.paperReveal){const r=await api(`/api/papers/${t.dataset.paperReveal}/reveal`,{method:'POST'});toast(`已打开目录：${r.directory}`)}if(t.dataset.ideaEdit){const x=window.ideaRows.find(i=>i.id===t.dataset.ideaEdit);$('#ideaId').value=x.id;$('#ideaTitle').value=x.title;$('#ideaContent').value=x.content;$('#ideaTags').value=(x.tags||[]).join(', ');scrollTo({top:0,behavior:'smooth'})}if(t.dataset.ideaToggle){const x=window.ideaRows.find(i=>i.id===t.dataset.ideaToggle);await api('/api/ideas/'+x.id,{method:'PATCH',body:{title:x.title,content:x.content,tags:x.tags,enabled:t.dataset.enabled!=='1'}});loadIdeas()}if(t.dataset.batch){const x=await api('/api/notifications/'+t.dataset.batch);$('#detailContent').innerHTML=`<h1>汇报内容</h1><div class="detail-text">${esc(x.text)}</div>`;openDetail()}if(t.dataset.batchRetry){const r=await api(`/api/notifications/${t.dataset.batchRetry}/retry`,{method:'POST'});toast(r.queued===false?(r.reason||'该批次无需重试'):'已重新进入发送队列');loadNotifications().catch(()=>{})}}catch(err){toast(err.message)}});
 /* ---------- 图片查看器 ---------- */
 const viewerState={scale:1,x:0,y:0,fit:1,dragging:false,moved:false,startX:0,startY:0};
 function viewerParts(){return {box:$('#imageViewer'),stage:$('#imageViewerStage'),img:$('#imageViewerImg'),info:$('#imageViewerInfo')}}

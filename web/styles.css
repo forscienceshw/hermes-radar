@@ -168,6 +168,9 @@ dialog{position:fixed;inset:0;margin:auto;z-index:40;overflow:auto}
 .sc-row .sc-score{font:650 12px/1 ui-monospace,Consolas,monospace;color:var(--accent);background:var(--soft);border-radius:20px;padding:4px 7px}
 .sc-row small{grid-column:2/4;color:var(--muted);font-size:11.5px;line-height:1.5}
 .sc-foot{display:flex;justify-content:flex-end;gap:8px}
+/* 没有候选时把列表与「收藏到选中的」收起来，只留「自己挑收藏夹」。
+   显式写死 display:none，别指望 button 的 inline-flex 会尊重 hidden。 */
+#smartCollect [hidden]{display:none!important}
 /* 经典弹层的三段切换：先原文，再精读，论文单独一栏。 */
 .detail-tabs{display:flex;gap:2px;padding:3px;background:#f1f5f6;border:1px solid #e6ecef;border-radius:9px;margin:14px 0 16px;width:max-content}
 .detail-tabs button{border:1px solid transparent;background:transparent;border-radius:7px;padding:5px 16px;font-size:13px;color:#55626e;line-height:1.2}
@@ -592,15 +595,23 @@ body.modal-open .chat-fab{display:none}
 .wb-title-block{flex:1 1 260px;min-width:0}
 .wb-head .detail-title{font-size:18px;line-height:1.4;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .wb-meta{font-size:12px;color:var(--muted);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 顶栏里的任务状态：点完按钮至少这里在动，不会「不知道进度到哪了」。 */
+.wb-job{display:inline-flex;align-items:center;gap:6px;margin-top:3px;font-size:12px;color:var(--accent);background:var(--soft);border:1px solid #cfe4e1;border-radius:20px;padding:2px 9px 2px 7px;max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.wb-job[hidden]{display:none}
+.wb-job.failed{color:var(--danger);background:#fff5f4;border-color:#f3d2ce}
+.wb-job .spin{width:9px;height:9px;border-width:2px;margin-right:0}
 .wb-side-switch{flex:none;display:flex;gap:2px;padding:3px;background:#f1f5f6;border:1px solid #e6ecef;border-radius:10px}
 .wb-side-switch button{border:1px solid transparent;background:transparent;border-radius:7px;padding:5px 12px;font-size:12.5px;color:#55626e;line-height:1.2}
 .wb-side-switch button:hover{background:#e8eff0}
 .wb-side-switch button[aria-pressed="true"]{background:#fff;border-color:#cfe0de;color:var(--accent);font-weight:650;box-shadow:0 1px 3px rgba(18,110,103,.12)}
 .wb-item-actions{flex:1 1 320px;min-width:0;display:flex;align-items:center;gap:4px;justify-content:flex-end}
-/* 操作条只占一屏宽度（约五六个按钮），剩下的用两侧小箭头翻。不设上限的话宽屏会把
-   八个按钮全塞进来，标题被挤成两三个字，箭头也永远停在禁用态。 */
-.wb-act-track{flex:1 1 auto;max-width:min(46vw,470px);display:flex;align-items:center;gap:5px;min-width:0;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;-ms-overflow-style:none;scroll-behavior:smooth;padding:2px 1px}
+/* 操作条只显示三四个按钮（约 340px），剩下的靠两侧箭头整页翻。
+   不设上限时宽屏会把八个按钮全塞进来：滚动余量只剩几十像素，
+   箭头「点一下动一点点」看着像没反应，标题也被挤没了。 */
+.wb-act-track{flex:0 1 auto;width:min(300px,40vw);min-width:180px;display:flex;align-items:center;gap:5px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;-ms-overflow-style:none;scroll-behavior:auto;padding:2px 1px}
 .wb-act-track::-webkit-scrollbar{display:none}
+/* 翻页用 auto 而不是 smooth：平滑滚动会被后续的布局重排打断，
+   表现是横条滑到一半自己弹回原位——用户看到的就是「按了没反应」。 */
 /* 两端渐隐：有被裁掉的按钮时给个视觉提示，而不是硬切一刀。 */
 .wb-act-track.can-prev{-webkit-mask-image:linear-gradient(90deg,transparent 0,#000 16px,#000 100%);mask-image:linear-gradient(90deg,transparent 0,#000 16px,#000 100%)}
 .wb-act-track.can-next{-webkit-mask-image:linear-gradient(90deg,#000 0,#000 calc(100% - 16px),transparent 100%);mask-image:linear-gradient(90deg,#000 0,#000 calc(100% - 16px),transparent 100%)}

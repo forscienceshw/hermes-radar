@@ -437,7 +437,7 @@
 <dialog id="smartCollect" class="smart-collect" tabindex="-1">
   <div class="sc-head"><div><h2 id="smartCollectTitle">要不要收藏到这几个收藏夹？</h2><p class="muted" id="smartCollectLead"></p></div><button type="button" id="smartCollectClose" aria-label="关闭" title="关闭">×</button></div>
   <div id="smartCollectList" class="sc-list"></div>
-  <div class="sc-foot"><button type="button" id="smartCollectSkip">先不收藏</button><button type="button" class="primary" id="smartCollectOk">收藏到选中的</button></div>
+  <div class="sc-foot"><button type="button" id="smartCollectPick">自己挑收藏夹</button><button type="button" id="smartCollectSkip">先不收藏</button><button type="button" class="primary" id="smartCollectOk">收藏到选中的</button></div>
 </dialog>
 <!-- 阅读工作台：点资料库条目时先看离线原文；精读/笔记/Ideas 作为第二栏并排。
      刻意不响应背景点击与 Esc，只有右上角 ✕ 才关（读长文时手滑点暗处不会全丢）。 -->
@@ -446,6 +446,7 @@
     <div class="wb-title-block">
       <h1 class="detail-title" id="wbTitle"></h1>
       <div class="wb-meta" id="wbMeta"></div>
+      <div class="wb-job" id="wbJob" hidden></div>
     </div>
     <div class="wb-side-switch" id="wbSideSwitch" role="group" aria-label="并排面板">
       <button type="button" data-wb-side="reading" aria-pressed="false" title="把精读放到第二栏并排显示">精读</button>
